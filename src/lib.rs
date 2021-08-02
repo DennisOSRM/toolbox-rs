@@ -133,6 +133,8 @@ impl<T: Ord + Copy> StaticGraph<T> {
     &self.edge_array[e as usize].data
   }
 
+  /// Returns whether the graph contains a cycle by running a node
+  /// coloring DFS
   pub fn cycle_check(&self) -> bool {
     #[derive(Clone, PartialEq)]
     enum Colors {
@@ -152,6 +154,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
 
       stack.push(root);
       while let Some(&node) = stack.last() {
+        // pre-order traversal
         if node_colors[node as usize] != Colors::Grey {
           node_colors[node as usize] = Colors::Grey;
 
@@ -162,10 +165,12 @@ impl<T: Ord + Copy> StaticGraph<T> {
             if node_colors[target as usize] == Colors::White {
               stack.push(target);
             } else if node_colors[target as usize] == Colors::Grey {
+              // cycle detected
               return false;
             }
           }
         } else if node_colors[node as usize] == Colors::Grey {
+          // post-order traversal
           stack.pop();
           node_colors[node as usize] = Colors::Black;
         }
