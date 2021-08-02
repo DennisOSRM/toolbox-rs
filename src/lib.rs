@@ -48,10 +48,10 @@ impl<T: Ord + Copy> StaticGraph<T> {
     // TODO: renumber IDs if necessary
     let number_of_edges = input.len();
     let mut number_of_nodes = 0;
-    for edge in input.iter() {
+    input.iter().for_each(|edge| {
       number_of_nodes = max(edge.source, number_of_nodes);
       number_of_nodes = max(edge.target, number_of_nodes);
-    }
+    });
 
     let mut graph = Self::default();
     // +1 as we are going to add one sentinel node at the end
@@ -65,7 +65,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
     // add first entry manually, rest will be computed
     graph.node_array.push(NodeArrayEntry { first_edge: 0 });
     let mut offset = 0;
-    for i in 0..(number_of_nodes + 1) {
+    for i in 0..(number_of_nodes) {
       while offset != input.len() && input[offset].source == i {
         offset += 1;
       }
@@ -105,7 +105,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
   pub fn number_of_nodes(&self) -> usize {
     // minus two because of off-by-one _and_ a sentinel at the end
     // TODO(DL): there must be a more elegant way
-    self.node_array.len() - 2
+    self.node_array.len() - 1
   }
 
   pub fn number_of_edges(&self) -> usize {
