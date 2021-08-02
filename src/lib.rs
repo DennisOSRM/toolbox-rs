@@ -1,7 +1,7 @@
 use std::cmp::max;
 
-pub type NodeID = i32;
-pub type EdgeID = i32;
+pub type NodeID = u32;
+pub type EdgeID = u32;
 
 #[derive(Eq, PartialOrd, Ord, PartialEq)]
 pub struct InputEdge<EdgeDataT: Eq> {
@@ -21,7 +21,7 @@ impl<EdgeDataT: Eq> InputEdge<EdgeDataT> {
 }
 
 pub struct NodeArrayEntry {
-  first_edge: NodeID,
+  first_edge: EdgeID,
 }
 
 pub struct EdgeArrayEntry<EdgeDataT> {
@@ -47,37 +47,36 @@ impl<T: Ord + Copy> StaticGraph<T> {
   pub fn new(mut input: Vec<InputEdge<T>>) -> Self {
     // TODO: renumber IDs if necessary
     let number_of_edges = input.len();
-    let mut number_of_nodes: usize = 0;
+    let mut number_of_nodes = 0;
     for edge in input.iter() {
-      number_of_nodes = max(edge.source as usize, number_of_nodes);
-      number_of_nodes = max(edge.target as usize, number_of_nodes);
+      number_of_nodes = max(edge.source, number_of_nodes);
+      number_of_nodes = max(edge.target, number_of_nodes);
     }
 
     let mut graph = Self::default();
     // +1 as we are going to add one sentinel node at the end
-    graph.node_array.reserve(number_of_nodes + 1);
+    graph.node_array.reserve(number_of_nodes as usize + 1);
     graph.edge_array.reserve(number_of_edges);
 
-    // sort input edhes by source/target/data
-    // TODO(dl): sorting by source suffices
+    // sort input edges by source/target/data
+    // TODO(dl): sorting by source suffices to construct adjacency array
     input.sort();
 
     // add first entry manually, rest will be computed
     graph.node_array.push(NodeArrayEntry { first_edge: 0 });
     let mut offset = 0;
-    for i in 0..(number_of_nodes + 1) as NodeID {
+    for i in 0..(number_of_nodes + 1) {
       while offset != input.len() && input[offset].source == i {
         offset += 1;
       }
-      // println!("node_array[{}]={}", graph.node_array.len(), offset);
       graph.node_array.push(NodeArrayEntry {
-        first_edge: offset as NodeID,
+        first_edge: offset as EdgeID,
       });
     }
 
     //add sentinel at the end of the node array
     graph.node_array.push(NodeArrayEntry {
-      first_edge: (graph.node_array.len() - 1) as NodeID,
+      first_edge: (graph.node_array.len() - 1) as EdgeID,
     });
 
     for edge in input.iter() {
@@ -166,7 +165,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
               stack.push(target);
             } else if node_colors[target as usize] == Colors::Grey {
               // cycle detected
-              return false;
+              return true;
             }
           }
         } else if node_colors[node as usize] == Colors::Grey {
