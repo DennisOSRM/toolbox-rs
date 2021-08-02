@@ -24,6 +24,12 @@ pub struct NodeArrayEntry {
   first_edge: EdgeID,
 }
 
+impl NodeArrayEntry {
+  pub fn new(e: EdgeID) -> NodeArrayEntry {
+    NodeArrayEntry { first_edge: e }
+  }
+}
+
 pub struct EdgeArrayEntry<EdgeDataT> {
   target: NodeID,
   data: EdgeDataT,
@@ -48,10 +54,10 @@ impl<T: Ord + Copy> StaticGraph<T> {
     // TODO: renumber IDs if necessary
     let number_of_edges = input.len();
     let mut number_of_nodes = 0;
-    input.iter().for_each(|edge| {
+    for edge in &input {
       number_of_nodes = max(edge.source, number_of_nodes);
       number_of_nodes = max(edge.target, number_of_nodes);
-    });
+    }
 
     let mut graph = Self::default();
     // +1 as we are going to add one sentinel node at the end
@@ -63,23 +69,21 @@ impl<T: Ord + Copy> StaticGraph<T> {
     input.sort();
 
     // add first entry manually, rest will be computed
-    graph.node_array.push(NodeArrayEntry { first_edge: 0 });
+    graph.node_array.push(NodeArrayEntry::new(0));
     let mut offset = 0;
     for i in 0..(number_of_nodes) {
       while offset != input.len() && input[offset].source == i {
         offset += 1;
       }
-      graph.node_array.push(NodeArrayEntry {
-        first_edge: offset as EdgeID,
-      });
+      graph.node_array.push(NodeArrayEntry::new(offset as EdgeID));
     }
 
     //add sentinel at the end of the node array
-    graph.node_array.push(NodeArrayEntry {
-      first_edge: (graph.node_array.len() - 1) as EdgeID,
-    });
+    graph
+      .node_array
+      .push(NodeArrayEntry::new((graph.node_array.len() - 1) as EdgeID));
 
-    for edge in input.iter() {
+    for edge in &input {
       graph.edge_array.push(EdgeArrayEntry {
         target: edge.target,
         data: edge.edge_data,
@@ -117,7 +121,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
   }
 
   pub fn end_edges(&self, n: NodeID) -> EdgeID {
-    self.node_array[(n + 1) as usize].first_edge as EdgeID
+    self.node_array[(n + 1) as usize].first_edge
   }
 
   pub fn get_out_degree(&self, n: NodeID) -> usize {
