@@ -1,4 +1,4 @@
-use staticgraph::{InputEdge, StaticGraph};
+use staticgraph::static_graph::*;
 
 fn main() {
     type Graph = StaticGraph<i32>;
