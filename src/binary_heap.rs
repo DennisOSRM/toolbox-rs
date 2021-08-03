@@ -34,7 +34,7 @@ impl<T: Ord + Copy + Default> BinaryHeap<T> {
         self.sift_up(self.n);
     }
     pub fn min(&self) -> &T {
-        return &self.h[1];
+        &self.h[1]
     }
     pub fn delete_min(&mut self) -> T {
         let result = self.h[1];
@@ -43,7 +43,7 @@ impl<T: Ord + Copy + Default> BinaryHeap<T> {
         self.sift_down(1);
         result
     }
-    pub fn empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.n == 0
     }
     pub fn clear(&mut self) {
@@ -66,7 +66,7 @@ impl<T: Ord + Copy + Default> BinaryHeap<T> {
         }
 
         let mut m = 2 * i;
-        if 2 * i + 1 <= self.n && self.h[2 * i] > self.h[2 * i + 1] {
+        if 2 * i < self.n && self.h[2 * i] > self.h[2 * i + 1] {
             m += 1;
         }
 
@@ -74,5 +74,11 @@ impl<T: Ord + Copy + Default> BinaryHeap<T> {
             self.h.swap(i, m);
             self.sift_down(m);
         }
+    }
+}
+
+impl<T: Ord + Copy + Default> Default for BinaryHeap<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }

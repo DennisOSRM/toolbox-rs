@@ -248,7 +248,7 @@ mod tests {
         type Heap = BinaryHeap<i32>;
         let heap = Heap::new();
 
-        assert!(heap.empty());
+        assert!(heap.is_empty());
     }
 
     #[test]
@@ -257,7 +257,7 @@ mod tests {
         let mut heap = Heap::new();
         heap.insert(20);
         assert_eq!(20, *heap.min());
-        assert!(!heap.empty());
+        assert!(!heap.is_empty());
     }
 
     #[test]
@@ -270,14 +270,14 @@ mod tests {
             heap.insert(*i);
         }
         assert_eq!(1, *heap.min());
-        assert!(!heap.empty());
+        assert!(!heap.is_empty());
 
         let mut result = Vec::new();
-        while !heap.empty() {
+        while !heap.is_empty() {
             result.push(heap.delete_min());
         }
         assert_eq!(result.len(), 5);
-        assert!(heap.empty());
+        assert!(heap.is_empty());
 
         input.sort();
         assert_eq!(result, input);
@@ -296,16 +296,16 @@ mod tests {
             input.push(number);
             heap.insert(number);
         }
-        assert!(!heap.empty());
+        assert!(!heap.is_empty());
         assert_eq!(1000, heap.len());
         assert_eq!(1000, input.len());
 
         let mut result = Vec::new();
-        while !heap.empty() {
+        while !heap.is_empty() {
             result.push(heap.delete_min());
         }
         assert_eq!(result.len(), 1000);
-        assert!(heap.empty());
+        assert!(heap.is_empty());
 
         input.sort();
         assert_eq!(result, input);
@@ -321,7 +321,7 @@ mod tests {
             heap.insert(*i);
         }
         assert_eq!(1, *heap.min());
-        assert!(!heap.empty());
+        assert!(!heap.is_empty());
         assert_eq!(5, heap.len());
 
         heap.clear();
