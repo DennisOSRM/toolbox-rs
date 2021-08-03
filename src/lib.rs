@@ -3,7 +3,10 @@ pub mod static_graph;
 
 #[cfg(test)]
 mod tests {
-    use crate::{binary_heap::BinaryHeap, static_graph::{InputEdge, StaticGraph}};
+    use crate::{
+        binary_heap::BinaryHeap,
+        static_graph::{InputEdge, StaticGraph},
+    };
     use rand::{rngs::StdRng, Rng, SeedableRng};
 
     #[test]
@@ -27,7 +30,24 @@ mod tests {
 
     #[test]
     fn static_graph_degree() {
+        type Graph = StaticGraph<i32>;
+        let edges = vec![
+            InputEdge::new(0, 1, 3),
+            InputEdge::new(1, 2, 3),
+            InputEdge::new(4, 2, 1),
+            InputEdge::new(2, 3, 6),
+            InputEdge::new(0, 4, 2),
+            InputEdge::new(4, 5, 2),
+            InputEdge::new(5, 3, 7),
+            InputEdge::new(1, 5, 2),
+        ];
 
+        let graph = Graph::new(edges);
+        let mut sum = 0;
+        for i in graph.node_range() {
+            sum += graph.get_out_degree(i);
+        }
+        assert_eq!(sum, graph.number_of_edges());
     }
 
     #[test]
