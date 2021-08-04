@@ -10,7 +10,9 @@ struct HeapNode<NodeID: Copy + Integer, Weight: Bounded + Copy + Integer + Debug
     data: Data,
 }
 
-impl<NodeID: Copy + Integer, Weight: Bounded + Copy + Integer + Debug, Data> HeapNode<NodeID, Weight, Data> {
+impl<NodeID: Copy + Integer, Weight: Bounded + Copy + Integer + Debug, Data>
+    HeapNode<NodeID, Weight, Data>
+{
     fn new(node: NodeID, key: usize, weight: Weight, data: Data) -> Self {
         Self {
             node,
@@ -296,7 +298,31 @@ mod tests {
         assert_eq!(5, heap.len());
 
         for i in &input {
-          assert_eq!(i, heap.data(*i));
-      }
+            assert_eq!(i, heap.data(*i));
+        }
+    }
+
+    #[test]
+    fn data_mut() {
+        let mut heap = Heap::new();
+        let input = vec![4, 1, 6, 7, 5];
+
+        for i in &input {
+            heap.insert(*i, *i, *i);
+        }
+        assert_eq!(1, heap.min());
+        assert!(!heap.is_empty());
+        assert_eq!(5, heap.len());
+
+        // double all data entries
+        for i in &input {
+            let new_value = *heap.data_mut(*i) * 2;
+            *heap.data_mut(*i) = new_value;
+        }
+
+        for i in &input {
+          let new_value = 2*i;
+          assert_eq!(&new_value, heap.data(*i));
+        }
     }
 }
