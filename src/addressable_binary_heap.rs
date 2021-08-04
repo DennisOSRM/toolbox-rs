@@ -1,16 +1,16 @@
 use core::hash::Hash;
-use std::{collections::HashMap, usize};
+use std::{collections::HashMap, fmt::Debug, usize};
 
-use num::Integer;
+use num::{Bounded, Integer};
 
-struct HeapNode<NodeID: Copy + Integer, Weight: Copy + Integer, Data> {
+struct HeapNode<NodeID: Copy + Integer, Weight: Bounded + Copy + Integer + Debug, Data> {
     node: NodeID,
     key: usize,
     weight: Weight,
     data: Data,
 }
 
-impl<NodeID: Copy + Integer, Weight: Copy + Integer, Data> HeapNode<NodeID, Weight, Data> {
+impl<NodeID: Copy + Integer, Weight: Bounded + Copy + Integer + Debug, Data> HeapNode<NodeID, Weight, Data> {
     fn new(node: NodeID, key: usize, weight: Weight, data: Data) -> Self {
         Self {
             node,
@@ -21,30 +21,30 @@ impl<NodeID: Copy + Integer, Weight: Copy + Integer, Data> HeapNode<NodeID, Weig
     }
 }
 #[derive(Clone, Copy)]
-struct HeapElement<Weight: Copy + Integer> {
+struct HeapElement<Weight: Bounded + Copy + Integer + Debug> {
     index: usize,
     weight: Weight,
 }
 
-impl<Weight: Copy + Integer> Default for HeapElement<Weight> {
+impl<Weight: Bounded + Copy + Integer + Debug> Default for HeapElement<Weight> {
     fn default() -> Self {
-        HeapElement::new(usize::MAX, Weight::zero())
+        HeapElement::new(usize::MAX, Weight::min_value())
     }
 }
 
-impl<Weight: Copy + Integer> HeapElement<Weight> {
+impl<Weight: Bounded + Copy + Integer + Debug> HeapElement<Weight> {
     fn new(index: usize, weight: Weight) -> Self {
         Self { index, weight }
     }
 }
 
-pub struct AddressableHeap<NodeID: Copy + Integer, Weight: Copy + Integer, Data> {
+pub struct AddressableHeap<NodeID: Copy + Integer, Weight: Bounded + Copy + Integer + Debug, Data> {
     heap: Vec<HeapElement<Weight>>,
     inserted_nodes: Vec<HeapNode<NodeID, Weight, Data>>,
     node_index: HashMap<NodeID, usize>,
 }
 
-impl<NodeID: Copy + Hash + Integer, Weight: Copy + Integer, Data>
+impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Data>
     AddressableHeap<NodeID, Weight, Data>
 {
     pub fn new() -> AddressableHeap<NodeID, Weight, Data> {
@@ -59,7 +59,7 @@ impl<NodeID: Copy + Hash + Integer, Weight: Copy + Integer, Data>
         let def = HeapElement::default();
         self.heap.resize(1, def);
         self.inserted_nodes.clear();
-        self.heap[1].weight = Weight::zero();
+        self.heap[1].weight = Weight::max_value();
     }
 
     pub fn len(&self) -> usize {
@@ -71,6 +71,7 @@ impl<NodeID: Copy + Hash + Integer, Weight: Copy + Integer, Data>
     }
 
     pub fn insert(&mut self, node: NodeID, weight: Weight, data: Data) {
+        println!("insert weight {:?}", weight);
         let index = self.inserted_nodes.len();
         let element = HeapElement { index, weight };
         let key = self.heap.len();
@@ -133,7 +134,7 @@ impl<NodeID: Copy + Hash + Integer, Weight: Copy + Integer, Data>
             self.inserted_nodes[element.index].key = 0;
         }
         self.heap.resize(1, HeapElement::default());
-        self.heap[0].weight = Weight::zero();
+        self.heap[0].weight = Weight::max_value();
     }
 
     pub fn decrease_key(&mut self, node: NodeID, weight: Weight) {
@@ -172,14 +173,21 @@ impl<NodeID: Copy + Hash + Integer, Weight: Copy + Integer, Data>
     }
 
     pub fn up_heap(&mut self, mut key: usize) {
-        println!("upheap({})", key);
+        println!("upheap(key: {})", key);
         let rising_index = self.heap[key].index;
+        println!("rising index: {}", rising_index);
         let weight = self.heap[key].weight;
+        println!("weight: {:?}", weight);
 
         let mut next_key = key >> 1;
+
         while self.heap[next_key].weight > weight {
+            println!("next_key: {}", next_key);
             self.heap[key] = self.heap[next_key];
-            self.inserted_nodes[self.heap[key].index].key = key;
+            let index = self.heap[key].index;
+            println!("index: {}", index);
+
+            self.inserted_nodes[index].key = key;
             key = next_key;
             next_key >>= 1;
         }
@@ -191,6 +199,8 @@ impl<NodeID: Copy + Hash + Integer, Weight: Copy + Integer, Data>
 
 #[cfg(test)]
 mod tests {
+    use rand::{prelude::StdRng, Rng, SeedableRng};
+
     use crate::addressable_binary_heap::AddressableHeap;
     type Heap = AddressableHeap<i32, i32, i32>;
 
@@ -209,6 +219,7 @@ mod tests {
 
         let mut input = vec![4, 1, 6, 7, 5];
         for i in &input {
+            println!("insert {} {} {}", *i, *i, 0);
             heap.insert(*i, *i, 0);
         }
         assert_eq!(1, heap.min());
@@ -231,5 +242,31 @@ mod tests {
     fn empty_min_panic() {
         let heap = Heap::new();
         heap.min();
+    }
+
+    #[test]
+    fn heap_sort_random() {
+        let mut heap = Heap::new();
+        let mut rng = StdRng::seed_from_u64(0xAAaaAAaa);
+        let mut input = Vec::new();
+
+        for _ in 0..1000 {
+            let number = rng.gen();
+            input.push(number);
+            heap.insert(number, number, 0);
+        }
+        assert!(!heap.is_empty());
+        assert_eq!(1000, heap.len());
+        assert_eq!(1000, input.len());
+
+        let mut result = Vec::new();
+        while !heap.is_empty() {
+            result.push(heap.delete_min());
+        }
+        assert_eq!(result.len(), 1000);
+        assert!(heap.is_empty());
+
+        input.sort();
+        assert_eq!(result, input);
     }
 }
