@@ -282,4 +282,21 @@ mod tests {
         heap.clear();
         assert_eq!(0, heap.len());
     }
+
+    #[test]
+    fn data() {
+        let mut heap = Heap::new();
+        let input = vec![4, 1, 6, 7, 5];
+
+        for i in &input {
+            heap.insert(*i, *i, *i);
+        }
+        assert_eq!(1, heap.min());
+        assert!(!heap.is_empty());
+        assert_eq!(5, heap.len());
+
+        for i in &input {
+          assert_eq!(i, heap.data(*i));
+      }
+    }
 }
