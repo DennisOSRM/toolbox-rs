@@ -56,10 +56,9 @@ impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Da
     }
 
     pub fn clear(&mut self) {
-        let def = HeapElement::default();
-        self.heap.resize(1, def);
+        self.heap.clear();
         self.inserted_nodes.clear();
-        self.heap[1].weight = Weight::max_value();
+        self.heap.push(HeapElement::default());
     }
 
     pub fn len(&self) -> usize {
@@ -71,7 +70,6 @@ impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Da
     }
 
     pub fn insert(&mut self, node: NodeID, weight: Weight, data: Data) {
-        println!("insert weight {:?}", weight);
         let index = self.inserted_nodes.len();
         let element = HeapElement { index, weight };
         let key = self.heap.len();
@@ -173,19 +171,14 @@ impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Da
     }
 
     pub fn up_heap(&mut self, mut key: usize) {
-        println!("upheap(key: {})", key);
         let rising_index = self.heap[key].index;
-        println!("rising index: {}", rising_index);
         let weight = self.heap[key].weight;
-        println!("weight: {:?}", weight);
 
         let mut next_key = key >> 1;
 
         while self.heap[next_key].weight > weight {
-            println!("next_key: {}", next_key);
             self.heap[key] = self.heap[next_key];
             let index = self.heap[key].index;
-            println!("index: {}", index);
 
             self.inserted_nodes[index].key = key;
             key = next_key;
@@ -219,7 +212,6 @@ mod tests {
 
         let mut input = vec![4, 1, 6, 7, 5];
         for i in &input {
-            println!("insert {} {} {}", *i, *i, 0);
             heap.insert(*i, *i, 0);
         }
         assert_eq!(1, heap.min());
@@ -229,7 +221,6 @@ mod tests {
         while !heap.is_empty() {
             result.push(heap.delete_min());
         }
-        println!("{:?}", result);
         assert_eq!(result.len(), 5);
         assert!(heap.is_empty());
 
@@ -268,5 +259,21 @@ mod tests {
 
         input.sort();
         assert_eq!(result, input);
+    }
+
+    #[test]
+    fn clear() {
+        let mut heap = Heap::new();
+        let input = vec![4, 1, 6, 7, 5];
+
+        for i in &input {
+            heap.insert(*i, *i, *i);
+        }
+        assert_eq!(1, heap.min());
+        assert!(!heap.is_empty());
+        assert_eq!(5, heap.len());
+
+        heap.clear();
+        assert_eq!(0, heap.len());
     }
 }
