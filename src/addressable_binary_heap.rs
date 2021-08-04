@@ -225,4 +225,11 @@ mod tests {
         input.sort();
         assert_eq!(result, input);
     }
+
+    #[test]
+    #[should_panic]
+    fn empty_min_panic() {
+        let heap = Heap::new();
+        heap.min();
+    }
 }

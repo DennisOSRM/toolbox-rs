@@ -85,18 +85,17 @@ impl<T: Ord + Copy + Default> Default for BinaryHeap<T> {
 mod tests {
     use crate::binary_heap::BinaryHeap;
     use rand::{rngs::StdRng, Rng, SeedableRng};
+    type Heap = BinaryHeap<i32>;
 
     #[test]
-    fn binary_heap_empty() {
-        type Heap = BinaryHeap<i32>;
+    fn empty() {
         let heap = Heap::new();
 
         assert!(heap.is_empty());
     }
 
     #[test]
-    fn binary_heap_insert_size() {
-        type Heap = BinaryHeap<i32>;
+    fn insert_size() {
         let mut heap = Heap::new();
         heap.insert(20);
         assert_eq!(20, *heap.min());
@@ -104,8 +103,7 @@ mod tests {
     }
 
     #[test]
-    fn binary_heap_sort() {
-        type Heap = BinaryHeap<i32>;
+    fn heap_sort() {
         let mut heap = Heap::new();
 
         let mut input = vec![4, 1, 6, 7, 5];
@@ -127,13 +125,11 @@ mod tests {
     }
 
     #[test]
-    fn binary_heap_sort_random() {
-        type Heap = BinaryHeap<i32>;
+    fn heap_sort_random() {
         let mut heap = Heap::new();
-
         let mut rng = StdRng::seed_from_u64(0xAAaaAAaa);
-
         let mut input = Vec::new();
+
         for _ in 0..1000 {
             let number = rng.gen();
             input.push(number);
@@ -155,11 +151,10 @@ mod tests {
     }
 
     #[test]
-    fn binary_heap_clear() {
-        type Heap = BinaryHeap<i32>;
+    fn clear() {
         let mut heap = Heap::new();
-
         let input = vec![4, 1, 6, 7, 5];
+
         for i in &input {
             heap.insert(*i);
         }
@@ -173,8 +168,7 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn binary_heap_empty_min_panic() {
-        type Heap = BinaryHeap<i32>;
+    fn empty_min_panic() {
         let heap = Heap::new();
         heap.min();
     }
