@@ -107,8 +107,6 @@ impl<T: Ord + Copy> StaticGraph<T> {
     }
 
     pub fn number_of_nodes(&self) -> usize {
-        // minus two because of off-by-one _and_ a sentinel at the end
-        // TODO(DL): there must be a more elegant way
         self.node_array.len() - 1
     }
 
