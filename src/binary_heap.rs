@@ -90,7 +90,6 @@ mod tests {
     #[test]
     fn empty() {
         let heap = Heap::new();
-
         assert!(heap.is_empty());
     }
 

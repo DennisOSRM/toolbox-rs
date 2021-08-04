@@ -198,6 +198,12 @@ mod tests {
     type Heap = AddressableHeap<i32, i32, i32>;
 
     #[test]
+    fn empty() {
+        let heap = Heap::new();
+        assert!(heap.is_empty());
+    }
+
+    #[test]
     fn insert_size() {
         let mut heap = Heap::new();
         heap.insert(20, 1, 2);
