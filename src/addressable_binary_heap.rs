@@ -46,6 +46,14 @@ pub struct AddressableHeap<NodeID: Copy + Integer, Weight: Bounded + Copy + Inte
     node_index: HashMap<NodeID, usize>,
 }
 
+impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Data> Default
+    for AddressableHeap<NodeID, Weight, Data>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Data>
     AddressableHeap<NodeID, Weight, Data>
 {
@@ -321,8 +329,8 @@ mod tests {
         }
 
         for i in &input {
-          let new_value = 2*i;
-          assert_eq!(&new_value, heap.data(*i));
+            let new_value = 2 * i;
+            assert_eq!(&new_value, heap.data(*i));
         }
     }
 }
