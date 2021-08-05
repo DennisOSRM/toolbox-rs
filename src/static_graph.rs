@@ -151,6 +151,10 @@ impl<T: Ord + Copy> Graph<T> for StaticGraph<T> {
     fn data(&self, e: EdgeID) -> &T {
         &self.edge_array[e as usize].data
     }
+
+    fn data_mut(&mut self, e: EdgeID) -> &mut T {
+        &mut self.edge_array[e as usize].data
+    }
 }
 
 #[cfg(test)]

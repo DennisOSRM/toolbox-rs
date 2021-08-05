@@ -13,4 +13,5 @@ pub trait Graph<T> {
     fn get_out_degree(&self, n: NodeID) -> usize;
     fn target(&self, e: EdgeID) -> NodeID;
     fn data(&self, e: EdgeID) -> &T;
+    fn data_mut(&mut self, e: EdgeID) -> &mut T;
 }
