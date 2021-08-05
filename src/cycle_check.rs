@@ -10,8 +10,7 @@ pub fn cycle_check<T>(graph: &(dyn Graph<T> + 'static)) -> bool {
         Black,
     }
 
-    let mut node_colors = Vec::new();
-    node_colors.resize(graph.number_of_nodes(), Colors::White);
+    let mut node_colors = vec![Colors::White; graph.number_of_nodes()];
     let mut stack = Vec::new();
 
     for root in graph.node_range() {
