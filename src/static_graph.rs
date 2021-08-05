@@ -1,4 +1,4 @@
-use std::cmp::max;
+use std::{cmp::max, ops::Range};
 
 pub type NodeID = u32;
 pub type EdgeID = u32;
@@ -93,15 +93,15 @@ impl<T: Ord + Copy> StaticGraph<T> {
         graph
     }
 
-    pub fn node_range(&self) -> std::ops::Range<NodeID> {
-        std::ops::Range {
+    pub fn node_range(&self) -> Range<NodeID> {
+        Range {
             start: 0,
             end: self.number_of_nodes() as NodeID,
         }
     }
 
-    pub fn edge_range(&self, n: NodeID) -> std::ops::Range<EdgeID> {
-        std::ops::Range {
+    pub fn edge_range(&self, n: NodeID) -> Range<EdgeID> {
+        Range {
             start: self.begin_edges(n),
             end: self.end_edges(n),
         }
