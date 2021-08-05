@@ -83,12 +83,13 @@ impl<T: Ord + Copy> StaticGraph<T> {
             .node_array
             .push(NodeArrayEntry::new((input.len()) as EdgeID));
 
-        for edge in &input {
-            graph.edge_array.push(EdgeArrayEntry {
+        graph.edge_array = input
+            .iter()
+            .map(|edge| EdgeArrayEntry {
                 target: edge.target,
                 data: edge.edge_data,
-            });
-        }
+            })
+            .collect();
         graph
     }
 
