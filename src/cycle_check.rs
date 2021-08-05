@@ -1,6 +1,8 @@
+use crate::graph::Graph;
+
 /// Returns whether the graph contains a cycle by running a node
 /// coloring DFS
-pub fn cycle_check(&self) -> bool {
+pub fn cycle_check<T>(graph: &(dyn Graph<T> + 'static)) -> bool {
     #[derive(Clone, PartialEq)]
     enum Colors {
         White,
@@ -9,10 +11,10 @@ pub fn cycle_check(&self) -> bool {
     }
 
     let mut node_colors = Vec::new();
-    node_colors.resize(self.number_of_nodes(), Colors::White);
+    node_colors.resize(graph.number_of_nodes(), Colors::White);
     let mut stack = Vec::new();
 
-    for root in self.node_range() {
+    for root in graph.node_range() {
         if node_colors[root as usize] != Colors::White {
             continue;
         }
@@ -23,9 +25,9 @@ pub fn cycle_check(&self) -> bool {
             if node_colors[node as usize] != Colors::Grey {
                 node_colors[node as usize] = Colors::Grey;
 
-                for edge in self.edge_range(node) {
+                for edge in graph.edge_range(node) {
                     // push unvisited children to stack
-                    let target = self.target(edge);
+                    let target = graph.target(edge);
 
                     if node_colors[target as usize] == Colors::White {
                         stack.push(target);
@@ -44,6 +46,11 @@ pub fn cycle_check(&self) -> bool {
     false
 }
 
+#[cfg(test)]
+mod tests {
+    use crate::{cycle_check::cycle_check, static_graph::{InputEdge, StaticGraph}};
+
+
 #[test]
 fn no_cycle() {
     type Graph = StaticGraph<i32>;
@@ -58,7 +65,7 @@ fn no_cycle() {
         InputEdge::new(1, 5, 2),
     ];
     let graph = Graph::new(edges);
-    assert_eq!(false, graph.cycle_check());
+    assert_eq!(false, cycle_check(&graph));
 }
 
 #[test]
@@ -72,5 +79,6 @@ fn cycle() {
         InputEdge::new(5, 2, 2),
     ];
     let graph = Graph::new(edges);
-    assert_eq!(true, graph.cycle_check());
+    assert_eq!(true, cycle_check(&graph));
+}
 }
