@@ -3,7 +3,7 @@ use std::{cmp::max, ops::Range};
 pub type NodeID = u32;
 pub type EdgeID = u32;
 
-#[derive(Eq, PartialOrd, Ord, PartialEq)]
+#[derive(Debug, Eq, PartialOrd, Ord, PartialEq)]
 pub struct InputEdge<EdgeDataT: Eq> {
     source: NodeID,
     target: NodeID,
@@ -78,7 +78,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
             graph.node_array.push(NodeArrayEntry::new(offset as EdgeID));
         }
 
-        //add sentinel at the end of the node array
+        // add sentinel at the end of the node array
         graph
             .node_array
             .push(NodeArrayEntry::new((input.len()) as EdgeID));
@@ -90,6 +90,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
                 data: edge.edge_data,
             })
             .collect();
+        debug_assert!(graph.check_integrity());
         graph
     }
 
@@ -135,6 +136,19 @@ impl<T: Ord + Copy> StaticGraph<T> {
 
     pub fn data(&self, e: EdgeID) -> &T {
         &self.edge_array[e as usize].data
+    }
+
+    // In time O(V+E) check that the following invariants hold:
+    // a) the target node of each edge is smaller than the number of nodes
+    // b) index values for nodes first_edges are strictly increasing
+    pub fn check_integrity(&self) -> bool {
+        self.edge_array
+            .iter()
+            .all(|edge_entry| (edge_entry.target as usize) < self.number_of_nodes())
+            && self
+                .node_array
+                .windows(2)
+                .all(|pair| pair[0].first_edge <= pair[1].first_edge)
     }
 
     /// Returns whether the graph contains a cycle by running a node
@@ -202,7 +216,6 @@ mod tests {
             InputEdge::new(1, 5, 2),
         ];
         let graph = Graph::new(edges);
-
         assert_eq!(6, graph.number_of_nodes());
         assert_eq!(8, graph.number_of_edges());
     }
