@@ -155,7 +155,10 @@ impl<T: Ord + Copy> Graph<T> for StaticGraph<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{graph::Graph, static_graph::{InputEdge, StaticGraph}};
+    use crate::{
+        graph::Graph,
+        static_graph::{InputEdge, StaticGraph},
+    };
 
     #[test]
     fn size() {

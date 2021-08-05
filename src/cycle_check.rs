@@ -47,37 +47,39 @@ pub fn cycle_check<T>(graph: &(dyn Graph<T> + 'static)) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::{cycle_check::cycle_check, static_graph::{InputEdge, StaticGraph}};
+    use crate::{
+        cycle_check::cycle_check,
+        static_graph::{InputEdge, StaticGraph},
+    };
 
+    #[test]
+    fn no_cycle() {
+        type Graph = StaticGraph<i32>;
+        let edges = vec![
+            InputEdge::new(0, 1, 3),
+            InputEdge::new(1, 2, 3),
+            InputEdge::new(4, 2, 1),
+            InputEdge::new(2, 3, 6),
+            InputEdge::new(0, 4, 2),
+            InputEdge::new(4, 5, 2),
+            InputEdge::new(5, 3, 7),
+            InputEdge::new(1, 5, 2),
+        ];
+        let graph = Graph::new(edges);
+        assert_eq!(false, cycle_check(&graph));
+    }
 
-#[test]
-fn no_cycle() {
-    type Graph = StaticGraph<i32>;
-    let edges = vec![
-        InputEdge::new(0, 1, 3),
-        InputEdge::new(1, 2, 3),
-        InputEdge::new(4, 2, 1),
-        InputEdge::new(2, 3, 6),
-        InputEdge::new(0, 4, 2),
-        InputEdge::new(4, 5, 2),
-        InputEdge::new(5, 3, 7),
-        InputEdge::new(1, 5, 2),
-    ];
-    let graph = Graph::new(edges);
-    assert_eq!(false, cycle_check(&graph));
-}
-
-#[test]
-fn cycle() {
-    type Graph = StaticGraph<i32>;
-    let edges = vec![
-        InputEdge::new(0, 1, 3),
-        InputEdge::new(2, 3, 3),
-        InputEdge::new(3, 4, 1),
-        InputEdge::new(4, 5, 6),
-        InputEdge::new(5, 2, 2),
-    ];
-    let graph = Graph::new(edges);
-    assert_eq!(true, cycle_check(&graph));
-}
+    #[test]
+    fn cycle() {
+        type Graph = StaticGraph<i32>;
+        let edges = vec![
+            InputEdge::new(0, 1, 3),
+            InputEdge::new(2, 3, 3),
+            InputEdge::new(3, 4, 1),
+            InputEdge::new(4, 5, 6),
+            InputEdge::new(5, 2, 2),
+        ];
+        let graph = Graph::new(edges);
+        assert_eq!(true, cycle_check(&graph));
+    }
 }
