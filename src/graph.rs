@@ -1,5 +1,7 @@
 use std::ops::Range;
 
+use crate::static_graph::NodeArrayEntry;
+
 pub type NodeID = u32;
 pub type EdgeID = u32;
 
@@ -14,4 +16,5 @@ pub trait Graph<T> {
     fn target(&self, e: EdgeID) -> NodeID;
     fn data(&self, e: EdgeID) -> &T;
     fn data_mut(&mut self, e: EdgeID) -> &mut T;
+    fn find_edge(&self, s: NodeID, t: NodeID) -> Option<EdgeID>;
 }

@@ -155,6 +155,15 @@ impl<T: Ord + Copy> Graph<T> for StaticGraph<T> {
     fn data_mut(&mut self, e: EdgeID) -> &mut T {
         &mut self.edge_array[e as usize].data
     }
+
+    fn find_edge(&self, s: NodeID, t: NodeID) -> Option<EdgeID> {
+        for edge in self.edge_range(s) {
+            if self.target(edge) == t {
+                return Some(edge);
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]
