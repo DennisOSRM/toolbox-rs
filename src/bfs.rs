@@ -76,4 +76,33 @@ mod tests {
         path.reverse();
         assert_eq!(path, vec![0, 1, 5]);
     }
+
+    #[test]
+    fn s_all_query() {
+        type Graph = StaticGraph<i32>;
+        let edges = vec![
+            InputEdge::new(0, 1, 3),
+            InputEdge::new(1, 2, 3),
+            InputEdge::new(4, 2, 1),
+            InputEdge::new(2, 3, 6),
+            InputEdge::new(0, 4, 2),
+            InputEdge::new(4, 5, 2),
+            InputEdge::new(5, 3, 7),
+            InputEdge::new(1, 5, 2),
+        ];
+        let graph = Graph::new(edges);
+        let mut parents = Vec::new();
+        assert_eq!(true, bfs(&graph, 0, None, &mut parents));
+
+        // path unpacking
+        let mut id = 3;
+        let mut path = Vec::new();
+        while id != parents[id as usize] {
+            path.push(id);
+            id = parents[id as usize];
+        }
+        path.push(id);
+        path.reverse();
+        assert_eq!(path, vec![0, 1, 2, 3]);
+    }
 }
