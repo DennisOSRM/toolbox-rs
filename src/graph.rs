@@ -1,7 +1,5 @@
 use std::ops::Range;
 
-use crate::static_graph::NodeArrayEntry;
-
 pub type NodeID = u32;
 pub type EdgeID = u32;
 
