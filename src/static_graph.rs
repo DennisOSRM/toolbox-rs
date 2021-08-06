@@ -44,9 +44,6 @@ pub struct StaticGraph<T: Ord> {
 }
 
 impl<T: Ord + Copy> StaticGraph<T> {
-    pub const INVALID_NODE_ID: NodeID = NodeID::MAX;
-    pub const INVALID_EDGE_ID: EdgeID = EdgeID::MAX;
-
     pub fn default() -> Self {
         Self {
             node_array: Vec::new(),

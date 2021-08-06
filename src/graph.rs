@@ -2,6 +2,8 @@ use std::ops::Range;
 
 pub type NodeID = u32;
 pub type EdgeID = u32;
+pub const INVALID_NODE_ID: NodeID = NodeID::MAX;
+pub const INVALID_EDGE_ID: EdgeID = EdgeID::MAX;
 
 pub trait Graph<T> {
     fn node_range(&self) -> Range<NodeID>;
