@@ -1,12 +1,12 @@
-use std::{cmp::max, ops::Range};
+use std::{cmp::max, mem::swap, ops::Range};
 
 use crate::graph::{EdgeID, Graph, NodeID};
 
-#[derive(Debug, Eq, PartialOrd, Ord, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialOrd, Ord, PartialEq)]
 pub struct InputEdge<EdgeDataT: Eq> {
-    source: NodeID,
-    target: NodeID,
-    edge_data: EdgeDataT,
+    pub source: NodeID,
+    pub target: NodeID,
+    pub data: EdgeDataT,
 }
 
 impl<EdgeDataT: Eq> InputEdge<EdgeDataT> {
@@ -14,8 +14,12 @@ impl<EdgeDataT: Eq> InputEdge<EdgeDataT> {
         Self {
             source: s,
             target: t,
-            edge_data: d,
+            data: d,
         }
+    }
+
+    pub fn reverse(&mut self) {
+        swap(&mut self.source, &mut self.target);
     }
 }
 
@@ -86,7 +90,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
             .iter()
             .map(|edge| EdgeArrayEntry {
                 target: edge.target,
-                data: edge.edge_data,
+                data: edge.data,
             })
             .collect();
         debug_assert!(graph.check_integrity());
