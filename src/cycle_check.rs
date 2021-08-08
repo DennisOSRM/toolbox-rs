@@ -28,8 +28,12 @@ pub fn cycle_check<T>(graph: &(impl Graph<T> + 'static)) -> bool {
                     // push unvisited children to stack
                     let target = graph.target(edge);
                     match node_colors[target as usize] {
-                        Colors::White => { stack.push(target);},
-                        Colors::Grey => {return true;},
+                        Colors::White => {
+                            stack.push(target);
+                        }
+                        Colors::Grey => {
+                            return true;
+                        }
                         _ => {}
                     };
                 }
