@@ -1,4 +1,4 @@
-use staticgraph::{graph::Graph, static_graph::*};
+use staticgraph::{bfs::bfs, static_graph::*};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct EdgeData {
@@ -46,7 +46,7 @@ fn main() {
         edge.reverse();
         edge.data.forward = false;
     });
-    // dedup-merge edges
+    // dedup-merge edge set
     edges.sort();
     edges.dedup_by(|a, mut b| {
         let result = a.source == b.source && a.target == b.target;
@@ -60,4 +60,23 @@ fn main() {
     println!("len: {}, capacity: {}", edges.len(), edges.capacity());
 
     let mut graph = Graph::new(edges);
+
+    let mut parents = Vec::new();
+    while bfs(&graph, vec![0], vec![5], &mut parents) {
+        // retrieve path
+        let mut id = 5;
+        let mut path = Vec::new();
+        while id != parents[id as usize] {
+            path.push(id);
+            id = parents[id as usize];
+        }
+        path.push(id);
+        path.reverse();
+        assert_eq!(path, vec![0, 1, 3, 5]);
+        println!("found path {:#?}", path);
+
+        // todo(dluxen): assign flow to Graph
+    }
+
+    // todo(dluxen): retrieve cut
 }

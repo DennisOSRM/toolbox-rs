@@ -3,8 +3,13 @@ use std::collections::{HashSet, VecDeque};
 use crate::graph::{Graph, NodeID, INVALID_NODE_ID};
 
 /// explore the graph in a BFS
+/// returns true if a path between s and t was found or no target was given
+// todo(dluxen): introduce node set macro
+// todo(dluxen): convert to struct with run(.) and retrieve_path(.) function
+// todo(dluxen): retrieve edge list rather than string of nodes
 pub fn bfs<T>(
-    graph: &(dyn Graph<T> + 'static),
+    graph: &(impl Graph<T> + 'static),
+    // todo(dluxen): ^^ run experiment on dyn vs impl
     sources: Vec<NodeID>,
     targets: Vec<NodeID>,
     parents: &mut Vec<NodeID>,
@@ -21,8 +26,6 @@ pub fn bfs<T>(
     }
 
     while let Some(node) = queue.pop_back() {
-        // parents[node as usize] =
-
         for edge in graph.edge_range(node) {
             let target = graph.target(edge);
             if parents[target as usize] != INVALID_NODE_ID {
