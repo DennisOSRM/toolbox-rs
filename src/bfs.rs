@@ -1,22 +1,24 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use crate::graph::{Graph, NodeID, INVALID_NODE_ID};
 
 /// explore the graph in a BFS
-/// TODO(dluxen): check if source and target sets can be handled by slices
 pub fn bfs<T>(
     graph: &(dyn Graph<T> + 'static),
-    s: NodeID,
-    t: Option<NodeID>,
+    sources: Vec<NodeID>,
+    targets: Vec<NodeID>,
     parents: &mut Vec<NodeID>,
 ) -> bool {
     parents.clear();
     parents.resize(graph.number_of_nodes(), INVALID_NODE_ID);
 
-    parents[s as usize] = s;
+    let target_set: HashSet<u32> = targets.into_iter().collect();
 
     let mut queue = VecDeque::new();
-    queue.push_front(s);
+    for s in sources {
+        parents[s as usize] = s;
+        queue.push_front(s);
+    }
 
     while let Some(node) = queue.pop_back() {
         // parents[node as usize] =
@@ -28,7 +30,7 @@ pub fn bfs<T>(
                 continue;
             }
             parents[target as usize] = node;
-            if t.is_some() && t.unwrap() == target {
+            if target_set.contains(&target) {
                 // check if we have found our target if it exists
                 return true;
             }
@@ -37,7 +39,7 @@ pub fn bfs<T>(
     }
 
     // return true only if all nodes should have been explored
-    t.is_none()
+    target_set.is_empty()
 }
 
 #[cfg(test)]
@@ -62,7 +64,7 @@ mod tests {
         ];
         let graph = Graph::new(edges);
         let mut parents = Vec::new();
-        assert_eq!(true, bfs(&graph, 0, Some(5), &mut parents));
+        assert_eq!(true, bfs(&graph, vec![0], vec![5], &mut parents));
 
         // path unpacking
         // TODO(dluxen): move to function?
@@ -92,7 +94,7 @@ mod tests {
         ];
         let graph = Graph::new(edges);
         let mut parents = Vec::new();
-        assert_eq!(true, bfs(&graph, 0, None, &mut parents));
+        assert_eq!(true, bfs(&graph, vec![0], vec![], &mut parents));
 
         // path unpacking
         let mut id = 3;
@@ -104,5 +106,34 @@ mod tests {
         path.push(id);
         path.reverse();
         assert_eq!(path, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn multi_s_all_query() {
+        type Graph = StaticGraph<i32>;
+        let edges = vec![
+            InputEdge::new(0, 1, 3),
+            InputEdge::new(1, 2, 3),
+            InputEdge::new(4, 2, 1),
+            InputEdge::new(2, 3, 6),
+            InputEdge::new(0, 4, 2),
+            InputEdge::new(4, 5, 2),
+            InputEdge::new(5, 3, 7),
+            InputEdge::new(1, 5, 2),
+        ];
+        let graph = Graph::new(edges);
+        let mut parents = Vec::new();
+        assert_eq!(true, bfs(&graph, vec![0, 1], vec![], &mut parents));
+
+        // path unpacking
+        let mut id = 3;
+        let mut path = Vec::new();
+        while id != parents[id as usize] {
+            path.push(id);
+            id = parents[id as usize];
+        }
+        path.push(id);
+        path.reverse();
+        assert_eq!(path, vec![1, 2, 3]);
     }
 }
