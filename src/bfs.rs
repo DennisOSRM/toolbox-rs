@@ -1,70 +1,112 @@
-use std::collections::{HashSet, VecDeque};
+use std::{
+    collections::{HashSet, VecDeque},
+    marker::PhantomData,
+};
 
 use crate::graph::{EdgeID, Graph, NodeID, INVALID_NODE_ID};
 
-pub fn bfs<T>(
-    graph: &(impl Graph<T> + 'static),
-    sources: Vec<NodeID>,
-    targets: Vec<NodeID>,
-    parents: &mut Vec<NodeID>,
-) -> bool {
-    bfs_with_filter(graph, sources, targets, parents, |_edge| false)
+pub struct BFS<'a, T, G: Graph<T>> {
+    graph: &'a G,
+    parents: Vec<EdgeID>,
+    dummy: PhantomData<T>,
 }
 
-/// explore the graph in a BFS
-/// returns true if a path between s and t was found or no target was given
-// todo(dluxen): introduce node set macro
-// todo(dluxen): convert to struct with run(.) and retrieve_path(.) function
-// todo(dluxen): retrieve edge list rather than string of nodes
-pub fn bfs_with_filter<T, F>(
-    graph: &(impl Graph<T> + 'static),
-    // todo(dluxen): ^^ run experiment on dyn vs impl
-    sources: Vec<NodeID>,
-    targets: Vec<NodeID>,
-    parents: &mut Vec<NodeID>,
-    filter: F,
-) -> bool
-where
-    F: Fn(EdgeID) -> bool,
-{
-    parents.clear();
-    parents.resize(graph.number_of_nodes(), INVALID_NODE_ID);
-
-    let target_set: HashSet<u32> = targets.into_iter().collect();
-
-    let mut queue = VecDeque::new();
-    for s in sources {
-        parents[s as usize] = s;
-        queue.push_front(s);
-    }
-
-    while let Some(node) = queue.pop_back() {
-        for edge in graph.edge_range(node) {
-            if filter(edge) {
-                continue;
-            }
-            let target = graph.target(edge);
-            if parents[target as usize] != INVALID_NODE_ID {
-                // we already have seen this node and can ignore it
-                continue;
-            }
-            parents[target as usize] = node;
-            if target_set.contains(&target) {
-                // check if we have found our target if it exists
-                return true;
-            }
-            queue.push_front(target);
+impl<'a, T, G: Graph<T>> BFS<'a, T, G> {
+    pub fn new(graph: &'a G) -> Self {
+        Self {
+            graph: &graph,
+            parents: Vec::new(),
+            dummy: PhantomData,
         }
     }
 
-    // return true only if all nodes should have been explored
-    target_set.is_empty()
+    pub fn run(&mut self, sources: Vec<NodeID>, targets: Vec<NodeID>) -> bool {
+        self.run_with_filter(sources, targets, |_edge| false)
+    }
+
+    /// explore the graph in a BFS
+    /// returns true if a path between s and t was found or no target was given
+    // todo(dluxen): introduce node set macro
+    // todo(dluxen): convert to struct with run(.) and retrieve_path(.) function
+    // todo(dluxen): retrieve edge list rather than string of nodes
+    pub fn run_with_filter<F>(
+        &mut self,
+        sources: Vec<NodeID>,
+        targets: Vec<NodeID>,
+        filter: F,
+    ) -> bool
+    where
+        F: Fn(EdgeID) -> bool,
+    {
+        self.parents.clear();
+        self.parents
+            .resize(self.graph.number_of_nodes(), INVALID_NODE_ID);
+
+        let target_set: HashSet<u32> = targets.into_iter().collect();
+
+        let mut queue = VecDeque::new();
+        for s in sources {
+            self.parents[s as usize] = s;
+            queue.push_front(s);
+        }
+
+        while let Some(node) = queue.pop_back() {
+            for edge in self.graph.edge_range(node) {
+                if filter(edge) {
+                    continue;
+                }
+                let target = self.graph.target(edge);
+                if self.parents[target as usize] != INVALID_NODE_ID {
+                    // we already have seen this node and can ignore it
+                    continue;
+                }
+                self.parents[target as usize] = node;
+                if target_set.contains(&target) {
+                    // check if we have found our target if it exists
+                    return true;
+                }
+                queue.push_front(target);
+            }
+        }
+
+        // return true only if all nodes should have been explored
+        target_set.is_empty()
+    }
+
+    pub fn fetch_node_path(&self, t: NodeID) -> Vec<NodeID> {
+        // path unpacking
+        // TODO(dluxen): move to function?
+        let mut id = t;
+        let mut path = Vec::new();
+        while id != self.parents[id as usize] {
+            path.push(id);
+            id = self.parents[id as usize];
+        }
+        path.push(id);
+        path.reverse();
+        path
+    }
+
+    pub fn fetch_edge_path(&self, t: NodeID) -> Vec<EdgeID> {
+        // path unpacking
+        // TODO(dluxen): move to function?
+        let mut id = t;
+        let mut path = Vec::new();
+        while id != self.parents[id as usize] {
+            let edge_id = self.graph.find_edge(self.parents[id as usize], id).unwrap();
+            path.push(edge_id);
+            id = self.parents[id as usize];
+        }
+
+        path.reverse();
+        path
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        bfs::bfs,
+        bfs::BFS,
         graph::Graph,
         static_graph::{InputEdge, StaticGraph},
     };
@@ -83,19 +125,10 @@ mod tests {
             InputEdge::new(1, 5, 2),
         ];
         let graph = Graph::new(edges);
-        let mut parents = Vec::new();
-        assert_eq!(true, bfs(&graph, vec![0], vec![5], &mut parents));
+        let mut bfs = BFS::new(&graph);
+        assert_eq!(true, bfs.run(vec![0], vec![5]));
 
-        // path unpacking
-        // TODO(dluxen): move to function?
-        let mut id = 5;
-        let mut path = Vec::new();
-        while id != parents[id as usize] {
-            path.push(id);
-            id = parents[id as usize];
-        }
-        path.push(id);
-        path.reverse();
+        let path = bfs.fetch_node_path(5);
         assert_eq!(path, vec![0, 1, 5]);
     }
 
@@ -113,21 +146,9 @@ mod tests {
             InputEdge::new(1, 5, 2),
         ];
         let graph = Graph::new(edges);
-        let mut parents = Vec::new();
-        assert_eq!(true, bfs(&graph, vec![0], vec![5], &mut parents));
-
-        // path unpacking
-        // TODO(dluxen): move to function?
-        let mut id = 5;
-        let mut path = Vec::new();
-        while id != parents[id as usize] {
-            let edge_id = graph.find_edge(parents[id as usize], id).unwrap();
-            path.push(edge_id);
-            id = parents[id as usize];
-        }
-
-        // path.push(id);
-        path.reverse();
+        let mut bfs = BFS::new(&graph);
+        assert_eq!(true, bfs.run(vec![0], vec![5]));
+        let path = bfs.fetch_edge_path(5);
         assert_eq!(path, vec![0, 3]);
     }
 
@@ -145,18 +166,10 @@ mod tests {
             InputEdge::new(1, 5, 2),
         ];
         let graph = Graph::new(edges);
-        let mut parents = Vec::new();
-        assert_eq!(true, bfs(&graph, vec![0], vec![], &mut parents));
+        let mut bfs = BFS::new(&graph);
+        assert_eq!(true, bfs.run(vec![0], vec![]));
 
-        // path unpacking
-        let mut id = 3;
-        let mut path = Vec::new();
-        while id != parents[id as usize] {
-            path.push(id);
-            id = parents[id as usize];
-        }
-        path.push(id);
-        path.reverse();
+        let path = bfs.fetch_node_path(3);
         assert_eq!(path, vec![0, 1, 2, 3]);
     }
 
@@ -174,18 +187,11 @@ mod tests {
             InputEdge::new(1, 5, 2),
         ];
         let graph = Graph::new(edges);
-        let mut parents = Vec::new();
-        assert_eq!(true, bfs(&graph, vec![0, 1], vec![], &mut parents));
+        let mut bfs = BFS::new(&graph);
+        assert_eq!(true, bfs.run(vec![0, 1], vec![]));
 
         // path unpacking
-        let mut id = 3;
-        let mut path = Vec::new();
-        while id != parents[id as usize] {
-            path.push(id);
-            id = parents[id as usize];
-        }
-        path.push(id);
-        path.reverse();
+        let path = bfs.fetch_node_path(3);
         assert_eq!(path, vec![1, 2, 3]);
     }
 }
