@@ -4,13 +4,13 @@ use crate::graph::{EdgeID, Graph, NodeID, INVALID_NODE_ID};
 
 pub fn bfs<T>(
     graph: &(impl Graph<T> + 'static),
-    // todo(dluxen): ^^ run experiment on dyn vs impl
     sources: Vec<NodeID>,
     targets: Vec<NodeID>,
     parents: &mut Vec<NodeID>,
 ) -> bool {
     bfs_with_filter(graph, sources, targets, parents, |_edge| false)
 }
+
 /// explore the graph in a BFS
 /// returns true if a path between s and t was found or no target was given
 // todo(dluxen): introduce node set macro
@@ -65,11 +65,12 @@ where
 mod tests {
     use crate::{
         bfs::bfs,
+        graph::Graph,
         static_graph::{InputEdge, StaticGraph},
     };
 
     #[test]
-    fn s_t_query() {
+    fn s_t_query_fetch_node_string() {
         type Graph = StaticGraph<i32>;
         let edges = vec![
             InputEdge::new(0, 1, 3),
@@ -96,6 +97,38 @@ mod tests {
         path.push(id);
         path.reverse();
         assert_eq!(path, vec![0, 1, 5]);
+    }
+
+    #[test]
+    fn s_t_query_edge_list() {
+        type Graph = StaticGraph<i32>;
+        let edges = vec![
+            InputEdge::new(0, 1, 3),
+            InputEdge::new(1, 2, 3),
+            InputEdge::new(4, 2, 1),
+            InputEdge::new(2, 3, 6),
+            InputEdge::new(0, 4, 2),
+            InputEdge::new(4, 5, 2),
+            InputEdge::new(5, 3, 7),
+            InputEdge::new(1, 5, 2),
+        ];
+        let graph = Graph::new(edges);
+        let mut parents = Vec::new();
+        assert_eq!(true, bfs(&graph, vec![0], vec![5], &mut parents));
+
+        // path unpacking
+        // TODO(dluxen): move to function?
+        let mut id = 5;
+        let mut path = Vec::new();
+        while id != parents[id as usize] {
+            let edge_id = graph.find_edge(parents[id as usize], id).unwrap();
+            path.push(edge_id);
+            id = parents[id as usize];
+        }
+
+        // path.push(id);
+        path.reverse();
+        assert_eq!(path, vec![0, 3]);
     }
 
     #[test]
