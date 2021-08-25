@@ -14,7 +14,7 @@ pub struct BFS<'a, T, G: Graph<T>> {
 impl<'a, T, G: Graph<T>> BFS<'a, T, G> {
     pub fn new(graph: &'a G) -> Self {
         Self {
-            graph: &graph,
+            graph,
             parents: Vec::new(),
             dummy: PhantomData,
         }
@@ -107,7 +107,6 @@ impl<'a, T, G: Graph<T>> BFS<'a, T, G> {
 mod tests {
     use crate::{
         bfs::BFS,
-        graph::Graph,
         static_graph::{InputEdge, StaticGraph},
     };
 
