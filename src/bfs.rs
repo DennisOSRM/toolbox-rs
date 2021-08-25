@@ -1,12 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 
-use crate::graph::{Graph, NodeID, INVALID_NODE_ID};
+use crate::graph::{EdgeID, Graph, NodeID, INVALID_NODE_ID};
 
-/// explore the graph in a BFS
-/// returns true if a path between s and t was found or no target was given
-// todo(dluxen): introduce node set macro
-// todo(dluxen): convert to struct with run(.) and retrieve_path(.) function
-// todo(dluxen): retrieve edge list rather than string of nodes
 pub fn bfs<T>(
     graph: &(impl Graph<T> + 'static),
     // todo(dluxen): ^^ run experiment on dyn vs impl
@@ -14,6 +9,24 @@ pub fn bfs<T>(
     targets: Vec<NodeID>,
     parents: &mut Vec<NodeID>,
 ) -> bool {
+    bfs_with_filter(graph, sources, targets, parents, |_edge| false)
+}
+/// explore the graph in a BFS
+/// returns true if a path between s and t was found or no target was given
+// todo(dluxen): introduce node set macro
+// todo(dluxen): convert to struct with run(.) and retrieve_path(.) function
+// todo(dluxen): retrieve edge list rather than string of nodes
+pub fn bfs_with_filter<T, F>(
+    graph: &(impl Graph<T> + 'static),
+    // todo(dluxen): ^^ run experiment on dyn vs impl
+    sources: Vec<NodeID>,
+    targets: Vec<NodeID>,
+    parents: &mut Vec<NodeID>,
+    filter: F,
+) -> bool
+where
+    F: Fn(EdgeID) -> bool,
+{
     parents.clear();
     parents.resize(graph.number_of_nodes(), INVALID_NODE_ID);
 
@@ -27,6 +40,9 @@ pub fn bfs<T>(
 
     while let Some(node) = queue.pop_back() {
         for edge in graph.edge_range(node) {
+            if filter(edge) {
+                continue;
+            }
             let target = graph.target(edge);
             if parents[target as usize] != INVALID_NODE_ID {
                 // we already have seen this node and can ignore it
