@@ -8,6 +8,7 @@ use crate::graph::{EdgeID, Graph, NodeID, INVALID_NODE_ID};
 pub struct BFS<'a, T, G: Graph<T>> {
     graph: &'a G,
     parents: Vec<EdgeID>,
+    target: NodeID,
     dummy: PhantomData<T>,
 }
 
@@ -16,6 +17,7 @@ impl<'a, T, G: Graph<T>> BFS<'a, T, G> {
         Self {
             graph,
             parents: Vec::new(),
+            target: INVALID_NODE_ID,
             dummy: PhantomData,
         }
     }
@@ -62,6 +64,7 @@ impl<'a, T, G: Graph<T>> BFS<'a, T, G> {
                 }
                 self.parents[target as usize] = node;
                 if target_set.contains(&target) {
+                    self.target = target;
                     // check if we have found our target if it exists
                     return true;
                 }
@@ -73,9 +76,23 @@ impl<'a, T, G: Graph<T>> BFS<'a, T, G> {
         target_set.is_empty()
     }
 
-    pub fn fetch_node_path(&self, t: NodeID) -> Vec<NodeID> {
-        // path unpacking
-        // TODO(dluxen): move to function?
+    // path unpacking, by searching for the first target that was found
+    // and by then unwinding the path of nodes to it.
+    pub fn fetch_node_path(&self) -> Vec<NodeID> {
+        let mut id = self.target;
+        let mut path = Vec::new();
+        while id != self.parents[id as usize] {
+            path.push(id);
+            id = self.parents[id as usize];
+        }
+        path.push(id);
+        path.reverse();
+        path
+    }
+
+    // path unpacking, by searching for the first target that was found
+    // and by then unwinding the path of nodes to it.
+    pub fn fetch_node_path_from_node(&self, t: NodeID) -> Vec<NodeID> {
         let mut id = t;
         let mut path = Vec::new();
         while id != self.parents[id as usize] {
@@ -87,10 +104,9 @@ impl<'a, T, G: Graph<T>> BFS<'a, T, G> {
         path
     }
 
-    pub fn fetch_edge_path(&self, t: NodeID) -> Vec<EdgeID> {
+    pub fn fetch_edge_path(&self) -> Vec<EdgeID> {
         // path unpacking
-        // TODO(dluxen): move to function?
-        let mut id = t;
+        let mut id = self.target;
         let mut path = Vec::new();
         while id != self.parents[id as usize] {
             let edge_id = self.graph.find_edge(self.parents[id as usize], id).unwrap();
@@ -127,7 +143,7 @@ mod tests {
         let mut bfs = BFS::new(&graph);
         assert_eq!(true, bfs.run(vec![0], vec![5]));
 
-        let path = bfs.fetch_node_path(5);
+        let path = bfs.fetch_node_path();
         assert_eq!(path, vec![0, 1, 5]);
     }
 
@@ -147,7 +163,7 @@ mod tests {
         let graph = Graph::new(edges);
         let mut bfs = BFS::new(&graph);
         assert_eq!(true, bfs.run(vec![0], vec![5]));
-        let path = bfs.fetch_edge_path(5);
+        let path = bfs.fetch_edge_path();
         assert_eq!(path, vec![0, 3]);
     }
 
@@ -168,7 +184,7 @@ mod tests {
         let mut bfs = BFS::new(&graph);
         assert_eq!(true, bfs.run(vec![0], vec![]));
 
-        let path = bfs.fetch_node_path(3);
+        let path = bfs.fetch_node_path_from_node(3);
         assert_eq!(path, vec![0, 1, 2, 3]);
     }
 
@@ -190,7 +206,7 @@ mod tests {
         assert_eq!(true, bfs.run(vec![0, 1], vec![]));
 
         // path unpacking
-        let path = bfs.fetch_node_path(3);
+        let path = bfs.fetch_node_path_from_node(3);
         assert_eq!(path, vec![1, 2, 3]);
     }
 }

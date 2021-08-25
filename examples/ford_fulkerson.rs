@@ -65,9 +65,11 @@ fn main() {
     while bfs.run_with_filter(vec![0], vec![5], filter) {
         // retrieve path
         // todo(dluxen): switch to edge path
-        let path = bfs.fetch_node_path(5);
+        let path = bfs.fetch_node_path();
         assert_eq!(path, vec![0, 1, 3, 5]);
-        println!("found path {:#?}", path);
+        println!("found node path {:#?}", path);
+        let path = bfs.fetch_edge_path();
+        println!("found edge path {:#?}", path);
 
         // todo(dluxen): assign flow to Graph
     }
