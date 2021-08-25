@@ -1,4 +1,4 @@
-use staticgraph::{bfs::BFS, static_graph::*};
+use staticgraph::{bfs::BFS, graph::Graph, static_graph::*};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct EdgeData {
@@ -61,7 +61,8 @@ fn main() {
 
     let mut graph = Graph::new(edges);
     let mut bfs = BFS::new(&graph);
-    while bfs.run(vec![0], vec![5]) {
+    let filter = |edge| graph.data(edge).capacity <= 0;
+    while bfs.run_with_filter(vec![0], vec![5], filter) {
         // retrieve path
         // todo(dluxen): switch to edge path
         let path = bfs.fetch_node_path(5);
