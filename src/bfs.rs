@@ -110,6 +110,12 @@ impl BFS {
     }
 }
 
+impl Default for BFS {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
