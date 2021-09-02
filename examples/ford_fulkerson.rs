@@ -1,4 +1,9 @@
-use staticgraph::{bfs::BFS, graph::Graph, static_graph::*};
+use bitvec::prelude::BitVec;
+use staticgraph::{
+    bfs::BFS,
+    graph::{Graph, NodeID},
+    static_graph::*,
+};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct EdgeData {
@@ -57,13 +62,6 @@ fn main() {
     // at this point the edge set doesn't have any duplicates anymore.
     // note that this is fine, as we are looking to compute a node partition
 
-    // println!("{:#?}", edges);
-    // println!(
-    //     "edge list len: {}, capacity: {}",
-    //     edges.len(),
-    //     edges.capacity()
-    // );
-
     let mut graph = Graph::new(edges);
     let mut bfs = BFS::new();
     let filter = |graph: &Graph, edge| graph.data(edge).capacity <= 0;
@@ -99,8 +97,36 @@ fn main() {
         });
     }
 
-    // todo(dluxen): retrieve max-flow
+    // todo(dluxen): retrieve max-flow, requires an indicator if an edge
+    // was an input edge or is "just" a residual graph edge
+
+    // run a reachability analysis
+    let mut reachable: BitVec = BitVec::with_capacity(graph.number_of_nodes());
+    reachable.resize(graph.number_of_nodes(), false);
+    let mut stack = Vec::new();
+    stack.push(0);
+    while let Some(node) = stack.pop() {
+        reachable.set(node as usize, true);
+        println!("reached {}", node);
+        for edge in graph.edge_range(node) {
+            let target = graph.target(edge);
+            let reached = reachable.get(target as usize).unwrap();
+            if !reached && graph.data(edge).capacity > 0 {
+                stack.push(graph.target(edge));
+            }
+        }
+    }
+
     // todo(dluxen): retrieve min-cut
+    // iterate all edges, output those with negative flow
+    for s in 0..graph.number_of_nodes() as NodeID {
+        for e in graph.edge_range(s) {
+            let t = graph.target(e);
+            if reachable.get(s as usize).unwrap() != reachable.get(t as usize).unwrap() {
+                println!("cut edge ({},{})", s, t);
+            }
+        }
+    }
 
     println!("done.")
 }
