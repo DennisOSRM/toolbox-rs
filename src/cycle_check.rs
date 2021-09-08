@@ -66,7 +66,7 @@ mod tests {
             InputEdge::new(1, 5, 2),
         ];
         let graph = Graph::new(edges);
-        assert_eq!(false, cycle_check(&graph));
+        assert!(!cycle_check(&graph));
     }
 
     #[test]
@@ -80,6 +80,6 @@ mod tests {
             InputEdge::new(5, 2, 2),
         ];
         let graph = Graph::new(edges);
-        assert_eq!(true, cycle_check(&graph));
+        assert!(cycle_check(&graph));
     }
 }

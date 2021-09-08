@@ -18,8 +18,8 @@ impl BFS {
     pub fn run<T, G: Graph<T>>(
         &mut self,
         graph: &G,
-        sources: Vec<NodeID>,
-        targets: Vec<NodeID>,
+        sources: &[NodeID],
+        targets: &[NodeID],
     ) -> bool {
         self.run_with_filter(graph, sources, targets, |_graph, _edge| false)
     }
@@ -32,8 +32,8 @@ impl BFS {
     pub fn run_with_filter<T, F, G: Graph<T>>(
         &mut self,
         graph: &G,
-        sources: Vec<NodeID>,
-        targets: Vec<NodeID>,
+        sources: &[NodeID],
+        targets: &[NodeID],
         filter: F,
     ) -> bool
     where
@@ -43,12 +43,12 @@ impl BFS {
         self.parents
             .resize(graph.number_of_nodes(), INVALID_NODE_ID);
 
-        let target_set: HashSet<u32> = targets.into_iter().collect();
+        let target_set: HashSet<&u32> = targets.iter().collect();
 
         let mut queue = VecDeque::new();
         for s in sources {
-            self.parents[s as usize] = s;
-            queue.push_front(s);
+            self.parents[*s as usize] = *s;
+            queue.push_front(*s);
         }
 
         while let Some(node) = queue.pop_back() {
@@ -138,7 +138,7 @@ mod tests {
         ];
         let graph = Graph::new(edges);
         let mut bfs = BFS::new();
-        assert_eq!(true, bfs.run(&graph, vec![0], vec![5]));
+        assert!(bfs.run(&graph, &[0], &[5]));
 
         let path = bfs.fetch_node_path();
         assert_eq!(path, vec![0, 1, 5]);
@@ -159,7 +159,7 @@ mod tests {
         ];
         let graph = Graph::new(edges);
         let mut bfs = BFS::new();
-        assert_eq!(true, bfs.run(&graph, vec![0], vec![5]));
+        assert!(bfs.run(&graph, &[0], &[5]));
         let path = bfs.fetch_edge_path(&graph);
         assert_eq!(path, vec![0, 3]);
     }
@@ -179,7 +179,7 @@ mod tests {
         ];
         let graph = Graph::new(edges);
         let mut bfs = BFS::new();
-        assert_eq!(true, bfs.run(&graph, vec![0], vec![]));
+        assert!(bfs.run(&graph, &[0], &[]));
 
         let path = bfs.fetch_node_path_from_node(3);
         assert_eq!(path, vec![0, 1, 2, 3]);
@@ -200,7 +200,7 @@ mod tests {
         ];
         let graph = Graph::new(edges);
         let mut bfs = BFS::new();
-        assert_eq!(true, bfs.run(&graph, vec![0, 1], vec![]));
+        assert!(bfs.run(&graph, &[0, 1], &[]));
 
         // path unpacking
         let path = bfs.fetch_node_path_from_node(3);
