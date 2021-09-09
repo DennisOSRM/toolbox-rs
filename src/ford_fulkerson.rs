@@ -103,6 +103,9 @@ impl FordFulkerson {
             stack.push(*s);
         }
         while let Some(node) = stack.pop() {
+            if *reachable.get(node as usize).unwrap() {
+                continue;
+            }
             reachable.set(node as usize, true);
             println!("reached {}", node);
             for edge in self.residual_graph.edge_range(node) {
@@ -147,6 +150,8 @@ mod tests {
     use crate::ford_fulkerson::EdgeData;
     use crate::ford_fulkerson::FordFulkerson;
     use crate::ford_fulkerson::InputEdge;
+    use bitvec::bits;
+    use bitvec::prelude::Lsb0;
 
     #[test]
     fn max_flow_clr() {
@@ -171,7 +176,52 @@ mod tests {
         // todo(dluxen): retrieve max-flow, requires an indicator if an edge
         // was an input edge or is "just" a residual graph edge
 
-        let assigment = max_flow.retrieve_assignment(&sources);
-        assert!(assigment.is_ok());
+        let result = max_flow.retrieve_assignment(&sources);
+        assert!(result.is_ok());
+        let assignment = match result {
+            Ok(assignment) => assignment,
+            Err(e) => {
+                panic!("Error: {}", e);
+            }
+        };
+
+        assert_eq!(assignment, bits![1, 1, 1, 0, 1, 0]);
+    }
+
+    #[test]
+    fn max_flow_ita() {
+        let edges = vec![
+            InputEdge::new(0, 1, EdgeData::new(5)),
+            InputEdge::new(0, 4, EdgeData::new(7)),
+            InputEdge::new(0, 5, EdgeData::new(6)),
+            InputEdge::new(1, 2, EdgeData::new(4)),
+            InputEdge::new(1, 7, EdgeData::new(3)),
+            InputEdge::new(4, 7, EdgeData::new(4)),
+            InputEdge::new(4, 6, EdgeData::new(1)),
+            InputEdge::new(5, 6, EdgeData::new(5)),
+            InputEdge::new(2, 3, EdgeData::new(3)),
+            InputEdge::new(7, 3, EdgeData::new(7)),
+            InputEdge::new(6, 7, EdgeData::new(1)),
+            InputEdge::new(6, 3, EdgeData::new(6)),
+        ];
+
+        let mut max_flow = FordFulkerson::from_edge_list(edges);
+        let sources = [0];
+        let targets = [3];
+        max_flow.run(&sources, &targets);
+
+        // todo(dluxen): retrieve max-flow, requires an indicator if an edge
+        // was an input edge or is "just" a residual graph edge
+
+        let result = max_flow.retrieve_assignment(&sources);
+        assert!(result.is_ok());
+        let assignment = match result {
+            Ok(assignment) => assignment,
+            Err(e) => {
+                panic!("Error: {}", e);
+            }
+        };
+
+        assert_eq!(assignment, bits![1, 0, 0, 0, 1, 1, 0, 0]);
     }
 }
