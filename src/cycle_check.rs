@@ -2,7 +2,7 @@ use crate::graph::Graph;
 
 /// Returns whether the graph contains a cycle by running a node
 /// coloring DFS
-pub fn cycle_check<T>(graph: &(dyn Graph<T> + 'static)) -> bool {
+pub fn cycle_check<T>(graph: &(impl Graph<T> + 'static)) -> bool {
     #[derive(Clone, PartialEq)]
     enum Colors {
         White,
@@ -27,13 +27,15 @@ pub fn cycle_check<T>(graph: &(dyn Graph<T> + 'static)) -> bool {
                 for edge in graph.edge_range(node) {
                     // push unvisited children to stack
                     let target = graph.target(edge);
-
-                    if node_colors[target as usize] == Colors::White {
-                        stack.push(target);
-                    } else if node_colors[target as usize] == Colors::Grey {
-                        // cycle detected
-                        return true;
-                    }
+                    match node_colors[target as usize] {
+                        Colors::White => {
+                            stack.push(target);
+                        }
+                        Colors::Grey => {
+                            return true;
+                        }
+                        _ => {}
+                    };
                 }
             } else if node_colors[node as usize] == Colors::Grey {
                 // post-order traversal
