@@ -282,4 +282,44 @@ mod tests {
             .expect("assignment computation did not run");
         assert_eq!(assignment, bits![1, 1, 0, 1, 0, 0]);
     }
+
+    #[test]
+    #[should_panic]
+    fn flow_not_computed() {
+        let edges = vec![
+            InputEdge::new(0, 1, EdgeData::new(7)),
+            InputEdge::new(0, 2, EdgeData::new(3)),
+            InputEdge::new(1, 2, EdgeData::new(1)),
+            InputEdge::new(1, 3, EdgeData::new(6)),
+            InputEdge::new(2, 4, EdgeData::new(8)),
+            InputEdge::new(3, 5, EdgeData::new(2)),
+            InputEdge::new(3, 2, EdgeData::new(3)),
+            InputEdge::new(4, 3, EdgeData::new(2)),
+            InputEdge::new(4, 5, EdgeData::new(8)),
+        ];
+
+        FordFulkerson::from_edge_list(edges)
+            .max_flow()
+            .expect("max flow computation did not run");
+    }
+
+    #[test]
+    #[should_panic]
+    fn assignment_not_computed() {
+        let edges = vec![
+            InputEdge::new(0, 1, EdgeData::new(7)),
+            InputEdge::new(0, 2, EdgeData::new(3)),
+            InputEdge::new(1, 2, EdgeData::new(1)),
+            InputEdge::new(1, 3, EdgeData::new(6)),
+            InputEdge::new(2, 4, EdgeData::new(8)),
+            InputEdge::new(3, 5, EdgeData::new(2)),
+            InputEdge::new(3, 2, EdgeData::new(3)),
+            InputEdge::new(4, 3, EdgeData::new(2)),
+            InputEdge::new(4, 5, EdgeData::new(8)),
+        ];
+
+        FordFulkerson::from_edge_list(edges)
+            .assignment(&[0])
+            .expect("assignment computation did not run");
+    }
 }
