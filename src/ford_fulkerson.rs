@@ -57,7 +57,7 @@ impl FordFulkerson {
         while bfs.run_with_filter(&self.residual_graph, sources, targets, filter) {
             // retrieve node path. This is sufficient, as we removed all duplicate edges
             let path = bfs.fetch_node_path();
-            println!("found node path {:#?}", path);
+            // println!("found node path {:#?}", path);
 
             // find min capacity on edges of the path
             let st_tuple = path
@@ -74,7 +74,7 @@ impl FordFulkerson {
                 .unwrap();
             let path_flow = self.residual_graph.data(bottleneck_capacity).capacity;
             assert!(path_flow > 0);
-            println!("min edge: {}, capacity: {}", bottleneck_capacity, path_flow);
+            // println!("min edge: {}, capacity: {}", bottleneck_capacity, path_flow);
             // sum up flow
             self.max_flow += path_flow;
 
@@ -115,7 +115,7 @@ impl FordFulkerson {
                 continue;
             }
             reachable.set(node as usize, true);
-            println!("reached {}", node);
+            // println!("reached {}", node);
             for edge in self.residual_graph.edge_range(node) {
                 let target = self.residual_graph.target(edge);
                 let reached = reachable.get(target as usize).unwrap();
@@ -131,12 +131,12 @@ impl FordFulkerson {
             for e in self.residual_graph.edge_range(s) {
                 let t = self.residual_graph.target(e);
                 if reachable.get(s as usize).unwrap() != reachable.get(t as usize).unwrap() {
-                    println!("cut edge ({},{})", s, t);
+                    // println!("cut edge ({},{})", s, t);
                 }
             }
         }
 
-        println!("done.");
+        // println!("done.");
         Ok(reachable)
     }
 }
@@ -213,5 +213,43 @@ mod tests {
             .assignment(&sources)
             .expect("assignment computation did not run");
         assert_eq!(assignment, bits![1, 0, 0, 0, 1, 1, 0, 0]);
+    }
+
+    #[test]
+    fn max_flow_yt() {
+        let edges = vec![
+            InputEdge::new(9, 0, EdgeData::new(5)),
+            InputEdge::new(9, 1, EdgeData::new(10)),
+            InputEdge::new(9, 2, EdgeData::new(15)),
+            InputEdge::new(0, 3, EdgeData::new(10)),
+            InputEdge::new(1, 0, EdgeData::new(15)),
+            InputEdge::new(1, 4, EdgeData::new(20)),
+            InputEdge::new(2, 5, EdgeData::new(25)),
+            InputEdge::new(3, 4, EdgeData::new(25)),
+            InputEdge::new(3, 6, EdgeData::new(10)),
+            InputEdge::new(4, 2, EdgeData::new(5)),
+            InputEdge::new(4, 7, EdgeData::new(30)),
+            InputEdge::new(5, 7, EdgeData::new(20)),
+            InputEdge::new(5, 8, EdgeData::new(10)),
+            InputEdge::new(7, 8, EdgeData::new(15)),
+            InputEdge::new(6, 10, EdgeData::new(5)),
+            InputEdge::new(7, 10, EdgeData::new(15)),
+            InputEdge::new(8, 10, EdgeData::new(10)),
+        ];
+
+        let mut max_flow_solver = FordFulkerson::from_edge_list(edges);
+        let sources = [9];
+        let targets = [10];
+        max_flow_solver.run(&sources, &targets);
+
+        let max_flow = max_flow_solver
+            .max_flow()
+            .expect("max flow computation did not run");
+        assert_eq!(30, max_flow);
+
+        let assignment = max_flow_solver
+            .assignment(&sources)
+            .expect("assignment computation did not run");
+        assert_eq!(assignment, bits![0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0]);
     }
 }
