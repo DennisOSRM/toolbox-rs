@@ -17,6 +17,7 @@ impl EdgeData {
 
 pub struct FordFulkerson {
     residual_graph: StaticGraph<EdgeData>,
+    max_flow: i32,
     finished: bool,
 }
 
@@ -45,6 +46,7 @@ impl FordFulkerson {
 
         Self {
             residual_graph: StaticGraph::new(edge_list),
+            max_flow: 0,
             finished: false,
         }
     }
@@ -66,16 +68,15 @@ impl FordFulkerson {
                 })
                 .unwrap();
 
-            let fwd_least_capacity_edge = self
+            let bottleneck_capacity = self
                 .residual_graph
                 .find_edge(st_tuple[0], st_tuple[1])
                 .unwrap();
-            let path_flow = self.residual_graph.data(fwd_least_capacity_edge).capacity;
+            let path_flow = self.residual_graph.data(bottleneck_capacity).capacity;
             assert!(path_flow > 0);
-            println!(
-                "min edge: {}, capacity: {}",
-                fwd_least_capacity_edge, path_flow
-            );
+            println!("min edge: {}, capacity: {}", bottleneck_capacity, path_flow);
+            // sum up flow
+            self.max_flow += path_flow;
 
             // assign flow to residual graph
             path.windows(2).for_each(|pair| {
@@ -90,7 +91,14 @@ impl FordFulkerson {
         self.finished = true;
     }
 
-    pub fn retrieve_assignment(&self, sources: &[NodeID]) -> Result<BitVec, String> {
+    pub fn max_flow(&self) -> Result<i32, String> {
+        if !self.finished {
+            return Err("Assigment was not computed.".to_string());
+        }
+        Ok(self.max_flow)
+    }
+
+    pub fn assignment(&self, sources: &[NodeID]) -> Result<BitVec, String> {
         if !self.finished {
             return Err("Assigment was not computed.".to_string());
         }
@@ -157,22 +165,19 @@ mod tests {
             InputEdge::new(4, 5, EdgeData::new(4)),
         ];
 
-        let mut max_flow = FordFulkerson::from_edge_list(edges);
+        let mut max_flow_solver = FordFulkerson::from_edge_list(edges);
         let sources = [0];
         let targets = [5];
-        max_flow.run(&sources, &targets);
+        max_flow_solver.run(&sources, &targets);
 
-        // todo(dluxen): retrieve max-flow, requires an indicator if an edge
-        // was an input edge or is "just" a residual graph edge
+        let max_flow = max_flow_solver
+            .max_flow()
+            .expect("max flow computation did not run");
+        assert_eq!(23, max_flow);
 
-        let result = max_flow.retrieve_assignment(&sources);
-        assert!(result.is_ok());
-        let assignment = match result {
-            Ok(assignment) => assignment,
-            Err(e) => {
-                panic!("Error: {}", e);
-            }
-        };
+        let assignment = max_flow_solver
+            .assignment(&sources)
+            .expect("assignment computation did not run");
 
         assert_eq!(assignment, bits![1, 1, 1, 0, 1, 0]);
     }
@@ -194,23 +199,19 @@ mod tests {
             InputEdge::new(6, 3, EdgeData::new(6)),
         ];
 
-        let mut max_flow = FordFulkerson::from_edge_list(edges);
+        let mut max_flow_solver = FordFulkerson::from_edge_list(edges);
         let sources = [0];
         let targets = [3];
-        max_flow.run(&sources, &targets);
+        max_flow_solver.run(&sources, &targets);
 
-        // todo(dluxen): retrieve max-flow, requires an indicator if an edge
-        // was an input edge or is "just" a residual graph edge
+        let max_flow = max_flow_solver
+            .max_flow()
+            .expect("max flow computation did not run");
+        assert_eq!(15, max_flow);
 
-        let result = max_flow.retrieve_assignment(&sources);
-        assert!(result.is_ok());
-        let assignment = match result {
-            Ok(assignment) => assignment,
-            Err(e) => {
-                panic!("Error: {}", e);
-            }
-        };
-
+        let assignment = max_flow_solver
+            .assignment(&sources)
+            .expect("assignment computation did not run");
         assert_eq!(assignment, bits![1, 0, 0, 0, 1, 1, 0, 0]);
     }
 }
