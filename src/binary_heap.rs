@@ -119,14 +119,15 @@ mod tests {
         assert_eq!(result.len(), 5);
         assert!(heap.is_empty());
 
-        input.sort();
+        // Sorting unstable is OK. No observable difference on integers.
+        input.sort_unstable();
         assert_eq!(result, input);
     }
 
     #[test]
     fn heap_sort_random() {
         let mut heap = Heap::new();
-        let mut rng = StdRng::seed_from_u64(0xAAaaAAaa);
+        let mut rng = StdRng::seed_from_u64(0xAAAAAAAA);
         let mut input = Vec::new();
 
         for _ in 0..1000 {
@@ -145,7 +146,8 @@ mod tests {
         assert_eq!(result.len(), 1000);
         assert!(heap.is_empty());
 
-        input.sort();
+        // Sorting unstable is OK. No observable difference on integers.
+        input.sort_unstable();
         assert_eq!(result, input);
     }
 
