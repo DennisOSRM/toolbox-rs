@@ -31,18 +31,25 @@ impl FordFulkerson {
             edge.reverse();
             edge.data.capacity = 0;
         });
-        // dedup-merge edge set
+
+        // dedup-merge edge set, by using the following trick: not the dedup(.) call
+        // below takes the second argument as mut. When deduping equivalent values
+        // a and b, then a is accumulated onto b.
         edge_list.sort();
         edge_list.dedup_by(|a, mut b| {
-            // merge duplicate edges by accumulating edge capacities
+            // edges a and b are assumed to be equivalent in the residual graph if
+            // (and only if) they are parallel. In other words, this removes parallel
+            // edges in the residual graph and accumulates capacities on the remaining
+            // egde.
             let result = a.source == b.source && a.target == b.target;
             if result {
                 b.data.capacity += a.data.capacity;
             }
             result
         });
-        // at this point the edge set doesn't have any duplicates anymore.
-        // note that this is fine, as we are looking to compute a node partition
+        // at this point the edge set of the residual graph doesn't have any
+        // duplicates anymore. note that this is fine, as we are looking to
+        // compute a node partition.
 
         Self {
             residual_graph: StaticGraph::new(edge_list),
@@ -170,11 +177,13 @@ mod tests {
         let targets = [5];
         max_flow_solver.run(&sources, &targets);
 
+        // it's OK to expect the solver to have run
         let max_flow = max_flow_solver
             .max_flow()
             .expect("max flow computation did not run");
         assert_eq!(23, max_flow);
 
+        // it's OK to expect the solver to have run
         let assignment = max_flow_solver
             .assignment(&sources)
             .expect("assignment computation did not run");
@@ -204,11 +213,13 @@ mod tests {
         let targets = [3];
         max_flow_solver.run(&sources, &targets);
 
+        // it's OK to expect the solver to have run
         let max_flow = max_flow_solver
             .max_flow()
             .expect("max flow computation did not run");
         assert_eq!(15, max_flow);
 
+        // it's OK to expect the solver to have run
         let assignment = max_flow_solver
             .assignment(&sources)
             .expect("assignment computation did not run");
@@ -242,11 +253,13 @@ mod tests {
         let targets = [10];
         max_flow_solver.run(&sources, &targets);
 
+        // it's OK to expect the solver to have run
         let max_flow = max_flow_solver
             .max_flow()
             .expect("max flow computation did not run");
         assert_eq!(30, max_flow);
 
+        // it's OK to expect the solver to have run
         let assignment = max_flow_solver
             .assignment(&sources)
             .expect("assignment computation did not run");
@@ -272,11 +285,13 @@ mod tests {
         let targets = [5];
         max_flow_solver.run(&sources, &targets);
 
+        // it's OK to expect the solver to have run
         let max_flow = max_flow_solver
             .max_flow()
             .expect("max flow computation did not run");
         assert_eq!(9, max_flow);
 
+        // it's OK to expect the solver to have run
         let assignment = max_flow_solver
             .assignment(&sources)
             .expect("assignment computation did not run");
@@ -298,6 +313,7 @@ mod tests {
             InputEdge::new(4, 5, EdgeData::new(8)),
         ];
 
+        // the expect(.) call is being tested
         FordFulkerson::from_edge_list(edges)
             .max_flow()
             .expect("max flow computation did not run");
@@ -318,6 +334,7 @@ mod tests {
             InputEdge::new(4, 5, EdgeData::new(8)),
         ];
 
+        // the expect(.) call is being tested
         FordFulkerson::from_edge_list(edges)
             .assignment(&[0])
             .expect("assignment computation did not run");
