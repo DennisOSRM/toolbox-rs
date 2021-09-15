@@ -6,7 +6,7 @@ pub type EdgeID = u32;
 pub const INVALID_NODE_ID: NodeID = NodeID::MAX;
 pub const INVALID_EDGE_ID: EdgeID = EdgeID::MAX;
 
-#[derive(Clone, Debug, Eq, PartialOrd, Ord, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialOrd, Ord, PartialEq)]
 pub struct InputEdge<EdgeDataT: Eq> {
     pub source: NodeID,
     pub target: NodeID,
