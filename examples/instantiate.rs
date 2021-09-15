@@ -1,5 +1,7 @@
-use staticgraph::{graph::Graph, static_graph::*};
-
+use staticgraph::{
+    graph::{Graph, InputEdge},
+    static_graph::StaticGraph,
+};
 fn main() {
     type Graph = StaticGraph<i32>;
     let edges = vec![
