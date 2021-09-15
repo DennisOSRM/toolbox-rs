@@ -118,10 +118,8 @@ impl Default for BFS {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        bfs::BFS,
-        static_graph::{InputEdge, StaticGraph},
-    };
+    use crate::graph::InputEdge;
+    use crate::{bfs::BFS, static_graph::StaticGraph};
 
     #[test]
     fn s_t_query_fetch_node_string() {

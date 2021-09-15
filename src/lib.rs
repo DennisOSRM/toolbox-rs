@@ -4,6 +4,7 @@ pub mod binary_heap;
 pub mod cycle_check;
 pub mod ford_fulkerson;
 pub mod graph;
+// pub mod kruskal;
 pub mod static_graph;
 // pub mod tarjan;
 pub mod union_find;

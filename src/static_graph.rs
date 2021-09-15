@@ -1,27 +1,6 @@
-use std::{cmp::max, mem::swap, ops::Range};
+use std::{cmp::max, ops::Range};
 
-use crate::graph::{EdgeID, Graph, NodeID};
-
-#[derive(Clone, Debug, Eq, PartialOrd, Ord, PartialEq)]
-pub struct InputEdge<EdgeDataT: Eq> {
-    pub source: NodeID,
-    pub target: NodeID,
-    pub data: EdgeDataT,
-}
-
-impl<EdgeDataT: Eq> InputEdge<EdgeDataT> {
-    pub fn new(s: NodeID, t: NodeID, d: EdgeDataT) -> Self {
-        Self {
-            source: s,
-            target: t,
-            data: d,
-        }
-    }
-
-    pub fn reverse(&mut self) {
-        swap(&mut self.source, &mut self.target);
-    }
-}
+use crate::graph::{EdgeID, Graph, InputEdge, NodeID};
 
 pub struct NodeArrayEntry {
     first_edge: EdgeID,

@@ -1,6 +1,5 @@
 use crate::bfs::BFS;
-use crate::graph::{Graph, NodeID};
-use crate::static_graph::InputEdge;
+use crate::graph::{Graph, InputEdge, NodeID};
 use crate::static_graph::StaticGraph;
 use bitvec::vec::BitVec;
 
