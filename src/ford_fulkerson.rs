@@ -1,5 +1,6 @@
 use crate::bfs::BFS;
-use crate::graph::{Graph, InputEdge, NodeID};
+use crate::edge::InputEdge;
+use crate::graph::{Graph, NodeID};
 use crate::static_graph::StaticGraph;
 use bitvec::vec::BitVec;
 
@@ -150,9 +151,9 @@ impl FordFulkerson {
 #[cfg(test)]
 mod tests {
 
+    use crate::edge::InputEdge;
     use crate::ford_fulkerson::EdgeData;
     use crate::ford_fulkerson::FordFulkerson;
-    use crate::ford_fulkerson::InputEdge;
     use bitvec::bits;
     use bitvec::prelude::Lsb0;
 

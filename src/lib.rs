@@ -1,6 +1,7 @@
 pub mod addressable_binary_heap;
 pub mod bfs;
 pub mod cycle_check;
+pub mod edge;
 pub mod ford_fulkerson;
 pub mod graph;
 pub mod kruskal;

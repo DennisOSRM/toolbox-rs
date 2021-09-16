@@ -118,7 +118,7 @@ impl Default for BFS {
 
 #[cfg(test)]
 mod tests {
-    use crate::graph::InputEdge;
+    use crate::edge::InputEdge;
     use crate::{bfs::BFS, static_graph::StaticGraph};
 
     #[test]

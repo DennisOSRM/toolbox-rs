@@ -49,7 +49,7 @@ pub fn cycle_check<T>(graph: &(impl Graph<T> + 'static)) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::graph::InputEdge;
+    use crate::edge::InputEdge;
     use crate::{cycle_check::cycle_check, static_graph::StaticGraph};
 
     #[test]

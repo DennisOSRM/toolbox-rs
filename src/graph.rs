@@ -1,31 +1,9 @@
-use std::mem::swap;
 use std::ops::Range;
 
 pub type NodeID = u32;
 pub type EdgeID = u32;
 pub const INVALID_NODE_ID: NodeID = NodeID::MAX;
 pub const INVALID_EDGE_ID: EdgeID = EdgeID::MAX;
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialOrd, Ord, PartialEq)]
-pub struct InputEdge<EdgeDataT: Eq> {
-    pub source: NodeID,
-    pub target: NodeID,
-    pub data: EdgeDataT,
-}
-
-impl<EdgeDataT: Eq> InputEdge<EdgeDataT> {
-    pub fn new(s: NodeID, t: NodeID, d: EdgeDataT) -> Self {
-        Self {
-            source: s,
-            target: t,
-            data: d,
-        }
-    }
-
-    pub fn reverse(&mut self) {
-        swap(&mut self.source, &mut self.target);
-    }
-}
 
 pub trait Graph<T> {
     fn node_range(&self) -> Range<NodeID>;

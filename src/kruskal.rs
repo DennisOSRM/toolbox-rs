@@ -1,44 +1,10 @@
-use crate::graph::NodeID;
+use crate::edge::SimpleEdge;
 use crate::union_find::UnionFind;
 use core::cmp::max;
-use std::cmp::{Ordering, Reverse};
+use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-#[derive(Clone, Copy, Debug)]
-pub struct KruskalEdge {
-    source: NodeID,
-    target: NodeID,
-    weight: u32,
-}
-
-impl KruskalEdge {
-    pub fn new(source: NodeID, target: NodeID, weight: u32) -> Self {
-        Self {
-            source,
-            target,
-            weight,
-        }
-    }
-}
-
-impl Eq for KruskalEdge {}
-impl PartialEq for KruskalEdge {
-    fn eq(&self, other: &Self) -> bool {
-        self.weight == other.weight
-    }
-}
-impl PartialOrd for KruskalEdge {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other)) // Delegate to the implementation in `Ord`.
-    }
-}
-impl Ord for KruskalEdge {
-    fn cmp(&self, other: &Self) -> Ordering {
-        Reverse(self.weight).cmp(&Reverse(other.weight))
-    }
-}
-
-pub fn kruskal(input_edges: &[KruskalEdge]) -> (u32, Vec<KruskalEdge>) {
+pub fn kruskal(input_edges: &[SimpleEdge]) -> (u32, Vec<SimpleEdge>) {
     // find max node id
     let mut number_of_nodes = 0;
     for edge in input_edges {
@@ -48,7 +14,7 @@ pub fn kruskal(input_edges: &[KruskalEdge]) -> (u32, Vec<KruskalEdge>) {
     // create heap
     let mut heap = BinaryHeap::new();
     for edge in input_edges {
-        heap.push(*edge);
+        heap.push((Reverse(edge.data), heap.len()));
     }
 
     let mut mst = Vec::new();
@@ -56,7 +22,8 @@ pub fn kruskal(input_edges: &[KruskalEdge]) -> (u32, Vec<KruskalEdge>) {
     let mut mst_cost = 0;
 
     while mst.len() < number_of_nodes as usize {
-        let edge = heap.pop().unwrap();
+        let (_, idx) = heap.pop().unwrap();
+        let edge = input_edges[idx];
         let x = uf.find(edge.source);
         let y = uf.find(edge.target);
 
@@ -66,29 +33,29 @@ pub fn kruskal(input_edges: &[KruskalEdge]) -> (u32, Vec<KruskalEdge>) {
 
         mst.push(edge);
         uf.union(x, y);
-        mst_cost += edge.weight;
+        mst_cost += edge.data;
     }
     (mst_cost, mst)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::kruskal::{kruskal, KruskalEdge};
+    use crate::{edge::SimpleEdge, kruskal::kruskal};
 
     #[test]
     fn wiki_example() {
         let edges = vec![
-            KruskalEdge::new(0, 1, 7),
-            KruskalEdge::new(0, 3, 5),
-            KruskalEdge::new(1, 3, 9),
-            KruskalEdge::new(1, 2, 8),
-            KruskalEdge::new(1, 4, 7),
-            KruskalEdge::new(2, 4, 5),
-            KruskalEdge::new(3, 4, 15),
-            KruskalEdge::new(3, 5, 6),
-            KruskalEdge::new(5, 4, 8),
-            KruskalEdge::new(6, 4, 9),
-            KruskalEdge::new(5, 6, 11),
+            SimpleEdge::new(0, 1, 7),
+            SimpleEdge::new(0, 3, 5),
+            SimpleEdge::new(1, 3, 9),
+            SimpleEdge::new(1, 2, 8),
+            SimpleEdge::new(1, 4, 7),
+            SimpleEdge::new(2, 4, 5),
+            SimpleEdge::new(3, 4, 15),
+            SimpleEdge::new(3, 5, 6),
+            SimpleEdge::new(5, 4, 8),
+            SimpleEdge::new(6, 4, 9),
+            SimpleEdge::new(5, 6, 11),
         ];
 
         let (cost, _mst) = kruskal(&edges);
@@ -98,16 +65,16 @@ mod tests {
     #[test]
     fn clr_example() {
         let edges = vec![
-            KruskalEdge::new(0, 1, 16),
-            KruskalEdge::new(0, 2, 13),
-            KruskalEdge::new(1, 2, 10),
-            KruskalEdge::new(1, 3, 12),
-            KruskalEdge::new(2, 1, 4),
-            KruskalEdge::new(2, 4, 14),
-            KruskalEdge::new(3, 2, 9),
-            KruskalEdge::new(3, 5, 20),
-            KruskalEdge::new(4, 3, 7),
-            KruskalEdge::new(4, 5, 4),
+            SimpleEdge::new(0, 1, 16),
+            SimpleEdge::new(0, 2, 13),
+            SimpleEdge::new(1, 2, 10),
+            SimpleEdge::new(1, 3, 12),
+            SimpleEdge::new(2, 1, 4),
+            SimpleEdge::new(2, 4, 14),
+            SimpleEdge::new(3, 2, 9),
+            SimpleEdge::new(3, 5, 20),
+            SimpleEdge::new(4, 3, 7),
+            SimpleEdge::new(4, 5, 4),
         ];
 
         let (cost, _mst) = kruskal(&edges);
