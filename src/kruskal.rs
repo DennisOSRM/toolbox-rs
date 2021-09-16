@@ -94,4 +94,23 @@ mod tests {
         let (cost, _mst) = kruskal(&edges);
         assert_eq!(cost, 39);
     }
+
+    #[test]
+    fn clr_example() {
+        let edges = vec![
+            KruskalEdge::new(0, 1, 16),
+            KruskalEdge::new(0, 2, 13),
+            KruskalEdge::new(1, 2, 10),
+            KruskalEdge::new(1, 3, 12),
+            KruskalEdge::new(2, 1, 4),
+            KruskalEdge::new(2, 4, 14),
+            KruskalEdge::new(3, 2, 9),
+            KruskalEdge::new(3, 5, 20),
+            KruskalEdge::new(4, 3, 7),
+            KruskalEdge::new(4, 5, 4),
+        ];
+
+        let (cost, _mst) = kruskal(&edges);
+        assert_eq!(cost, 37);
+    }
 }
