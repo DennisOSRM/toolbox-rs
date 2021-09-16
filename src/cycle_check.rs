@@ -1,7 +1,7 @@
 use crate::graph::Graph;
 
 /// Returns whether the graph contains a cycle by running a node
-/// coloring DFS
+/// coloring Depth-First-Search (DFS)
 pub fn cycle_check<T>(graph: &(impl Graph<T> + 'static)) -> bool {
     #[derive(Clone, PartialEq)]
     enum Colors {
