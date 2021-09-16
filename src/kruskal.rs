@@ -38,7 +38,7 @@ impl Ord for KruskalEdge {
     }
 }
 
-pub fn kruskal(input_edges: &Vec<KruskalEdge>) -> (u32, Vec<KruskalEdge>) {
+pub fn kruskal(input_edges: &[KruskalEdge]) -> (u32, Vec<KruskalEdge>) {
     // find max node id
     let mut number_of_nodes = 0;
     for edge in input_edges {
@@ -57,11 +57,9 @@ pub fn kruskal(input_edges: &Vec<KruskalEdge>) -> (u32, Vec<KruskalEdge>) {
 
     while mst.len() < number_of_nodes as usize {
         let edge = heap.pop().unwrap();
-        println!("min edge: {:?}", edge);
         let x = uf.find(edge.source);
         let y = uf.find(edge.target);
 
-        println!("{:?} in {}, {}", edge, x, y);
         if x == y {
             continue;
         }
@@ -86,7 +84,7 @@ mod tests {
             KruskalEdge::new(1, 2, 8),
             KruskalEdge::new(1, 4, 7),
             KruskalEdge::new(2, 4, 5),
-            KruskalEdge::new(3, 4, 13),
+            KruskalEdge::new(3, 4, 15),
             KruskalEdge::new(3, 5, 6),
             KruskalEdge::new(5, 4, 8),
             KruskalEdge::new(6, 4, 9),
