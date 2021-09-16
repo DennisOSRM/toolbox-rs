@@ -1,5 +1,4 @@
-use crate::edge::SimpleEdge;
-use crate::union_find::UnionFind;
+use crate::{edge::SimpleEdge, union_find::UnionFind};
 use core::cmp::max;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -7,13 +6,10 @@ use std::collections::BinaryHeap;
 pub fn kruskal(input_edges: &[SimpleEdge]) -> (u32, Vec<SimpleEdge>) {
     // find max node id
     let mut number_of_nodes = 0;
+    let mut heap = BinaryHeap::new();
     for edge in input_edges {
         number_of_nodes = max(edge.source, number_of_nodes);
         number_of_nodes = max(edge.target, number_of_nodes);
-    }
-    // create heap
-    let mut heap = BinaryHeap::new();
-    for edge in input_edges {
         heap.push((Reverse(edge.data), heap.len()));
     }
 
@@ -60,6 +56,8 @@ mod tests {
 
         let (cost, _mst) = kruskal(&edges);
         assert_eq!(cost, 39);
+
+        // TODO(dluxen): check for expected edges in set
     }
 
     #[test]
@@ -79,5 +77,7 @@ mod tests {
 
         let (cost, _mst) = kruskal(&edges);
         assert_eq!(cost, 37);
+
+        // TODO(dluxen): check for expected edges in set
     }
 }
