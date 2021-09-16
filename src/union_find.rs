@@ -50,17 +50,11 @@ impl UnionFind {
     pub fn find(&mut self, x: u32) -> u32 {
         let mut p = x;
         while self.parent[p as usize] != p {
+            // lazy path compression, set every node to it's parent
+            self.parent[p as usize] = self.parent[self.parent[p as usize] as usize];
             p = self.parent[p as usize];
         }
-        let root = p;
-
-        // path compression to speed up subsequent queries
-        p = x;
-        while self.parent[p as usize] != p {
-            p = self.parent[p as usize];
-            self.parent[p as usize] = root;
-        }
-        root
+        p
     }
 }
 
