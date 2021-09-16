@@ -49,16 +49,18 @@ impl UnionFind {
     // find the representative of the set that x is an element of
     pub fn find(&mut self, x: u32) -> u32 {
         let mut p = x;
-        while self.parent[x as usize] != p {
-            p = self.parent[x as usize];
+        while self.parent[p as usize] != p {
+            p = self.parent[p as usize];
         }
+        let root = p;
 
         // path compression to speed up subsequent queries
-        while self.parent[x as usize] != p {
-            self.parent[x as usize] = p;
+        p = x;
+        while self.parent[p as usize] != p {
+            p = self.parent[p as usize];
+            self.parent[p as usize] = root;
         }
-
-        p
+        root
     }
 }
 
