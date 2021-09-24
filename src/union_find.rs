@@ -2,12 +2,12 @@ use std::cmp::Ordering;
 
 #[derive(Debug)]
 pub struct UnionFind {
-    parent: Vec<u32>,
-    rank: Vec<u32>,
+    parent: Vec<usize>,
+    rank: Vec<usize>,
 }
 
 impl UnionFind {
-    pub fn new(max: u32) -> Self {
+    pub fn new(max: usize) -> Self {
         Self {
             parent: (0..max).collect(),
             rank: vec![0; max as usize],
@@ -23,7 +23,7 @@ impl UnionFind {
     }
 
     // union of two sets represented by x and y.
-    pub fn union(&mut self, x: u32, y: u32) {
+    pub fn union(&mut self, x: usize, y: usize) {
         let x_set = self.find(x);
         let y_set = self.find(y);
 
@@ -47,7 +47,7 @@ impl UnionFind {
     }
 
     // find the representative of the set that x is an element of
-    pub fn find(&mut self, x: u32) -> u32 {
+    pub fn find(&mut self, x: usize) -> usize {
         let mut p = x;
         while self.parent[p as usize] != p {
             // lazy path compression, set every node to it's parent
@@ -69,7 +69,7 @@ mod tests {
         assert!(!uf.is_empty());
         assert_eq!(10, uf.len());
 
-        for i in 0..10_u32 {
+        for i in 0..10_usize {
             assert_eq!(i, uf.find(i));
         }
     }
@@ -80,11 +80,11 @@ mod tests {
         assert!(!uf.is_empty());
         assert_eq!(10, uf.len());
 
-        for i in 0..10_u32 {
+        for i in 0..10_usize {
             uf.union(3, i);
         }
 
-        for i in 0..10_u32 {
+        for i in 0..10_usize {
             // all elements are merged into the representative
             assert_eq!(3, uf.find(i));
         }

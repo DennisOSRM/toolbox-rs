@@ -43,11 +43,11 @@ impl BFS {
         self.parents
             .resize(graph.number_of_nodes(), INVALID_NODE_ID);
 
-        let target_set: HashSet<&u32> = targets.iter().collect();
+        let target_set: HashSet<&NodeID> = targets.iter().collect();
 
         let mut queue = VecDeque::new();
         for s in sources {
-            self.parents[*s as usize] = *s;
+            self.parents[*s] = *s;
             queue.push_front(*s);
         }
 
@@ -57,11 +57,11 @@ impl BFS {
                     continue;
                 }
                 let target = graph.target(edge);
-                if self.parents[target as usize] != INVALID_NODE_ID {
+                if self.parents[target] != INVALID_NODE_ID {
                     // we already have seen this node and can ignore it
                     continue;
                 }
-                self.parents[target as usize] = node;
+                self.parents[target] = node;
                 if target_set.contains(&target) {
                     self.target = target;
                     // check if we have found our target if it exists
@@ -86,9 +86,9 @@ impl BFS {
     pub fn fetch_node_path_from_node(&self, t: NodeID) -> Vec<NodeID> {
         let mut id = t;
         let mut path = Vec::new();
-        while id != self.parents[id as usize] {
+        while id != self.parents[id] {
             path.push(id);
-            id = self.parents[id as usize];
+            id = self.parents[id];
         }
         path.push(id);
         path.reverse();
@@ -99,10 +99,10 @@ impl BFS {
         // path unpacking
         let mut id = self.target;
         let mut path = Vec::new();
-        while id != self.parents[id as usize] {
-            let edge_id = graph.find_edge(self.parents[id as usize], id).unwrap();
+        while id != self.parents[id] {
+            let edge_id = graph.find_edge(self.parents[id], id).unwrap();
             path.push(edge_id);
-            id = self.parents[id as usize];
+            id = self.parents[id];
         }
 
         path.reverse();

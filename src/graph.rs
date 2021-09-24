@@ -1,7 +1,7 @@
 use std::ops::Range;
 
-pub type NodeID = u32;
-pub type EdgeID = u32;
+pub type NodeID = usize;
+pub type EdgeID = usize;
 pub const INVALID_NODE_ID: NodeID = NodeID::MAX;
 pub const INVALID_EDGE_ID: EdgeID = EdgeID::MAX;
 

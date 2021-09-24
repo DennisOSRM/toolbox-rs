@@ -43,7 +43,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
 
         let mut graph = Self::default();
         // +1 as we are going to add one sentinel node at the end
-        graph.node_array.reserve(number_of_nodes as usize + 1);
+        graph.node_array.reserve(number_of_nodes + 1);
         graph.edge_array.reserve(number_of_edges);
 
         // sort input edges by source/target/data
@@ -82,7 +82,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
     pub fn check_integrity(&self) -> bool {
         self.edge_array
             .iter()
-            .all(|edge_entry| (edge_entry.target as usize) < self.number_of_nodes())
+            .all(|edge_entry| (edge_entry.target) < self.number_of_nodes())
             && self
                 .node_array
                 .windows(2)
@@ -114,29 +114,29 @@ impl<T: Ord + Copy> Graph<T> for StaticGraph<T> {
     }
 
     fn begin_edges(&self, n: NodeID) -> EdgeID {
-        self.node_array[n as usize].first_edge
+        self.node_array[n].first_edge
     }
 
     fn end_edges(&self, n: NodeID) -> EdgeID {
-        self.node_array[(n + 1) as usize].first_edge
+        self.node_array[(n + 1)].first_edge
     }
 
     fn get_out_degree(&self, n: NodeID) -> usize {
         let up = self.end_edges(n);
         let down = self.begin_edges(n);
-        (up - down) as usize
+        up - down
     }
 
     fn target(&self, e: EdgeID) -> NodeID {
-        self.edge_array[e as usize].target
+        self.edge_array[e].target
     }
 
     fn data(&self, e: EdgeID) -> &T {
-        &self.edge_array[e as usize].data
+        &self.edge_array[e].data
     }
 
     fn data_mut(&mut self, e: EdgeID) -> &mut T {
-        &mut self.edge_array[e as usize].data
+        &mut self.edge_array[e].data
     }
 
     fn find_edge(&self, s: NodeID, t: NodeID) -> Option<EdgeID> {
