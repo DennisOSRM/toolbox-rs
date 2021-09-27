@@ -26,9 +26,6 @@ impl BFS {
 
     /// explore the graph in a BFS
     /// returns true if a path between s and t was found or no target was given
-    // todo(dluxen): introduce node set macro
-    // todo(dluxen): convert to struct with run(.) and retrieve_path(.) function
-    // todo(dluxen): retrieve edge list rather than string of nodes
     pub fn run_with_filter<T, F, G: Graph<T>>(
         &mut self,
         graph: &G,
