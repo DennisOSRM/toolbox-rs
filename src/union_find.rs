@@ -10,7 +10,7 @@ impl UnionFind {
     pub fn new(max: usize) -> Self {
         Self {
             parent: (0..max).collect(),
-            rank: vec![0; max as usize],
+            rank: vec![0; max],
         }
     }
 
@@ -32,16 +32,16 @@ impl UnionFind {
         }
 
         // merge lower ranked set with higher ranked set
-        match self.rank[x_set as usize].cmp(&self.rank[y_set as usize]) {
+        match self.rank[x_set].cmp(&self.rank[y_set]) {
             Ordering::Less => {
-                self.parent[x_set as usize] = y_set;
+                self.parent[x_set] = y_set;
             }
             Ordering::Greater => {
-                self.parent[y_set as usize] = x_set;
+                self.parent[y_set] = x_set;
             }
             Ordering::Equal => {
-                self.parent[y_set as usize] = x_set;
-                self.rank[x_set as usize] += 1;
+                self.parent[y_set] = x_set;
+                self.rank[x_set] += 1;
             }
         }
     }
@@ -49,10 +49,10 @@ impl UnionFind {
     // find the representative of the set that x is an element of
     pub fn find(&mut self, x: usize) -> usize {
         let mut p = x;
-        while self.parent[p as usize] != p {
+        while self.parent[p] != p {
             // lazy path compression, set every node to it's parent
-            self.parent[p as usize] = self.parent[self.parent[p as usize] as usize];
-            p = self.parent[p as usize];
+            self.parent[p] = self.parent[self.parent[p]];
+            p = self.parent[p];
         }
         p
     }
