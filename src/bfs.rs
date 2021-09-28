@@ -3,7 +3,7 @@ use std::collections::{HashSet, VecDeque};
 use crate::graph::{EdgeID, Graph, NodeID, INVALID_NODE_ID};
 
 pub struct BFS {
-    parents: Vec<EdgeID>,
+    parents: Vec<NodeID>,
     target: NodeID,
 }
 
