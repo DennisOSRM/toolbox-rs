@@ -121,7 +121,7 @@ impl<T: Ord + Copy> Graph<T> for StaticGraph<T> {
         self.node_array[(n + 1)].first_edge
     }
 
-    fn get_out_degree(&self, n: NodeID) -> usize {
+    fn out_degree(&self, n: NodeID) -> usize {
         let up = self.end_edges(n);
         let down = self.begin_edges(n);
         up - down
@@ -191,7 +191,7 @@ mod tests {
         let graph = Graph::new(edges);
         let mut sum = 0;
         for i in graph.node_range() {
-            sum += graph.get_out_degree(i);
+            sum += graph.out_degree(i);
         }
         assert_eq!(sum, graph.number_of_edges());
     }

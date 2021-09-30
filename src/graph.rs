@@ -12,7 +12,7 @@ pub trait Graph<T> {
     fn number_of_edges(&self) -> usize;
     fn begin_edges(&self, n: NodeID) -> EdgeID;
     fn end_edges(&self, n: NodeID) -> EdgeID;
-    fn get_out_degree(&self, n: NodeID) -> usize;
+    fn out_degree(&self, n: NodeID) -> usize;
     fn target(&self, e: EdgeID) -> NodeID;
     fn data(&self, e: EdgeID) -> &T;
     fn data_mut(&mut self, e: EdgeID) -> &mut T;
