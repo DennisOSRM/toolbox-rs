@@ -18,7 +18,7 @@ fn main() {
     println!("number of edges: {}", graph.number_of_edges());
 
     for i in graph.node_range() {
-        println!("out_degree({})={}", i, graph.get_out_degree(i));
+        println!("out_degree({})={}", i, graph.out_degree(i));
         for j in graph.begin_edges(i)..graph.end_edges(i) {
             println!(" ({},{}): {}", i, graph.target(j), graph.data(j));
         }
