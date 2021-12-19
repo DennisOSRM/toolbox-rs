@@ -1,7 +1,7 @@
+use crate::edge::Edge;
 use std::{cmp::max, ops::Range};
 
 use crate::{
-    edge::InputEdge,
     graph::{EdgeID, Graph, NodeID},
 };
 
@@ -32,13 +32,13 @@ impl<T: Ord + Copy> StaticGraph<T> {
             edge_array: Vec::new(),
         }
     }
-    pub fn new(mut input: Vec<InputEdge<T>>) -> Self {
+    pub fn new(mut input: Vec<impl Edge<ID = NodeID, DATA = T> + Ord>) -> Self {
         // TODO: renumber IDs if necessary
         let number_of_edges = input.len();
         let mut number_of_nodes = 0;
         for edge in &input {
-            number_of_nodes = max(edge.source, number_of_nodes);
-            number_of_nodes = max(edge.target, number_of_nodes);
+            number_of_nodes = max(edge.source(), number_of_nodes);
+            number_of_nodes = max(edge.target(), number_of_nodes);
         }
 
         let mut graph = Self::default();
@@ -54,7 +54,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
         graph.node_array.push(NodeArrayEntry::new(0));
         let mut offset = 0;
         for i in 0..(number_of_nodes) {
-            while offset != input.len() && input[offset].source == i {
+            while offset != input.len() && input[offset].source() == i {
                 offset += 1;
             }
             graph.node_array.push(NodeArrayEntry::new(offset as EdgeID));
@@ -68,8 +68,8 @@ impl<T: Ord + Copy> StaticGraph<T> {
         graph.edge_array = input
             .iter()
             .map(|edge| EdgeArrayEntry {
-                target: edge.target,
-                data: edge.data,
+                target: edge.target(),
+                data: *edge.data(),
             })
             .collect();
         debug_assert!(graph.check_integrity());
@@ -151,9 +151,11 @@ impl<T: Ord + Copy> Graph<T> for StaticGraph<T> {
 
 #[cfg(test)]
 mod tests {
+    use crate::edge::InputEdge;
+
     use crate::{
         graph::Graph,
-        static_graph::{InputEdge, StaticGraph},
+        static_graph::StaticGraph,
     };
 
     #[test]
