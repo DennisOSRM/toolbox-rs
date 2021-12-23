@@ -49,13 +49,18 @@ impl BFS {
         }
 
         while let Some(node) = queue.pop_back() {
+            let node_is_source = self.parents[node] == node;
+            // sources have themselves as parents
             for edge in graph.edge_range(node) {
                 if filter(graph, edge) {
                     continue;
                 }
                 let target = graph.target(edge);
-                if self.parents[target] != INVALID_NODE_ID {
-                    // we already have seen this node and can ignore it
+                if self.parents[target] != INVALID_NODE_ID
+                    || (node_is_source && self.parents[target] == target)
+                {
+                    // we already have seen this node and can ignore it, or
+                    // edge is fully contained within source set
                     continue;
                 }
                 self.parents[target] = node;
@@ -68,7 +73,7 @@ impl BFS {
             }
         }
 
-        // return true only if all nodes should have been explored
+        // return true only if target set was empty
         target_set.is_empty()
     }
 
