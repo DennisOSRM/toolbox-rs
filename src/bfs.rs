@@ -3,25 +3,41 @@ use std::collections::{HashSet, VecDeque};
 use crate::graph::{EdgeID, Graph, NodeID, INVALID_NODE_ID};
 
 pub struct BFS {
+    sources: Vec<NodeID>,
+    target_set: HashSet<NodeID>,
     parents: Vec<NodeID>,
     target: NodeID,
+
+    queue: VecDeque<usize>,
 }
 
 impl BFS {
-    pub fn new() -> Self {
-        Self {
+    // TODO: Also pass Graph instance
+    pub fn new(source_list: &[NodeID], target_list: &[NodeID], number_of_nodes: usize) -> Self {
+        let mut temp = Self {
+            sources: source_list.iter().copied().collect(),
+            target_set: target_list.iter().copied().collect(),
             parents: Vec::new(),
             target: INVALID_NODE_ID,
+            queue: VecDeque::new(),
+        };
+        temp.populate_sources(number_of_nodes);
+        temp
+    }
+
+    fn populate_sources(&mut self, number_of_nodes: usize) {
+        self.parents
+            .resize(number_of_nodes, INVALID_NODE_ID);
+        for s in &self.sources {
+            self.parents[*s] = *s;
         }
     }
 
     pub fn run<T, G: Graph<T>>(
         &mut self,
         graph: &G,
-        sources: &[NodeID],
-        targets: &[NodeID],
     ) -> bool {
-        self.run_with_filter(graph, sources, targets, |_graph, _edge| false)
+        self.run_with_filter(graph, |_graph, _edge| false)
     }
 
     /// explore the graph in a BFS
@@ -29,28 +45,23 @@ impl BFS {
     pub fn run_with_filter<T, F, G: Graph<T>>(
         &mut self,
         graph: &G,
-        sources: &[NodeID],
-        targets: &[NodeID],
         filter: F,
     ) -> bool
     where
         F: Fn(&G, EdgeID) -> bool,
     {
-        self.parents.clear();
-        self.parents
-            .resize(graph.number_of_nodes(), INVALID_NODE_ID);
+        // reset queue
+        self.queue = self.sources.iter().copied().collect();
 
-        let target_set: HashSet<&NodeID> = targets.iter().collect();
-
-        let mut queue = VecDeque::new();
-        for s in sources {
+        // reset parents vector
+        self.parents.fill(INVALID_NODE_ID);
+        for s in &self.sources {
             self.parents[*s] = *s;
-            queue.push_front(*s);
         }
 
-        while let Some(node) = queue.pop_back() {
+        while let Some(node) = self.queue.pop_back() {
             let node_is_source = self.parents[node] == node;
-            // sources have themselves as parents
+                // sources have themselves as parents
             for edge in graph.edge_range(node) {
                 if filter(graph, edge) {
                     continue;
@@ -60,21 +71,21 @@ impl BFS {
                     || (node_is_source && self.parents[target] == target)
                 {
                     // we already have seen this node and can ignore it, or
-                    // edge is fully contained within source set
+                    // edge is fully contained within source set and we can ignore it
                     continue;
                 }
                 self.parents[target] = node;
-                if target_set.contains(&target) {
+                if self.target_set.contains(&target) {
                     self.target = target;
                     // check if we have found our target if it exists
                     return true;
                 }
-                queue.push_front(target);
+                self.queue.push_front(target);
             }
         }
 
         // return true only if target set was empty
-        target_set.is_empty()
+        self.target_set.is_empty()
     }
 
     // path unpacking, by searching for the first target that was found
@@ -85,6 +96,7 @@ impl BFS {
 
     // path unpacking, by searching for the first target that was found
     // and by then unwinding the path of nodes to it.
+    // TODO: needs test to check what happens when t is unknown, or unvisited. Can this be removed?
     pub fn fetch_node_path_from_node(&self, t: NodeID) -> Vec<NodeID> {
         let mut id = t;
         let mut path = Vec::new();
@@ -97,6 +109,7 @@ impl BFS {
         path
     }
 
+    // TODO: the reverse might be unnecessary to some applications
     pub fn fetch_edge_path<T>(&self, graph: &impl Graph<T>) -> Vec<EdgeID> {
         // path unpacking
         let mut id = self.target;
@@ -112,15 +125,10 @@ impl BFS {
     }
 }
 
-impl Default for BFS {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::edge::InputEdge;
+    use crate::graph::Graph;
+use crate::edge::InputEdge;
     use crate::{bfs::BFS, static_graph::StaticGraph};
 
     #[test]
@@ -137,8 +145,8 @@ mod tests {
             InputEdge::new(1, 5, 2),
         ];
         let graph = Graph::new(edges);
-        let mut bfs = BFS::new();
-        assert!(bfs.run(&graph, &[0], &[5]));
+        let mut bfs = BFS::new(&[0], &[5], graph.number_of_nodes());
+        assert!(bfs.run(&graph));
 
         let path = bfs.fetch_node_path();
         assert_eq!(path, vec![0, 1, 5]);
@@ -158,8 +166,8 @@ mod tests {
             InputEdge::new(1, 5, 2),
         ];
         let graph = Graph::new(edges);
-        let mut bfs = BFS::new();
-        assert!(bfs.run(&graph, &[0], &[5]));
+        let mut bfs = BFS::new(&[0], &[5], graph.number_of_nodes());
+        assert!(bfs.run(&graph));
         let path = bfs.fetch_edge_path(&graph);
         assert_eq!(path, vec![0, 3]);
     }
@@ -178,8 +186,8 @@ mod tests {
             InputEdge::new(1, 5, 2),
         ];
         let graph = Graph::new(edges);
-        let mut bfs = BFS::new();
-        assert!(bfs.run(&graph, &[0], &[]));
+        let mut bfs = BFS::new(&[0], &[], graph.number_of_nodes());
+        assert!(bfs.run(&graph));
 
         let path = bfs.fetch_node_path_from_node(3);
         assert_eq!(path, vec![0, 1, 2, 3]);
@@ -199,8 +207,8 @@ mod tests {
             InputEdge::new(1, 5, 2),
         ];
         let graph = Graph::new(edges);
-        let mut bfs = BFS::new();
-        assert!(bfs.run(&graph, &[0, 1], &[]));
+        let mut bfs = BFS::new( &[0, 1], &[], graph.number_of_nodes());
+        assert!(bfs.run(&graph));
 
         // path unpacking
         let path = bfs.fetch_node_path_from_node(3);

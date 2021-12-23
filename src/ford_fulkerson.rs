@@ -78,16 +78,17 @@ impl FordFulkerson {
     }
 
     pub fn run(&mut self, sources: &[NodeID], targets: &[NodeID]) {
-        let mut bfs = BFS::new();
+        let mut bfs = BFS::new(sources, targets, self.residual_graph.number_of_nodes());
         let filter = |graph: &StaticGraph<EdgeCapacity>, edge| graph.data(edge).capacity <= 0;
-        let mut iteration = 0;
-        while bfs.run_with_filter(&self.residual_graph, sources, targets, filter) {
-            iteration += 1;
+        // let mut iteration = 0;
+        while bfs.run_with_filter(&self.residual_graph, filter) {
+            // iteration += 1;
 
-            println!("iteration {}", iteration);
-            // retrieve node path. This is sufficient, as we removed all duplicate edges
+            // println!("iteration {}", iteration);
+            // retrieve node path. The path is unambiguous, as we removed all duplicate edges
+            // TODO: this is a copy of the data in the queue, could this be exposed by an iterator to avoid allocations?
             let path = bfs.fetch_node_path();
-            println!("found node path of size {:#?}", path.len());
+            // println!("found node path of size {:#?}", path.len());
 
             // find min capacity on edges of the path
             let st_tuple = path
@@ -104,8 +105,8 @@ impl FordFulkerson {
                 .unwrap();
             // println!("  bottleneck edge: {}", bottleneck_edge);
             let path_flow = self.residual_graph.data(bottleneck_edge).capacity;
-            assert!(path_flow > 0);
-            println!("min edge: {}, capacity: {}", bottleneck_edge, path_flow);
+            debug_assert!(path_flow > 0);
+            // println!("min edge: {}, capacity: {}", bottleneck_edge, path_flow);
             // sum up flow
             self.max_flow += path_flow;
 
@@ -135,13 +136,11 @@ impl FordFulkerson {
         }
 
         // run a reachability analysis
-        let mut reachable: BitVec = BitVec::with_capacity(self.residual_graph.number_of_nodes());
+        let mut reachable = BitVec::with_capacity(self.residual_graph.number_of_nodes());
         reachable.resize(self.residual_graph.number_of_nodes(), false);
-        let mut stack = Vec::new();
-        for s in sources {
-            stack.push(*s);
-        }
+        let mut stack: Vec<usize> = sources.iter().copied().collect();
         while let Some(node) = stack.pop() {
+            // TODO: looks like this following is superflous work?
             if *reachable.get(node as usize).unwrap() {
                 continue;
             }
@@ -158,14 +157,14 @@ impl FordFulkerson {
 
         // retrieve min-cut by walking the graph
         // todo(dl): expose as interface
-        for s in 0..self.residual_graph.number_of_nodes() as NodeID {
-            for e in self.residual_graph.edge_range(s) {
-                let t = self.residual_graph.target(e);
-                if reachable.get(s as usize).unwrap() != reachable.get(t as usize).unwrap() {
-                    // println!("cut edge ({},{})", s, t);
-                }
-            }
-        }
+        // for s in 0..self.residual_graph.number_of_nodes() as NodeID {
+        //     for e in self.residual_graph.edge_range(s) {
+        //         let t = self.residual_graph.target(e);
+        //         if reachable.get(s as usize).unwrap() != reachable.get(t as usize).unwrap() {
+        //             println!("cut edge ({},{})", s, t);
+        //         }
+        //     }
+        // }
 
         // println!("done.");
         Ok(reachable)
