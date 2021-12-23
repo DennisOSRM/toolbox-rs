@@ -1,36 +1,54 @@
 use crate::bfs::BFS;
+use crate::edge::Edge;
 use crate::edge::InputEdge;
 use crate::graph::{Graph, NodeID};
 use crate::static_graph::StaticGraph;
 use bitvec::vec::BitVec;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct EdgeData {
+pub struct EdgeCapacity {
     pub capacity: i32,
 }
 
-impl EdgeData {
-    pub fn new(capacity: i32) -> EdgeData {
-        EdgeData { capacity }
+impl EdgeCapacity {
+    pub fn new(capacity: i32) -> EdgeCapacity {
+        EdgeCapacity { capacity }
     }
 }
 
 pub struct FordFulkerson {
-    residual_graph: StaticGraph<EdgeData>,
+    residual_graph: StaticGraph<EdgeCapacity>,
     max_flow: i32,
     finished: bool,
 }
 
 impl FordFulkerson {
-    pub fn from_edge_list(mut edge_list: Vec<InputEdge<EdgeData>>) -> Self {
+    // todo(dl): add closure parameter to derive edge data
+    pub fn from_generic_edge_list(input_edges: Vec<impl Edge<ID = NodeID>>) -> Self {
+        let edge_list: Vec<InputEdge<EdgeCapacity>> = input_edges
+            .into_iter()
+            .map(|edge| InputEdge {
+                source: edge.source(),
+                target: edge.target(),
+                data: EdgeCapacity::new(1),
+            })
+            .collect();
+
+        println!("created {} ff edges", edge_list.len());
+        FordFulkerson::from_edge_list(edge_list)
+    }
+
+    pub fn from_edge_list(mut edge_list: Vec<InputEdge<EdgeCapacity>>) -> Self {
         let number_of_edges = edge_list.len();
 
-        // blindly generate reverse edges for all edges
+        println!("extending {} edges", edge_list.len());
+        // blindly generate reverse edges for all edges with zero capacity
         edge_list.extend_from_within(..);
         edge_list.iter_mut().skip(number_of_edges).for_each(|edge| {
             edge.reverse();
             edge.data.capacity = 0;
         });
+        println!("into {} edges", edge_list.len());
 
         // dedup-merge edge set, by using the following trick: not the dedup(.) call
         // below takes the second argument as mut. When deduping equivalent values
@@ -47,10 +65,11 @@ impl FordFulkerson {
             }
             result
         });
+        println!("dedup-merged {} edges", edge_list.len());
+
         // at this point the edge set of the residual graph doesn't have any
         // duplicates anymore. note that this is fine, as we are looking to
         // compute a node partition.
-
         Self {
             residual_graph: StaticGraph::new(edge_list),
             max_flow: 0,
@@ -60,11 +79,15 @@ impl FordFulkerson {
 
     pub fn run(&mut self, sources: &[NodeID], targets: &[NodeID]) {
         let mut bfs = BFS::new();
-        let filter = |graph: &StaticGraph<EdgeData>, edge| graph.data(edge).capacity <= 0;
+        let filter = |graph: &StaticGraph<EdgeCapacity>, edge| graph.data(edge).capacity <= 0;
+        let mut iteration = 0;
         while bfs.run_with_filter(&self.residual_graph, sources, targets, filter) {
+            iteration += 1;
+
+            println!("iteration {}", iteration);
             // retrieve node path. This is sufficient, as we removed all duplicate edges
             let path = bfs.fetch_node_path();
-            // println!("found node path {:#?}", path);
+            println!("found node path of size {:#?}", path.len());
 
             // find min capacity on edges of the path
             let st_tuple = path
@@ -75,13 +98,14 @@ impl FordFulkerson {
                 })
                 .unwrap();
 
-            let bottleneck_capacity = self
+            let bottleneck_edge = self
                 .residual_graph
                 .find_edge(st_tuple[0], st_tuple[1])
                 .unwrap();
-            let path_flow = self.residual_graph.data(bottleneck_capacity).capacity;
+            // println!("  bottleneck edge: {}", bottleneck_edge);
+            let path_flow = self.residual_graph.data(bottleneck_edge).capacity;
             assert!(path_flow > 0);
-            // println!("min edge: {}, capacity: {}", bottleneck_capacity, path_flow);
+            println!("min edge: {}, capacity: {}", bottleneck_edge, path_flow);
             // sum up flow
             self.max_flow += path_flow;
 
@@ -132,8 +156,8 @@ impl FordFulkerson {
             }
         }
 
-        // todo(dluxen): retrieve min-cut
-        // iterate all edges, output those with negative flow
+        // retrieve min-cut by walking the graph
+        // todo(dl): expose as interface
         for s in 0..self.residual_graph.number_of_nodes() as NodeID {
             for e in self.residual_graph.edge_range(s) {
                 let t = self.residual_graph.target(e);
@@ -152,7 +176,7 @@ impl FordFulkerson {
 mod tests {
 
     use crate::edge::InputEdge;
-    use crate::ford_fulkerson::EdgeData;
+    use crate::ford_fulkerson::EdgeCapacity;
     use crate::ford_fulkerson::FordFulkerson;
     use bitvec::bits;
     use bitvec::prelude::Lsb0;
@@ -160,16 +184,16 @@ mod tests {
     #[test]
     fn max_flow_clr() {
         let edges = vec![
-            InputEdge::new(0, 1, EdgeData::new(16)),
-            InputEdge::new(0, 2, EdgeData::new(13)),
-            InputEdge::new(1, 2, EdgeData::new(10)),
-            InputEdge::new(1, 3, EdgeData::new(12)),
-            InputEdge::new(2, 1, EdgeData::new(4)),
-            InputEdge::new(2, 4, EdgeData::new(14)),
-            InputEdge::new(3, 2, EdgeData::new(9)),
-            InputEdge::new(3, 5, EdgeData::new(20)),
-            InputEdge::new(4, 3, EdgeData::new(7)),
-            InputEdge::new(4, 5, EdgeData::new(4)),
+            InputEdge::new(0, 1, EdgeCapacity::new(16)),
+            InputEdge::new(0, 2, EdgeCapacity::new(13)),
+            InputEdge::new(1, 2, EdgeCapacity::new(10)),
+            InputEdge::new(1, 3, EdgeCapacity::new(12)),
+            InputEdge::new(2, 1, EdgeCapacity::new(4)),
+            InputEdge::new(2, 4, EdgeCapacity::new(14)),
+            InputEdge::new(3, 2, EdgeCapacity::new(9)),
+            InputEdge::new(3, 5, EdgeCapacity::new(20)),
+            InputEdge::new(4, 3, EdgeCapacity::new(7)),
+            InputEdge::new(4, 5, EdgeCapacity::new(4)),
         ];
 
         let mut max_flow_solver = FordFulkerson::from_edge_list(edges);
@@ -194,18 +218,18 @@ mod tests {
     #[test]
     fn max_flow_ita() {
         let edges = vec![
-            InputEdge::new(0, 1, EdgeData::new(5)),
-            InputEdge::new(0, 4, EdgeData::new(7)),
-            InputEdge::new(0, 5, EdgeData::new(6)),
-            InputEdge::new(1, 2, EdgeData::new(4)),
-            InputEdge::new(1, 7, EdgeData::new(3)),
-            InputEdge::new(4, 7, EdgeData::new(4)),
-            InputEdge::new(4, 6, EdgeData::new(1)),
-            InputEdge::new(5, 6, EdgeData::new(5)),
-            InputEdge::new(2, 3, EdgeData::new(3)),
-            InputEdge::new(7, 3, EdgeData::new(7)),
-            InputEdge::new(6, 7, EdgeData::new(1)),
-            InputEdge::new(6, 3, EdgeData::new(6)),
+            InputEdge::new(0, 1, EdgeCapacity::new(5)),
+            InputEdge::new(0, 4, EdgeCapacity::new(7)),
+            InputEdge::new(0, 5, EdgeCapacity::new(6)),
+            InputEdge::new(1, 2, EdgeCapacity::new(4)),
+            InputEdge::new(1, 7, EdgeCapacity::new(3)),
+            InputEdge::new(4, 7, EdgeCapacity::new(4)),
+            InputEdge::new(4, 6, EdgeCapacity::new(1)),
+            InputEdge::new(5, 6, EdgeCapacity::new(5)),
+            InputEdge::new(2, 3, EdgeCapacity::new(3)),
+            InputEdge::new(7, 3, EdgeCapacity::new(7)),
+            InputEdge::new(6, 7, EdgeCapacity::new(1)),
+            InputEdge::new(6, 3, EdgeCapacity::new(6)),
         ];
 
         let mut max_flow_solver = FordFulkerson::from_edge_list(edges);
@@ -229,23 +253,23 @@ mod tests {
     #[test]
     fn max_flow_yt() {
         let edges = vec![
-            InputEdge::new(9, 0, EdgeData::new(5)),
-            InputEdge::new(9, 1, EdgeData::new(10)),
-            InputEdge::new(9, 2, EdgeData::new(15)),
-            InputEdge::new(0, 3, EdgeData::new(10)),
-            InputEdge::new(1, 0, EdgeData::new(15)),
-            InputEdge::new(1, 4, EdgeData::new(20)),
-            InputEdge::new(2, 5, EdgeData::new(25)),
-            InputEdge::new(3, 4, EdgeData::new(25)),
-            InputEdge::new(3, 6, EdgeData::new(10)),
-            InputEdge::new(4, 2, EdgeData::new(5)),
-            InputEdge::new(4, 7, EdgeData::new(30)),
-            InputEdge::new(5, 7, EdgeData::new(20)),
-            InputEdge::new(5, 8, EdgeData::new(10)),
-            InputEdge::new(7, 8, EdgeData::new(15)),
-            InputEdge::new(6, 10, EdgeData::new(5)),
-            InputEdge::new(7, 10, EdgeData::new(15)),
-            InputEdge::new(8, 10, EdgeData::new(10)),
+            InputEdge::new(9, 0, EdgeCapacity::new(5)),
+            InputEdge::new(9, 1, EdgeCapacity::new(10)),
+            InputEdge::new(9, 2, EdgeCapacity::new(15)),
+            InputEdge::new(0, 3, EdgeCapacity::new(10)),
+            InputEdge::new(1, 0, EdgeCapacity::new(15)),
+            InputEdge::new(1, 4, EdgeCapacity::new(20)),
+            InputEdge::new(2, 5, EdgeCapacity::new(25)),
+            InputEdge::new(3, 4, EdgeCapacity::new(25)),
+            InputEdge::new(3, 6, EdgeCapacity::new(10)),
+            InputEdge::new(4, 2, EdgeCapacity::new(5)),
+            InputEdge::new(4, 7, EdgeCapacity::new(30)),
+            InputEdge::new(5, 7, EdgeCapacity::new(20)),
+            InputEdge::new(5, 8, EdgeCapacity::new(10)),
+            InputEdge::new(7, 8, EdgeCapacity::new(15)),
+            InputEdge::new(6, 10, EdgeCapacity::new(5)),
+            InputEdge::new(7, 10, EdgeCapacity::new(15)),
+            InputEdge::new(8, 10, EdgeCapacity::new(10)),
         ];
 
         let mut max_flow_solver = FordFulkerson::from_edge_list(edges);
@@ -269,15 +293,15 @@ mod tests {
     #[test]
     fn max_flow_ff() {
         let edges = vec![
-            InputEdge::new(0, 1, EdgeData::new(7)),
-            InputEdge::new(0, 2, EdgeData::new(3)),
-            InputEdge::new(1, 2, EdgeData::new(1)),
-            InputEdge::new(1, 3, EdgeData::new(6)),
-            InputEdge::new(2, 4, EdgeData::new(8)),
-            InputEdge::new(3, 5, EdgeData::new(2)),
-            InputEdge::new(3, 2, EdgeData::new(3)),
-            InputEdge::new(4, 3, EdgeData::new(2)),
-            InputEdge::new(4, 5, EdgeData::new(8)),
+            InputEdge::new(0, 1, EdgeCapacity::new(7)),
+            InputEdge::new(0, 2, EdgeCapacity::new(3)),
+            InputEdge::new(1, 2, EdgeCapacity::new(1)),
+            InputEdge::new(1, 3, EdgeCapacity::new(6)),
+            InputEdge::new(2, 4, EdgeCapacity::new(8)),
+            InputEdge::new(3, 5, EdgeCapacity::new(2)),
+            InputEdge::new(3, 2, EdgeCapacity::new(3)),
+            InputEdge::new(4, 3, EdgeCapacity::new(2)),
+            InputEdge::new(4, 5, EdgeCapacity::new(8)),
         ];
 
         let mut max_flow_solver = FordFulkerson::from_edge_list(edges);
@@ -302,15 +326,15 @@ mod tests {
     #[should_panic]
     fn flow_not_computed() {
         let edges = vec![
-            InputEdge::new(0, 1, EdgeData::new(7)),
-            InputEdge::new(0, 2, EdgeData::new(3)),
-            InputEdge::new(1, 2, EdgeData::new(1)),
-            InputEdge::new(1, 3, EdgeData::new(6)),
-            InputEdge::new(2, 4, EdgeData::new(8)),
-            InputEdge::new(3, 5, EdgeData::new(2)),
-            InputEdge::new(3, 2, EdgeData::new(3)),
-            InputEdge::new(4, 3, EdgeData::new(2)),
-            InputEdge::new(4, 5, EdgeData::new(8)),
+            InputEdge::new(0, 1, EdgeCapacity::new(7)),
+            InputEdge::new(0, 2, EdgeCapacity::new(3)),
+            InputEdge::new(1, 2, EdgeCapacity::new(1)),
+            InputEdge::new(1, 3, EdgeCapacity::new(6)),
+            InputEdge::new(2, 4, EdgeCapacity::new(8)),
+            InputEdge::new(3, 5, EdgeCapacity::new(2)),
+            InputEdge::new(3, 2, EdgeCapacity::new(3)),
+            InputEdge::new(4, 3, EdgeCapacity::new(2)),
+            InputEdge::new(4, 5, EdgeCapacity::new(8)),
         ];
 
         // the expect(.) call is being tested
@@ -323,15 +347,15 @@ mod tests {
     #[should_panic]
     fn assignment_not_computed() {
         let edges = vec![
-            InputEdge::new(0, 1, EdgeData::new(7)),
-            InputEdge::new(0, 2, EdgeData::new(3)),
-            InputEdge::new(1, 2, EdgeData::new(1)),
-            InputEdge::new(1, 3, EdgeData::new(6)),
-            InputEdge::new(2, 4, EdgeData::new(8)),
-            InputEdge::new(3, 5, EdgeData::new(2)),
-            InputEdge::new(3, 2, EdgeData::new(3)),
-            InputEdge::new(4, 3, EdgeData::new(2)),
-            InputEdge::new(4, 5, EdgeData::new(8)),
+            InputEdge::new(0, 1, EdgeCapacity::new(7)),
+            InputEdge::new(0, 2, EdgeCapacity::new(3)),
+            InputEdge::new(1, 2, EdgeCapacity::new(1)),
+            InputEdge::new(1, 3, EdgeCapacity::new(6)),
+            InputEdge::new(2, 4, EdgeCapacity::new(8)),
+            InputEdge::new(3, 5, EdgeCapacity::new(2)),
+            InputEdge::new(3, 2, EdgeCapacity::new(3)),
+            InputEdge::new(4, 3, EdgeCapacity::new(2)),
+            InputEdge::new(4, 5, EdgeCapacity::new(8)),
         ];
 
         // the expect(.) call is being tested
