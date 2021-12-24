@@ -1,10 +1,11 @@
-use std::collections::{HashSet, VecDeque};
+use rustc_hash::FxHashSet;
+use std::collections::VecDeque;
 
 use crate::graph::{EdgeID, Graph, NodeID, INVALID_NODE_ID};
 
 pub struct BFS {
     sources: Vec<NodeID>,
-    target_set: HashSet<NodeID>,
+    target_set: FxHashSet<NodeID>,
     parents: Vec<NodeID>,
     target: NodeID,
 
