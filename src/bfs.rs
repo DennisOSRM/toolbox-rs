@@ -1,5 +1,5 @@
 use bitvec::vec::BitVec;
-use std::collections::VecDeque;
+// use std::collections::VecDeque;
 
 use crate::graph::{EdgeID, Graph, NodeID, INVALID_NODE_ID};
 
@@ -8,7 +8,7 @@ pub struct BFS {
     target_set: BitVec,
     parents: Vec<NodeID>,
     target: NodeID,
-    queue: VecDeque<usize>,
+    queue: Vec<usize>,
     empty_target_set: bool,
 }
 
@@ -20,9 +20,11 @@ impl BFS {
             target_set: BitVec::with_capacity(number_of_nodes),
             parents: Vec::new(),
             target: INVALID_NODE_ID,
-            queue: VecDeque::new(),
+            queue: Vec::new(),
             empty_target_set: target_list.is_empty(),
         };
+
+        // initialize bit vector storing which nodes are targets
         temp.target_set.resize(number_of_nodes, false);
         for i in target_list {
             temp.target_set.set(*i as usize, true);
@@ -33,27 +35,19 @@ impl BFS {
     }
 
     fn populate_sources(&mut self, number_of_nodes: usize) {
-        self.parents
-            .resize(number_of_nodes, INVALID_NODE_ID);
+        self.parents.resize(number_of_nodes, INVALID_NODE_ID);
         for s in &self.sources {
             self.parents[*s] = *s;
         }
     }
 
-    pub fn run<T, G: Graph<T>>(
-        &mut self,
-        graph: &G,
-    ) -> bool {
+    pub fn run<T, G: Graph<T>>(&mut self, graph: &G) -> bool {
         self.run_with_filter(graph, |_graph, _edge| false)
     }
 
     /// explore the graph in a BFS
     /// returns true if a path between s and t was found or no target was given
-    pub fn run_with_filter<T, F, G: Graph<T>>(
-        &mut self,
-        graph: &G,
-        filter: F,
-    ) -> bool
+    pub fn run_with_filter<T, F, G: Graph<T>>(&mut self, graph: &G, filter: F) -> bool
     where
         F: Fn(&G, EdgeID) -> bool,
     {
@@ -66,9 +60,9 @@ impl BFS {
             self.parents[*s] = *s;
         }
 
-        while let Some(node) = self.queue.pop_back() {
+        while let Some(node) = self.queue.pop() {
             let node_is_source = self.parents[node] == node;
-                // sources have themselves as parents
+            // sources have themselves as parents
             for edge in graph.edge_range(node) {
                 if filter(graph, edge) {
                     continue;
@@ -82,12 +76,15 @@ impl BFS {
                     continue;
                 }
                 self.parents[target] = node;
-                if *self.target_set.get(target).expect("target not in range") {
-                    self.target = target;
-                    // check if we have found our target if it exists
-                    return true;
+                unsafe {
+                    // unsafe is used for performance, here, as the graph is consistent by construction
+                    if *self.target_set.get_unchecked(target) {
+                        self.target = target;
+                        // check if we have found our target if it exists
+                        return true;
+                    }
                 }
-                self.queue.push_front(target);
+                self.queue.push(target);
             }
         }
 
@@ -130,12 +127,13 @@ impl BFS {
         path.reverse();
         path
     }
+
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::edge::InputEdge;
     use crate::graph::Graph;
-use crate::edge::InputEdge;
     use crate::{bfs::BFS, static_graph::StaticGraph};
 
     #[test]
@@ -156,7 +154,7 @@ use crate::edge::InputEdge;
         assert!(bfs.run(&graph));
 
         let path = bfs.fetch_node_path();
-        assert_eq!(path, vec![0, 1, 5]);
+        assert_eq!(path, vec![0, 4, 5]);
     }
 
     #[test]
@@ -176,7 +174,7 @@ use crate::edge::InputEdge;
         let mut bfs = BFS::new(&[0], &[5], graph.number_of_nodes());
         assert!(bfs.run(&graph));
         let path = bfs.fetch_edge_path(&graph);
-        assert_eq!(path, vec![0, 3]);
+        assert_eq!(path, vec![1, 6]);
     }
 
     #[test]
@@ -197,7 +195,7 @@ use crate::edge::InputEdge;
         assert!(bfs.run(&graph));
 
         let path = bfs.fetch_node_path_from_node(3);
-        assert_eq!(path, vec![0, 1, 2, 3]);
+        assert_eq!(path, vec![0, 4, 5, 3]);
     }
 
     #[test]
@@ -214,11 +212,11 @@ use crate::edge::InputEdge;
             InputEdge::new(1, 5, 2),
         ];
         let graph = Graph::new(edges);
-        let mut bfs = BFS::new( &[0, 1], &[], graph.number_of_nodes());
+        let mut bfs = BFS::new(&[0, 1], &[], graph.number_of_nodes());
         assert!(bfs.run(&graph));
 
         // path unpacking
         let path = bfs.fetch_node_path_from_node(3);
-        assert_eq!(path, vec![1, 2, 3]);
+        assert_eq!(path, vec![1, 5, 3]);
     }
 }

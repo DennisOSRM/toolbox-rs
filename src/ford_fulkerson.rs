@@ -65,7 +65,7 @@ impl FordFulkerson {
             }
             result
         });
-        println!("dedup-merged {} edges", edge_list.len());
+        // println!("dedup-merged {} edges", edge_list.len());
 
         // at this point the edge set of the residual graph doesn't have any
         // duplicates anymore. note that this is fine, as we are looking to
