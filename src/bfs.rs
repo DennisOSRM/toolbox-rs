@@ -194,9 +194,8 @@ mod tests {
         let path = bfs.fetch_node_path();
         assert_eq!(path, vec![0, 4, 5]);
 
-        let mut path: Vec<usize> = bfs.path_iter().collect();
-        path.reverse();
-        assert_eq!(path, vec![0, 4, 5]);
+        let path: Vec<usize> = bfs.path_iter().collect();
+        assert_eq!(path, vec![5, 4, 0]);
     }
 
     #[test]
@@ -238,6 +237,9 @@ mod tests {
 
         let path = bfs.fetch_node_path_from_node(3);
         assert_eq!(path, vec![0, 4, 5, 3]);
+
+        let path: Vec<usize> = bfs.path_iter().collect();
+        assert_eq!(path, vec![]);
     }
 
     #[test]
@@ -260,5 +262,8 @@ mod tests {
         // path unpacking
         let path = bfs.fetch_node_path_from_node(3);
         assert_eq!(path, vec![1, 5, 3]);
+
+        let path: Vec<usize> = bfs.path_iter().collect();
+        assert_eq!(path, vec![]);
     }
 }
