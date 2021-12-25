@@ -80,6 +80,7 @@ impl BFS {
                     // unsafe is used for performance, here, as the graph is consistent by construction
                     if *self.target_set.get_unchecked(target) {
                         self.target = target;
+                        println!("setting target {}", self.target);
                         // check if we have found our target if it exists
                         return true;
                     }
@@ -128,6 +129,43 @@ impl BFS {
         path
     }
 
+    //TODO: Add test covering this iterator
+    pub fn path_iter(&self) -> PathIter {
+        PathIter::new(self)
+    }
+}
+
+pub struct PathIter<'a> {
+    bfs: &'a BFS,
+    id: usize,
+}
+
+impl<'a> PathIter<'a> {
+    pub fn new(bfs: &BFS) -> PathIter {
+        println!("init: {}", bfs.target);
+        PathIter {
+            bfs,
+            id: bfs.target,
+        }
+    }
+}
+
+impl<'a> Iterator for PathIter<'a> {
+    type Item = NodeID;
+    fn next(&mut self) -> Option<NodeID> {
+        if self.id == INVALID_NODE_ID {
+            // INVALID_NODE_ID is the indicator that unpacking is done or not possible
+            return None;
+        }
+
+        // path unpacking step
+        let result = self.id;
+        self.id = self.bfs.parents[self.id];
+        if result == self.bfs.parents[result] {
+            self.id = INVALID_NODE_ID;
+        }
+        Some(result)
+    }
 }
 
 #[cfg(test)]
@@ -154,6 +192,10 @@ mod tests {
         assert!(bfs.run(&graph));
 
         let path = bfs.fetch_node_path();
+        assert_eq!(path, vec![0, 4, 5]);
+
+        let mut path: Vec<usize> = bfs.path_iter().collect();
+        path.reverse();
         assert_eq!(path, vec![0, 4, 5]);
     }
 
