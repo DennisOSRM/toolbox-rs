@@ -9,7 +9,6 @@ edition = "2021"
 bitvec = "0.22.3"
 num = "0.4.0"
 rand = "0.8.4"
-rustc-hash = "1.1.0"
 
 [profile.release]
 debug = true

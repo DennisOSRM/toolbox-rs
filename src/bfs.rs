@@ -1,15 +1,15 @@
-use rustc_hash::FxHashSet;
+use bitvec::vec::BitVec;
 use std::collections::VecDeque;
 
 use crate::graph::{EdgeID, Graph, NodeID, INVALID_NODE_ID};
 
 pub struct BFS {
     sources: Vec<NodeID>,
-    target_set: FxHashSet<NodeID>,
+    target_set: BitVec,
     parents: Vec<NodeID>,
     target: NodeID,
-
     queue: VecDeque<usize>,
+    empty_target_set: bool,
 }
 
 impl BFS {
@@ -17,11 +17,17 @@ impl BFS {
     pub fn new(source_list: &[NodeID], target_list: &[NodeID], number_of_nodes: usize) -> Self {
         let mut temp = Self {
             sources: source_list.iter().copied().collect(),
-            target_set: target_list.iter().copied().collect(),
+            target_set: BitVec::with_capacity(number_of_nodes),
             parents: Vec::new(),
             target: INVALID_NODE_ID,
             queue: VecDeque::new(),
+            empty_target_set: target_list.is_empty(),
         };
+        temp.target_set.resize(number_of_nodes, false);
+        for i in target_list {
+            temp.target_set.set(*i as usize, true);
+        }
+
         temp.populate_sources(number_of_nodes);
         temp
     }
@@ -76,7 +82,7 @@ impl BFS {
                     continue;
                 }
                 self.parents[target] = node;
-                if self.target_set.contains(&target) {
+                if *self.target_set.get(target).expect("target not in range") {
                     self.target = target;
                     // check if we have found our target if it exists
                     return true;
@@ -86,7 +92,7 @@ impl BFS {
         }
 
         // return true only if target set was empty
-        self.target_set.is_empty()
+        self.empty_target_set
     }
 
     // path unpacking, by searching for the first target that was found
