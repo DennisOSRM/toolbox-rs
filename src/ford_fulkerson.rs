@@ -103,7 +103,7 @@ impl FordFulkerson {
                 .residual_graph
                 .find_edge(st_tuple[0], st_tuple[1])
                 .unwrap(); // TODO: should this be an expect()?
-            // println!("  bottleneck edge: {}", bottleneck_edge);
+                           // println!("  bottleneck edge: {}", bottleneck_edge);
             let path_flow = self.residual_graph.data(bottleneck_edge).capacity;
             debug_assert!(path_flow > 0);
             // println!("min edge: {}, capacity: {}", bottleneck_edge, path_flow);

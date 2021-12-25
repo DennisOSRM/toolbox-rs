@@ -1,9 +1,7 @@
 use crate::edge::Edge;
 use std::{cmp::max, ops::Range};
 
-use crate::{
-    graph::{EdgeID, Graph, NodeID},
-};
+use crate::graph::{EdgeID, Graph, NodeID};
 
 pub struct NodeArrayEntry {
     first_edge: EdgeID,
@@ -153,10 +151,7 @@ impl<T: Ord + Copy> Graph<T> for StaticGraph<T> {
 mod tests {
     use crate::edge::InputEdge;
 
-    use crate::{
-        graph::Graph,
-        static_graph::StaticGraph,
-    };
+    use crate::{graph::Graph, static_graph::StaticGraph};
 
     #[test]
     fn size() {
