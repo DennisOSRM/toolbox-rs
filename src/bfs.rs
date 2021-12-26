@@ -1,5 +1,4 @@
 use bitvec::vec::BitVec;
-// use std::collections::VecDeque;
 
 use crate::graph::{EdgeID, Graph, NodeID, INVALID_NODE_ID};
 
@@ -72,7 +71,7 @@ impl BFS {
                     || (node_is_source && self.parents[target] == target)
                 {
                     // we already have seen this node and can ignore it, or
-                    // edge is fully contained within source set and we can ignore it
+                    // edge is fully contained within source set and we can ignore it, too
                     continue;
                 }
                 self.parents[target] = node;
@@ -80,7 +79,7 @@ impl BFS {
                     // unsafe is used for performance, here, as the graph is consistent by construction
                     if *self.target_set.get_unchecked(target) {
                         self.target = target;
-                        println!("setting target {}", self.target);
+                        // println!("setting target {}", self.target);
                         // check if we have found our target if it exists
                         return true;
                     }
@@ -142,7 +141,7 @@ pub struct PathIter<'a> {
 
 impl<'a> PathIter<'a> {
     pub fn new(bfs: &BFS) -> PathIter {
-        println!("init: {}", bfs.target);
+        // println!("init: {}", bfs.target);
         PathIter {
             bfs,
             id: bfs.target,

@@ -53,7 +53,7 @@ impl FordFulkerson {
         // dedup-merge edge set, by using the following trick: not the dedup(.) call
         // below takes the second argument as mut. When deduping equivalent values
         // a and b, then a is accumulated onto b.
-        edge_list.sort();
+        edge_list.sort_unstable();
         edge_list.dedup_by(|a, mut b| {
             // edges a and b are assumed to be equivalent in the residual graph if
             // (and only if) they are parallel. In other words, this removes parallel
@@ -91,18 +91,18 @@ impl FordFulkerson {
             // println!("found node path of size {:#?}", path.len());
 
             // find min capacity on edges of the path
-            let st_tuple = path
+            let min_uv_pair = path
                 .windows(2)
                 .min_by_key(|window| {
                     let edge = self.residual_graph.find_edge(window[0], window[1]).unwrap();
                     self.residual_graph.data(edge).capacity
                 })
-                .unwrap(); // TODO: should this be an expect()?
+                .expect("graph is broken, couldn't find min edge");
 
             let bottleneck_edge = self
                 .residual_graph
-                .find_edge(st_tuple[0], st_tuple[1])
-                .unwrap(); // TODO: should this be an expect()?
+                .find_edge(min_uv_pair[0], min_uv_pair[1])
+                .expect("graph is broken, couldn't find min edge");
                            // println!("  bottleneck edge: {}", bottleneck_edge);
             let path_flow = self.residual_graph.data(bottleneck_edge).capacity;
             debug_assert!(path_flow > 0);
