@@ -103,7 +103,7 @@ impl FordFulkerson {
                 .residual_graph
                 .find_edge(min_uv_pair[0], min_uv_pair[1])
                 .expect("graph is broken, couldn't find min edge");
-                           // println!("  bottleneck edge: {}", bottleneck_edge);
+            // println!("  bottleneck edge: {}", bottleneck_edge);
             let path_flow = self.residual_graph.data(bottleneck_edge).capacity;
             debug_assert!(path_flow > 0);
             // println!("min edge: {}, capacity: {}", bottleneck_edge, path_flow);
@@ -212,6 +212,42 @@ mod tests {
             .expect("assignment computation did not run");
 
         assert_eq!(assignment, bits![1, 1, 1, 0, 1, 0]);
+    }
+
+    #[test]
+    fn max_flow_clr_multi_target_set() {
+        let edges = vec![
+            InputEdge::new(0, 1, EdgeCapacity::new(16)),
+            InputEdge::new(0, 2, EdgeCapacity::new(13)),
+            InputEdge::new(1, 2, EdgeCapacity::new(10)),
+            InputEdge::new(1, 3, EdgeCapacity::new(12)),
+            InputEdge::new(2, 1, EdgeCapacity::new(4)),
+            InputEdge::new(2, 4, EdgeCapacity::new(14)),
+            InputEdge::new(3, 2, EdgeCapacity::new(9)),
+            InputEdge::new(3, 5, EdgeCapacity::new(20)),
+            InputEdge::new(4, 3, EdgeCapacity::new(7)),
+            InputEdge::new(4, 5, EdgeCapacity::new(4)),
+            InputEdge::new(5, 6, EdgeCapacity::new(1)),
+            InputEdge::new(6, 1, EdgeCapacity::new(41)),
+        ];
+
+        let mut max_flow_solver = FordFulkerson::from_edge_list(edges);
+        let sources = [0];
+        let targets = [5, 6];
+        max_flow_solver.run(&sources, &targets);
+
+        // it's OK to expect the solver to have run
+        let max_flow = max_flow_solver
+            .max_flow()
+            .expect("max flow computation did not run");
+        assert_eq!(23, max_flow);
+
+        // it's OK to expect the solver to have run
+        let assignment = max_flow_solver
+            .assignment(&sources)
+            .expect("assignment computation did not run");
+
+        assert_eq!(assignment, bits![1, 1, 1, 0, 1, 0, 0]);
     }
 
     #[test]
