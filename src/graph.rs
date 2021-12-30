@@ -18,3 +18,8 @@ pub trait Graph<T> {
     fn data_mut(&mut self, e: EdgeID) -> &mut T;
     fn find_edge(&self, s: NodeID, t: NodeID) -> Option<EdgeID>;
 }
+
+pub struct EdgeArrayEntry<EdgeDataT> {
+    pub target: NodeID,
+    pub data: EdgeDataT,
+}

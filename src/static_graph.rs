@@ -1,21 +1,17 @@
 use crate::edge::Edge;
+use crate::graph::EdgeArrayEntry;
 use std::{cmp::max, ops::Range};
 
 use crate::graph::{EdgeID, Graph, NodeID};
 
 pub struct NodeArrayEntry {
-    first_edge: EdgeID,
+    pub first_edge: EdgeID,
 }
 
 impl NodeArrayEntry {
     pub fn new(e: EdgeID) -> NodeArrayEntry {
         NodeArrayEntry { first_edge: e }
     }
-}
-
-pub struct EdgeArrayEntry<EdgeDataT> {
-    target: NodeID,
-    data: EdgeDataT,
 }
 
 pub struct StaticGraph<T: Ord> {
