@@ -1,3 +1,4 @@
+#![feature(const_generics_defaults)]
 pub mod addressable_binary_heap;
 pub mod bfs;
 pub mod bin_pack;
