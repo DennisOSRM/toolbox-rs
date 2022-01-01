@@ -1,3 +1,4 @@
+use std::time::Instant;
 use bitvec::vec::BitVec;
 
 use crate::graph::{EdgeID, Graph, NodeID, INVALID_NODE_ID};
@@ -50,6 +51,7 @@ impl BFS {
     where
         F: Fn(&G, EdgeID) -> bool,
     {
+        let start = Instant::now();
         // reset queue
         self.queue = self.sources.iter().copied().collect();
 
@@ -81,12 +83,17 @@ impl BFS {
                         self.target = target;
                         // println!("setting target {}", self.target);
                         // check if we have found our target if it exists
+                        let duration = start.elapsed();
+                        println!("BFS took: {:?} (done)", duration);
                         return true;
                     }
                 }
                 self.queue.push(target);
             }
         }
+
+        let duration = start.elapsed();
+        println!("BFS took: {:?} (done)", duration);
 
         // return true only if target set was empty
         self.empty_target_set
