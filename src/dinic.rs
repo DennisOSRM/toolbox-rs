@@ -102,8 +102,12 @@ impl<'a> Dinic<'a> {
         }
     }
 
-    pub fn run(&mut self, sources: &[NodeID], targets: &[NodeID]) {
-        println!("sources: {}, targets {}", sources.len(), targets.len());
+    pub fn run(&mut self) {
+        println!(
+            "sources: {}, targets {}",
+            self.sources.len(),
+            self.targets.len()
+        );
 
         let number_of_nodes = self.residual_graph.number_of_nodes();
         self.parents.resize(number_of_nodes, 0);
@@ -302,7 +306,7 @@ mod tests {
         let sources = [0];
         let targets = [5];
         let mut max_flow_solver = Dinic::from_edge_list(edges, &sources, &targets);
-        max_flow_solver.run(&sources, &targets);
+        max_flow_solver.run();
 
         // it's OK to expect the solver to have run
         let max_flow = max_flow_solver
@@ -338,7 +342,7 @@ mod tests {
         let sources = [0];
         let targets = [5, 6];
         let mut max_flow_solver = Dinic::from_edge_list(edges, &sources, &targets);
-        max_flow_solver.run(&sources, &targets);
+        max_flow_solver.run();
 
         // it's OK to expect the solver to have run
         let max_flow = max_flow_solver
@@ -374,7 +378,7 @@ mod tests {
         let sources = [0];
         let targets = [3];
         let mut max_flow_solver = Dinic::from_edge_list(edges, &sources, &targets);
-        max_flow_solver.run(&sources, &targets);
+        max_flow_solver.run();
 
         // it's OK to expect the solver to have run
         let max_flow = max_flow_solver
@@ -414,7 +418,7 @@ mod tests {
         let sources = [9];
         let targets = [10];
         let mut max_flow_solver = Dinic::from_edge_list(edges, &sources, &targets);
-        max_flow_solver.run(&sources, &targets);
+        max_flow_solver.run();
 
         // it's OK to expect the solver to have run
         let max_flow = max_flow_solver
@@ -446,7 +450,7 @@ mod tests {
         let sources = [0];
         let targets = [5];
         let mut max_flow_solver = Dinic::from_edge_list(edges, &sources, &targets);
-        max_flow_solver.run(&sources, &targets);
+        max_flow_solver.run();
 
         // it's OK to expect the solver to have run
         let max_flow = max_flow_solver
