@@ -18,7 +18,7 @@ impl EdgeCapacity {
     }
 }
 
-pub struct Dinic<'a> {
+pub struct Dinic {
     residual_graph: StaticGraph<EdgeCapacity>,
     max_flow: i32,
     finished: bool,
@@ -28,16 +28,16 @@ pub struct Dinic<'a> {
     dfs_count: usize,
     bfs_count: usize,
     queue: VecDeque<NodeID>,
-    sources: &'a [NodeID],
-    targets: &'a [NodeID],
+    source: NodeID,
+    target: NodeID,
 }
 
-impl<'a> Dinic<'a> {
+impl Dinic {
     // todo(dl): add closure parameter to derive edge data
     pub fn from_generic_edge_list(
         input_edges: Vec<impl Edge<ID = NodeID>>,
-        sources: &'a [NodeID],
-        targets: &'a [NodeID],
+        source: NodeID,
+        target: NodeID,
     ) -> Self {
         let edge_list: Vec<InputEdge<EdgeCapacity>> = input_edges
             .into_iter()
@@ -49,13 +49,13 @@ impl<'a> Dinic<'a> {
             .collect();
 
         println!("created {} ff edges", edge_list.len());
-        Dinic::from_edge_list(edge_list, sources, targets)
+        Dinic::from_edge_list(edge_list, source, target)
     }
 
     pub fn from_edge_list(
         mut edge_list: Vec<InputEdge<EdgeCapacity>>,
-        sources: &'a [usize],
-        targets: &'a [usize],
+        source: usize,
+        target: usize,
     ) -> Self {
         let number_of_edges = edge_list.len();
 
@@ -97,16 +97,16 @@ impl<'a> Dinic<'a> {
             dfs_count: 0,
             bfs_count: 0,
             queue: VecDeque::new(),
-            sources,
-            targets,
+            source,
+            target,
         }
     }
 
     pub fn run(&mut self) {
         println!(
-            "sources: {}, targets {}",
-            self.sources.len(),
-            self.targets.len()
+            "V {}, E {}",
+            self.residual_graph.number_of_nodes(),
+            self.residual_graph.number_of_edges()
         );
 
         let number_of_nodes = self.residual_graph.number_of_nodes();
@@ -134,14 +134,16 @@ impl<'a> Dinic<'a> {
         self.bfs_count += 1;
         // init
         self.level.fill(usize::MAX);
-        self.queue.extend(self.sources.iter().copied());
-        for s in self.sources {
-            self.level[*s] = 0;
-            // self.queue.push_back(*s);
-        }
-        for t in self.targets {
-            self.level[*t] = usize::MAX - 1;
-        }
+        // self.queue.extend(self.sources.iter().copied());
+        self.queue.clear();
+        self.queue.push_back(self.source);
+        // for s in self.sources {
+        self.level[self.source] = 0;
+        // self.queue.push_back(*s);
+        // }
+        // for t in self.targets {
+        // self.level[self.target] = usize::MAX - 1;
+        // }
 
         // label residual graph nodes in BFS order
         let mut found_path = false;
@@ -153,13 +155,12 @@ impl<'a> Dinic<'a> {
                     // no flow on this edge
                     continue;
                 }
-                if self.level[v] < usize::MAX - 1 {
+                if self.level[v] != usize::MAX {
                     // node already visited
                     continue;
                 }
-                let is_target = self.level[v] == usize::MAX - 1;
                 self.level[v] = self.level[u] + 1;
-                if is_target {
+                if v == self.target {
                     found_path = true;
                 } else {
                     self.queue.push_back(v);
@@ -179,20 +180,20 @@ impl<'a> Dinic<'a> {
         // println!("DFS stack capacity: {}", self.stack.capacity());
         self.parents.fill(NodeID::MAX);
 
-        let duration = start.elapsed();
-        println!(" DFS init1: {:?}", duration);
+        // let duration = start.elapsed();
+        // println!(" DFS init1: {:?}", duration);
 
-        for u in self.sources {
-            self.stack.push((*u, i32::MAX));
-            self.parents[*u] = *u;
-        }
+        // for u in self.sources {
+        self.stack.push((self.source, i32::MAX));
+        self.parents[self.source] = self.source;
+        // }
 
-        let duration = start.elapsed();
-        println!(" DFS init2: {:?}", duration);
+        // let duration = start.elapsed();
+        // println!(" DFS init2: {:?}", duration);
 
-        for t in self.targets {
-            self.parents[*t] = NodeID::MAX - 1;
-        }
+        // for t in self.targets {
+        //     self.parents[*t] = NodeID::MAX - 1;
+        // }
 
         let duration = start.elapsed();
         println!(" DFS init3: {:?}", duration);
@@ -200,7 +201,7 @@ impl<'a> Dinic<'a> {
         while let Some((node, flow)) = self.stack.pop() {
             for edge in self.residual_graph.edge_range(node) {
                 let target = self.residual_graph.target(edge);
-                if self.parents[target] < NodeID::MAX - 1 {
+                if self.parents[target] != NodeID::MAX {
                     // target already in queue
                     continue;
                 }
@@ -213,10 +214,10 @@ impl<'a> Dinic<'a> {
                     // no capacity to use on this edge
                     continue;
                 }
-                let is_parent = self.parents[target] == NodeID::MAX - 1;
+                // let is_parent = self.parents[target] == NodeID::MAX - 1;
                 self.parents[target] = node;
                 let flow = min(flow, available_capacity);
-                if is_parent {
+                if target == self.target {
                     // reached a target. Unpack path, assign flow
                     let mut v = target;
                     loop {
@@ -252,7 +253,7 @@ impl<'a> Dinic<'a> {
         Ok(self.max_flow)
     }
 
-    pub fn assignment(&self, sources: &[NodeID]) -> Result<BitVec, String> {
+    pub fn assignment(&self, source: NodeID) -> Result<BitVec, String> {
         if !self.finished {
             return Err("Assigment was not computed.".to_string());
         }
@@ -260,7 +261,7 @@ impl<'a> Dinic<'a> {
         // run a reachability analysis
         let mut reachable = BitVec::with_capacity(self.residual_graph.number_of_nodes());
         reachable.resize(self.residual_graph.number_of_nodes(), false);
-        let mut stack: Vec<usize> = sources.iter().copied().collect();
+        let mut stack = vec![source];
         while let Some(node) = stack.pop() {
             // TODO: looks like this following is superflous work?
             if *reachable.get(node as usize).unwrap() {
@@ -303,9 +304,9 @@ mod tests {
             InputEdge::new(4, 5, EdgeCapacity::new(4)),
         ];
 
-        let sources = [0];
-        let targets = [5];
-        let mut max_flow_solver = Dinic::from_edge_list(edges, &sources, &targets);
+        let source = 0;
+        let target = 5;
+        let mut max_flow_solver = Dinic::from_edge_list(edges, source, target);
         max_flow_solver.run();
 
         // it's OK to expect the solver to have run
@@ -316,46 +317,10 @@ mod tests {
 
         // it's OK to expect the solver to have run
         let assignment = max_flow_solver
-            .assignment(&sources)
+            .assignment(source)
             .expect("assignment computation did not run");
 
         assert_eq!(assignment, bits![1, 1, 1, 0, 1, 0]);
-    }
-
-    #[test]
-    fn max_flow_clr_multi_target_set() {
-        let edges = vec![
-            InputEdge::new(0, 1, EdgeCapacity::new(16)),
-            InputEdge::new(0, 2, EdgeCapacity::new(13)),
-            InputEdge::new(1, 2, EdgeCapacity::new(10)),
-            InputEdge::new(1, 3, EdgeCapacity::new(12)),
-            InputEdge::new(2, 1, EdgeCapacity::new(4)),
-            InputEdge::new(2, 4, EdgeCapacity::new(14)),
-            InputEdge::new(3, 2, EdgeCapacity::new(9)),
-            InputEdge::new(3, 5, EdgeCapacity::new(20)),
-            InputEdge::new(4, 3, EdgeCapacity::new(7)),
-            InputEdge::new(4, 5, EdgeCapacity::new(4)),
-            InputEdge::new(5, 6, EdgeCapacity::new(1)),
-            InputEdge::new(6, 1, EdgeCapacity::new(41)),
-        ];
-
-        let sources = [0];
-        let targets = [5, 6];
-        let mut max_flow_solver = Dinic::from_edge_list(edges, &sources, &targets);
-        max_flow_solver.run();
-
-        // it's OK to expect the solver to have run
-        let max_flow = max_flow_solver
-            .max_flow()
-            .expect("max flow computation did not run");
-        assert_eq!(23, max_flow);
-
-        // it's OK to expect the solver to have run
-        let assignment = max_flow_solver
-            .assignment(&sources)
-            .expect("assignment computation did not run");
-
-        assert_eq!(assignment, bits![1, 1, 1, 0, 1, 0, 0]);
     }
 
     #[test]
@@ -375,9 +340,9 @@ mod tests {
             InputEdge::new(6, 3, EdgeCapacity::new(6)),
         ];
 
-        let sources = [0];
-        let targets = [3];
-        let mut max_flow_solver = Dinic::from_edge_list(edges, &sources, &targets);
+        let source = 0;
+        let target = 3;
+        let mut max_flow_solver = Dinic::from_edge_list(edges, source, target);
         max_flow_solver.run();
 
         // it's OK to expect the solver to have run
@@ -388,7 +353,7 @@ mod tests {
 
         // it's OK to expect the solver to have run
         let assignment = max_flow_solver
-            .assignment(&sources)
+            .assignment(source)
             .expect("assignment computation did not run");
         assert_eq!(assignment, bits![1, 0, 0, 0, 1, 1, 0, 0]);
     }
@@ -415,9 +380,9 @@ mod tests {
             InputEdge::new(8, 10, EdgeCapacity::new(10)),
         ];
 
-        let sources = [9];
-        let targets = [10];
-        let mut max_flow_solver = Dinic::from_edge_list(edges, &sources, &targets);
+        let source = 9;
+        let target = 10;
+        let mut max_flow_solver = Dinic::from_edge_list(edges, source, target);
         max_flow_solver.run();
 
         // it's OK to expect the solver to have run
@@ -428,7 +393,7 @@ mod tests {
 
         // it's OK to expect the solver to have run
         let assignment = max_flow_solver
-            .assignment(&sources)
+            .assignment(source)
             .expect("assignment computation did not run");
         assert_eq!(assignment, bits![0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0]);
     }
@@ -447,9 +412,9 @@ mod tests {
             InputEdge::new(4, 5, EdgeCapacity::new(8)),
         ];
 
-        let sources = [0];
-        let targets = [5];
-        let mut max_flow_solver = Dinic::from_edge_list(edges, &sources, &targets);
+        let source = 0;
+        let target = 5;
+        let mut max_flow_solver = Dinic::from_edge_list(edges, source, target);
         max_flow_solver.run();
 
         // it's OK to expect the solver to have run
@@ -460,7 +425,7 @@ mod tests {
 
         // it's OK to expect the solver to have run
         let assignment = max_flow_solver
-            .assignment(&sources)
+            .assignment(source)
             .expect("assignment computation did not run");
         assert_eq!(assignment, bits![1, 1, 0, 1, 0, 0]);
     }
@@ -481,7 +446,7 @@ mod tests {
         ];
 
         // the expect(.) call is being tested
-        Dinic::from_edge_list(edges, &[], &[])
+        Dinic::from_edge_list(edges, 1, 2)
             .max_flow()
             .expect("max flow computation did not run");
     }
@@ -502,8 +467,8 @@ mod tests {
         ];
 
         // the expect(.) call is being tested
-        Dinic::from_edge_list(edges, &[], &[])
-            .assignment(&[0])
+        Dinic::from_edge_list(edges, 1, 2)
+            .assignment(1)
             .expect("assignment computation did not run");
     }
 }

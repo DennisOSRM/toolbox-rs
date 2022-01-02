@@ -13,12 +13,12 @@ impl NodeArrayEntry {
         NodeArrayEntry { first_edge: e }
     }
 }
-pub struct StaticGraph<T: Ord, const WITHEIGENLOOPS: bool = true> {
+pub struct StaticGraph<T: Ord> {
     node_array: Vec<NodeArrayEntry>,
     edge_array: Vec<EdgeArrayEntry<T>>,
 }
 
-impl<T: Ord + Copy, const WITHEIGENLOOPS: bool> StaticGraph<T, WITHEIGENLOOPS> {
+impl<T: Ord + Copy> StaticGraph<T> {
     pub fn default() -> Self {
         Self {
             node_array: Vec::new(),
@@ -30,9 +30,6 @@ impl<T: Ord + Copy, const WITHEIGENLOOPS: bool> StaticGraph<T, WITHEIGENLOOPS> {
         let number_of_edges = input.len();
         let mut number_of_nodes = 0;
         for edge in &input {
-            if !WITHEIGENLOOPS && edge.source() == edge.target() {
-                continue;
-            }
             number_of_nodes = max(edge.source(), number_of_nodes);
             number_of_nodes = max(edge.target(), number_of_nodes);
         }
@@ -63,12 +60,12 @@ impl<T: Ord + Copy, const WITHEIGENLOOPS: bool> StaticGraph<T, WITHEIGENLOOPS> {
 
         graph.edge_array = input
             .iter()
-            .filter(|edge| WITHEIGENLOOPS && edge.source() != edge.target())
             .map(|edge| EdgeArrayEntry {
                 target: edge.target(),
                 data: *edge.data(),
             })
             .collect();
+        println!("edge_array.len: {}", graph.edge_array.len());
         debug_assert!(graph.check_integrity());
         graph
     }
@@ -87,7 +84,7 @@ impl<T: Ord + Copy, const WITHEIGENLOOPS: bool> StaticGraph<T, WITHEIGENLOOPS> {
     }
 }
 
-impl<T: Ord + Copy, const WITHEIGENLOOPS: bool> Graph<T> for StaticGraph<T, WITHEIGENLOOPS> {
+impl<T: Ord + Copy> Graph<T> for StaticGraph<T> {
     fn node_range(&self) -> Range<NodeID> {
         Range {
             start: 0,
@@ -154,7 +151,7 @@ mod tests {
 
     #[test]
     fn size() {
-        type Graph = StaticGraph<i32, true>;
+        type Graph = StaticGraph<i32>;
         let edges = vec![
             InputEdge::new(0, 1, 3),
             InputEdge::new(1, 2, 3),
@@ -172,7 +169,7 @@ mod tests {
 
     #[test]
     fn degree() {
-        type Graph = StaticGraph<i32, true>;
+        type Graph = StaticGraph<i32>;
         let edges = vec![
             InputEdge::new(0, 1, 3),
             InputEdge::new(1, 2, 3),

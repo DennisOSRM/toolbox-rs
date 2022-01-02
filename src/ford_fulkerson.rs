@@ -16,20 +16,20 @@ impl EdgeCapacity {
     }
 }
 
-pub struct FordFulkerson<'a> {
+pub struct FordFulkerson {
     residual_graph: StaticGraph<EdgeCapacity>,
     max_flow: i32,
     finished: bool,
-    sources: &'a [NodeID],
-    targets: &'a [NodeID],
+    source: NodeID,
+    target: NodeID,
 }
 
-impl<'a> FordFulkerson<'a> {
+impl FordFulkerson {
     // todo(dl): add closure parameter to derive edge data
     pub fn from_generic_edge_list(
         input_edges: Vec<impl Edge<ID = NodeID>>,
-        sources: &'a [usize],
-        targets: &'a [usize],
+        source: usize,
+        target: usize,
     ) -> Self {
         let edge_list: Vec<InputEdge<EdgeCapacity>> = input_edges
             .into_iter()
@@ -41,13 +41,13 @@ impl<'a> FordFulkerson<'a> {
             .collect();
 
         println!("created {} ff edges", edge_list.len());
-        FordFulkerson::from_edge_list(edge_list, sources, targets)
+        FordFulkerson::from_edge_list(edge_list, source, target)
     }
 
     pub fn from_edge_list(
         mut edge_list: Vec<InputEdge<EdgeCapacity>>,
-        sources: &'a [usize],
-        targets: &'a [usize],
+        source: usize,
+        target: usize,
     ) -> Self {
         let number_of_edges = edge_list.len();
 
@@ -84,15 +84,15 @@ impl<'a> FordFulkerson<'a> {
             residual_graph: StaticGraph::new(edge_list),
             max_flow: 0,
             finished: false,
-            sources,
-            targets,
+            source,
+            target,
         }
     }
 
     pub fn run(&mut self) {
         let mut bfs = BFS::new(
-            self.sources,
-            self.targets,
+            &[self.source],
+            &[self.target],
             self.residual_graph.number_of_nodes(),
         );
         let filter = |graph: &StaticGraph<EdgeCapacity>, edge| graph.data(edge).capacity <= 0;
@@ -146,7 +146,7 @@ impl<'a> FordFulkerson<'a> {
         Ok(self.max_flow)
     }
 
-    pub fn assignment(&self, sources: &[NodeID]) -> Result<BitVec, String> {
+    pub fn assignment(&self, source: NodeID) -> Result<BitVec, String> {
         if !self.finished {
             return Err("Assigment was not computed.".to_string());
         }
@@ -154,7 +154,7 @@ impl<'a> FordFulkerson<'a> {
         // run a reachability analysis
         let mut reachable = BitVec::with_capacity(self.residual_graph.number_of_nodes());
         reachable.resize(self.residual_graph.number_of_nodes(), false);
-        let mut stack: Vec<usize> = sources.iter().copied().collect();
+        let mut stack: Vec<usize> = vec![source];
         while let Some(node) = stack.pop() {
             // TODO: looks like this following is superflous work?
             if *reachable.get(node as usize).unwrap() {
@@ -211,9 +211,9 @@ mod tests {
             InputEdge::new(4, 5, EdgeCapacity::new(4)),
         ];
 
-        let sources = [0];
-        let targets = [5];
-        let mut max_flow_solver = FordFulkerson::from_edge_list(edges, &sources, &targets);
+        let source = 0;
+        let target = 5;
+        let mut max_flow_solver = FordFulkerson::from_edge_list(edges, source, target);
         max_flow_solver.run();
 
         // it's OK to expect the solver to have run
@@ -224,46 +224,10 @@ mod tests {
 
         // it's OK to expect the solver to have run
         let assignment = max_flow_solver
-            .assignment(&sources)
+            .assignment(source)
             .expect("assignment computation did not run");
 
         assert_eq!(assignment, bits![1, 1, 1, 0, 1, 0]);
-    }
-
-    #[test]
-    fn max_flow_clr_multi_target_set() {
-        let edges = vec![
-            InputEdge::new(0, 1, EdgeCapacity::new(16)),
-            InputEdge::new(0, 2, EdgeCapacity::new(13)),
-            InputEdge::new(1, 2, EdgeCapacity::new(10)),
-            InputEdge::new(1, 3, EdgeCapacity::new(12)),
-            InputEdge::new(2, 1, EdgeCapacity::new(4)),
-            InputEdge::new(2, 4, EdgeCapacity::new(14)),
-            InputEdge::new(3, 2, EdgeCapacity::new(9)),
-            InputEdge::new(3, 5, EdgeCapacity::new(20)),
-            InputEdge::new(4, 3, EdgeCapacity::new(7)),
-            InputEdge::new(4, 5, EdgeCapacity::new(4)),
-            InputEdge::new(5, 6, EdgeCapacity::new(1)),
-            InputEdge::new(6, 1, EdgeCapacity::new(41)),
-        ];
-
-        let sources = [0];
-        let targets = [5, 6];
-        let mut max_flow_solver = FordFulkerson::from_edge_list(edges, &sources, &targets);
-        max_flow_solver.run();
-
-        // it's OK to expect the solver to have run
-        let max_flow = max_flow_solver
-            .max_flow()
-            .expect("max flow computation did not run");
-        assert_eq!(23, max_flow);
-
-        // it's OK to expect the solver to have run
-        let assignment = max_flow_solver
-            .assignment(&sources)
-            .expect("assignment computation did not run");
-
-        assert_eq!(assignment, bits![1, 1, 1, 0, 1, 0, 0]);
     }
 
     #[test]
@@ -283,9 +247,9 @@ mod tests {
             InputEdge::new(6, 3, EdgeCapacity::new(6)),
         ];
 
-        let sources = [0];
-        let targets = [3];
-        let mut max_flow_solver = FordFulkerson::from_edge_list(edges, &sources, &targets);
+        let source = 0;
+        let target = 3;
+        let mut max_flow_solver = FordFulkerson::from_edge_list(edges, source, target);
         max_flow_solver.run();
 
         // it's OK to expect the solver to have run
@@ -296,7 +260,7 @@ mod tests {
 
         // it's OK to expect the solver to have run
         let assignment = max_flow_solver
-            .assignment(&sources)
+            .assignment(source)
             .expect("assignment computation did not run");
         assert_eq!(assignment, bits![1, 0, 0, 0, 1, 1, 0, 0]);
     }
@@ -323,9 +287,9 @@ mod tests {
             InputEdge::new(8, 10, EdgeCapacity::new(10)),
         ];
 
-        let sources = [9];
-        let targets = [10];
-        let mut max_flow_solver = FordFulkerson::from_edge_list(edges, &sources, &targets);
+        let source = 9;
+        let target = 10;
+        let mut max_flow_solver = FordFulkerson::from_edge_list(edges, source, target);
         max_flow_solver.run();
 
         // it's OK to expect the solver to have run
@@ -336,7 +300,7 @@ mod tests {
 
         // it's OK to expect the solver to have run
         let assignment = max_flow_solver
-            .assignment(&sources)
+            .assignment(source)
             .expect("assignment computation did not run");
         assert_eq!(assignment, bits![0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0]);
     }
@@ -355,9 +319,9 @@ mod tests {
             InputEdge::new(4, 5, EdgeCapacity::new(8)),
         ];
 
-        let sources = [0];
-        let targets = [5];
-        let mut max_flow_solver = FordFulkerson::from_edge_list(edges, &sources, &targets);
+        let source = 0;
+        let target = 5;
+        let mut max_flow_solver = FordFulkerson::from_edge_list(edges, source, target);
         max_flow_solver.run();
 
         // it's OK to expect the solver to have run
@@ -368,7 +332,7 @@ mod tests {
 
         // it's OK to expect the solver to have run
         let assignment = max_flow_solver
-            .assignment(&sources)
+            .assignment(source)
             .expect("assignment computation did not run");
         assert_eq!(assignment, bits![1, 1, 0, 1, 0, 0]);
     }
@@ -389,7 +353,7 @@ mod tests {
         ];
 
         // the expect(.) call is being tested
-        FordFulkerson::from_edge_list(edges, &[], &[])
+        FordFulkerson::from_edge_list(edges, 0, 1)
             .max_flow()
             .expect("max flow computation did not run");
     }
@@ -410,8 +374,8 @@ mod tests {
         ];
 
         // the expect(.) call is being tested
-        FordFulkerson::from_edge_list(edges, &[], &[])
-            .assignment(&[0])
+        FordFulkerson::from_edge_list(edges, 0, 1)
+            .assignment(0)
             .expect("assignment computation did not run");
     }
 }
