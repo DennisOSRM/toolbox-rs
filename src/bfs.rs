@@ -1,5 +1,5 @@
-use std::time::Instant;
 use bitvec::vec::BitVec;
+use std::time::Instant;
 
 use crate::graph::{EdgeID, Graph, NodeID, INVALID_NODE_ID};
 
@@ -52,8 +52,9 @@ impl BFS {
         F: Fn(&G, EdgeID) -> bool,
     {
         let start = Instant::now();
-        // reset queue
-        self.queue = self.sources.iter().copied().collect();
+        // reset queue w/o allocating
+        self.queue.clear();
+        self.queue.extend(self.sources.iter().copied());
 
         // reset parents vector
         self.parents.fill(INVALID_NODE_ID);
