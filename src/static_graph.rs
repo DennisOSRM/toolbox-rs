@@ -63,9 +63,7 @@ impl<T: Ord + Copy, const WITHEIGENLOOPS: bool> StaticGraph<T, WITHEIGENLOOPS> {
 
         graph.edge_array = input
             .iter()
-            .filter(|edge| {
-                WITHEIGENLOOPS && edge.source() != edge.target()
-            })
+            .filter(|edge| WITHEIGENLOOPS && edge.source() != edge.target())
             .map(|edge| EdgeArrayEntry {
                 target: edge.target(),
                 data: *edge.data(),
