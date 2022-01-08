@@ -4,6 +4,7 @@ use crate::edge::InputEdge;
 use crate::graph::{Graph, NodeID};
 use crate::static_graph::StaticGraph;
 use bitvec::vec::BitVec;
+use std::time::Instant;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct EdgeCapacity {
@@ -98,6 +99,8 @@ impl FordFulkerson {
         let filter = |graph: &StaticGraph<EdgeCapacity>, edge| graph.data(edge).capacity <= 0;
         // let mut iteration = 0;
         while bfs.run_with_filter(&self.residual_graph, filter) {
+            let start = Instant::now();
+
             // iteration += 1;
 
             // println!("iteration {}", iteration);
@@ -105,35 +108,44 @@ impl FordFulkerson {
             // TODO: this is a copy of the data in the queue, could this be exposed by an iterator to avoid allocations?
             let path = bfs.fetch_node_path();
             // println!("found node path of size {:#?}", path.len());
+            let duration = start.elapsed();
+            println!(" flow assignment0 took: {:?} (done)", duration);
 
             // find min capacity on edges of the path
             let min_uv_pair = path
                 .windows(2)
                 .min_by_key(|window| {
-                    let edge = self.residual_graph.find_edge(window[0], window[1]).unwrap();
+                    let edge = self
+                        .residual_graph
+                        .find_edge_unchecked(window[0], window[1]);
                     self.residual_graph.data(edge).capacity
                 })
                 .expect("graph is broken, couldn't find min edge");
+            let duration = start.elapsed();
+            println!(" flow assignment1 took: {:?} (done)", duration);
 
             let bottleneck_edge = self
                 .residual_graph
-                .find_edge(min_uv_pair[0], min_uv_pair[1])
-                .expect("graph is broken, couldn't find min edge");
+                .find_edge_unchecked(min_uv_pair[0], min_uv_pair[1]);
             // println!("  bottleneck edge: {}", bottleneck_edge);
             let path_flow = self.residual_graph.data(bottleneck_edge).capacity;
             debug_assert!(path_flow > 0);
             // println!("min edge: {}, capacity: {}", bottleneck_edge, path_flow);
             // sum up flow
             self.max_flow += path_flow;
+            let duration = start.elapsed();
+            println!(" flow assignment2 took: {:?} (done)", duration);
 
             // assign flow to residual graph
             path.windows(2).for_each(|pair| {
-                let fwd_edge = self.residual_graph.find_edge(pair[0], pair[1]).unwrap();
-                let rev_edge = self.residual_graph.find_edge(pair[1], pair[0]).unwrap();
+                let fwd_edge = self.residual_graph.find_edge_unchecked(pair[0], pair[1]);
+                let rev_edge = self.residual_graph.find_edge_unchecked(pair[1], pair[0]);
 
                 self.residual_graph.data_mut(fwd_edge).capacity -= path_flow;
                 self.residual_graph.data_mut(rev_edge).capacity += path_flow;
             });
+            let duration = start.elapsed();
+            println!(" flow assignment3 took: {:?} (done)", duration);
         }
 
         self.finished = true;

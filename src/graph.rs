@@ -17,6 +17,7 @@ pub trait Graph<T> {
     fn data(&self, e: EdgeID) -> &T;
     fn data_mut(&mut self, e: EdgeID) -> &mut T;
     fn find_edge(&self, s: NodeID, t: NodeID) -> Option<EdgeID>;
+    fn find_edge_unchecked(&self, s: NodeID, t: NodeID) -> EdgeID;
 }
 
 pub struct EdgeArrayEntry<EdgeDataT> {

@@ -1,4 +1,5 @@
 use bitvec::vec::BitVec;
+use std::collections::VecDeque;
 use std::time::Instant;
 
 use crate::graph::{EdgeID, Graph, NodeID, INVALID_NODE_ID};
@@ -85,7 +86,7 @@ impl BFS {
                         // println!("setting target {}", self.target);
                         // check if we have found our target if it exists
                         let duration = start.elapsed();
-                        println!("BFS took: {:?} (done)", duration);
+                        println!("D/BFS took: {:?} (done)", duration);
                         return true;
                     }
                 }

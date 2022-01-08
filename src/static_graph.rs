@@ -141,6 +141,14 @@ impl<T: Ord + Copy> Graph<T> for StaticGraph<T> {
         }
         None
     }
+    fn find_edge_unchecked(&self, s: NodeID, t: NodeID) -> EdgeID {
+        for edge in self.edge_range(s) {
+            if self.target(edge) == t {
+                return edge;
+            }
+        }
+        EdgeID::MAX
+    }
 }
 
 #[cfg(test)]

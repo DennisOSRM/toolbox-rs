@@ -225,9 +225,9 @@ impl Dinic {
                         if u == v {
                             break;
                         }
-                        let fwd_edge = self.residual_graph.find_edge(u, v).unwrap();
+                        let fwd_edge = self.residual_graph.find_edge_unchecked(u, v);
                         self.residual_graph.data_mut(fwd_edge).capacity -= flow;
-                        let rev_edge = self.residual_graph.find_edge(v, u).unwrap();
+                        let rev_edge = self.residual_graph.find_edge_unchecked(v, u);
                         self.residual_graph.data_mut(rev_edge).capacity += flow;
                         v = u;
                     }
