@@ -200,10 +200,10 @@ mod tests {
         assert!(bfs.run(&graph));
 
         let path = bfs.fetch_node_path();
-        assert_eq!(path, vec![0, 4, 5]);
+        assert_eq!(path, vec![0, 1, 5]);
 
         let path: Vec<usize> = bfs.path_iter().collect();
-        assert_eq!(path, vec![5, 4, 0]);
+        assert_eq!(path, vec![5, 1, 0]);
     }
 
     #[test]
@@ -223,7 +223,7 @@ mod tests {
         let mut bfs = BFS::new(&[0], &[5], graph.number_of_nodes());
         assert!(bfs.run(&graph));
         let path = bfs.fetch_edge_path(&graph);
-        assert_eq!(path, vec![1, 6]);
+        assert_eq!(path, vec![0, 3]);
     }
 
     #[test]
@@ -244,7 +244,7 @@ mod tests {
         assert!(bfs.run(&graph));
 
         let path = bfs.fetch_node_path_from_node(3);
-        assert_eq!(path, vec![0, 4, 5, 3]);
+        assert_eq!(path, vec![0, 1, 2, 3]);
 
         let path: Vec<usize> = bfs.path_iter().collect();
         assert_eq!(path, vec![]);
@@ -269,7 +269,7 @@ mod tests {
 
         // path unpacking
         let path = bfs.fetch_node_path_from_node(3);
-        assert_eq!(path, vec![1, 5, 3]);
+        assert_eq!(path, vec![1, 2, 3]);
 
         let path: Vec<usize> = bfs.path_iter().collect();
         assert_eq!(path, vec![]);
