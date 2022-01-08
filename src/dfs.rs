@@ -1,19 +1,18 @@
 use bitvec::vec::BitVec;
-use std::collections::VecDeque;
 use std::time::Instant;
 
 use crate::graph::{EdgeID, Graph, NodeID, INVALID_NODE_ID};
 
-pub struct BFS {
+pub struct DFS {
     sources: Vec<NodeID>,
     target_set: BitVec,
     parents: Vec<NodeID>,
     target: NodeID,
-    queue: VecDeque<usize>,
+    stack: Vec<usize>,
     empty_target_set: bool,
 }
 
-impl BFS {
+impl DFS {
     // TODO: Also pass Graph instance
     pub fn new(source_list: &[NodeID], target_list: &[NodeID], number_of_nodes: usize) -> Self {
         let mut temp = Self {
@@ -21,7 +20,7 @@ impl BFS {
             target_set: BitVec::with_capacity(number_of_nodes),
             parents: Vec::new(),
             target: INVALID_NODE_ID,
-            queue: VecDeque::new(),
+            stack: Vec::new(),
             empty_target_set: target_list.is_empty(),
         };
 
@@ -46,7 +45,7 @@ impl BFS {
         self.run_with_filter(graph, |_graph, _edge| false)
     }
 
-    /// explore the graph in a BFS
+    /// explore the graph in a DFS
     /// returns true if a path between s and t was found or no target was given
     pub fn run_with_filter<T, F, G: Graph<T>>(&mut self, graph: &G, filter: F) -> bool
     where
@@ -54,8 +53,8 @@ impl BFS {
     {
         let start = Instant::now();
         // reset queue w/o allocating
-        self.queue.clear();
-        self.queue.extend(self.sources.iter().copied());
+        self.stack.clear();
+        self.stack.extend(self.sources.iter().copied());
 
         // reset parents vector
         self.parents.fill(INVALID_NODE_ID);
@@ -63,7 +62,7 @@ impl BFS {
             self.parents[*s] = *s;
         }
 
-        while let Some(node) = self.queue.pop_front() {
+        while let Some(node) = self.stack.pop() {
             let node_is_source = self.parents[node] == node;
             // sources have themselves as parents
             for edge in graph.edge_range(node) {
@@ -86,16 +85,16 @@ impl BFS {
                         // println!("setting target {}", self.target);
                         // check if we have found our target if it exists
                         let duration = start.elapsed();
-                        println!("D/BFS took: {:?} (done)", duration);
+                        println!("D/DFS took: {:?} (done)", duration);
                         return true;
                     }
                 }
-                self.queue.push_back(target);
+                self.stack.push(target);
             }
         }
 
         let duration = start.elapsed();
-        println!("BFS took: {:?} (done)", duration);
+        println!("DFS took: {:?} (done)", duration);
 
         // return true only if target set was empty
         self.empty_target_set
@@ -144,16 +143,16 @@ impl BFS {
 }
 
 pub struct PathIter<'a> {
-    bfs: &'a BFS,
+    dfs: &'a DFS,
     id: usize,
 }
 
 impl<'a> PathIter<'a> {
-    pub fn new(bfs: &BFS) -> PathIter {
-        // println!("init: {}", bfs.target);
+    pub fn new(dfs: &DFS) -> PathIter {
+        // println!("init: {}", dfs.target);
         PathIter {
-            bfs,
-            id: bfs.target,
+            dfs,
+            id: dfs.target,
         }
     }
 }
@@ -168,8 +167,8 @@ impl<'a> Iterator for PathIter<'a> {
 
         // path unpacking step
         let result = self.id;
-        self.id = self.bfs.parents[self.id];
-        if result == self.bfs.parents[result] {
+        self.id = self.dfs.parents[self.id];
+        if result == self.dfs.parents[result] {
             self.id = INVALID_NODE_ID;
         }
         Some(result)
@@ -180,7 +179,7 @@ impl<'a> Iterator for PathIter<'a> {
 mod tests {
     use crate::edge::InputEdge;
     use crate::graph::Graph;
-    use crate::{bfs::BFS, static_graph::StaticGraph};
+    use crate::{dfs::DFS, static_graph::StaticGraph};
 
     #[test]
     fn s_t_query_fetch_node_string() {
@@ -196,13 +195,13 @@ mod tests {
             InputEdge::new(1, 5, 2),
         ];
         let graph = Graph::new(edges);
-        let mut bfs = BFS::new(&[0], &[5], graph.number_of_nodes());
-        assert!(bfs.run(&graph));
+        let mut dfs = DFS::new(&[0], &[5], graph.number_of_nodes());
+        assert!(dfs.run(&graph));
 
-        let path = bfs.fetch_node_path();
+        let path = dfs.fetch_node_path();
         assert_eq!(path, vec![0, 4, 5]);
 
-        let path: Vec<usize> = bfs.path_iter().collect();
+        let path: Vec<usize> = dfs.path_iter().collect();
         assert_eq!(path, vec![5, 4, 0]);
     }
 
@@ -220,9 +219,9 @@ mod tests {
             InputEdge::new(1, 5, 2),
         ];
         let graph = Graph::new(edges);
-        let mut bfs = BFS::new(&[0], &[5], graph.number_of_nodes());
-        assert!(bfs.run(&graph));
-        let path = bfs.fetch_edge_path(&graph);
+        let mut dfs = DFS::new(&[0], &[5], graph.number_of_nodes());
+        assert!(dfs.run(&graph));
+        let path = dfs.fetch_edge_path(&graph);
         assert_eq!(path, vec![1, 6]);
     }
 
@@ -240,13 +239,13 @@ mod tests {
             InputEdge::new(1, 5, 2),
         ];
         let graph = Graph::new(edges);
-        let mut bfs = BFS::new(&[0], &[], graph.number_of_nodes());
-        assert!(bfs.run(&graph));
+        let mut dfs = DFS::new(&[0], &[], graph.number_of_nodes());
+        assert!(dfs.run(&graph));
 
-        let path = bfs.fetch_node_path_from_node(3);
+        let path = dfs.fetch_node_path_from_node(3);
         assert_eq!(path, vec![0, 4, 5, 3]);
 
-        let path: Vec<usize> = bfs.path_iter().collect();
+        let path: Vec<usize> = dfs.path_iter().collect();
         assert_eq!(path, vec![]);
     }
 
@@ -264,14 +263,14 @@ mod tests {
             InputEdge::new(1, 5, 2),
         ];
         let graph = Graph::new(edges);
-        let mut bfs = BFS::new(&[0, 1], &[], graph.number_of_nodes());
-        assert!(bfs.run(&graph));
+        let mut dfs = DFS::new(&[0, 1], &[], graph.number_of_nodes());
+        assert!(dfs.run(&graph));
 
         // path unpacking
-        let path = bfs.fetch_node_path_from_node(3);
+        let path = dfs.fetch_node_path_from_node(3);
         assert_eq!(path, vec![1, 5, 3]);
 
-        let path: Vec<usize> = bfs.path_iter().collect();
+        let path: Vec<usize> = dfs.path_iter().collect();
         assert_eq!(path, vec![]);
     }
 }

@@ -2,6 +2,7 @@ pub mod addressable_binary_heap;
 pub mod bfs;
 pub mod bin_pack;
 pub mod cycle_check;
+pub mod dfs;
 pub mod dinic;
 pub mod edge;
 pub mod ford_fulkerson;
