@@ -129,41 +129,43 @@ impl Dinic {
         self.finished = true;
     }
 
+    // create layer graph L^(s,t) by doing a reverse BFS from target to source.
+    // All paths from s to t in the layer graph are then 'downhill'
     fn bfs(&mut self) -> bool {
         let start = Instant::now();
         self.bfs_count += 1;
         // init
         self.level.fill(usize::MAX);
         self.queue.clear();
-        self.queue.push_back(self.source);
-        self.level[self.source] = 0;
+        self.queue.push_back(self.target);
+        self.level[self.target] = 0;
 
         let duration = start.elapsed();
         println!("BFS init: {:?}", duration);
 
-        // label residual graph nodes in BFS order
+        // label residual graph nodes in BFS order, but in reverse starting from the target
         while let Some(u) = self.queue.pop_front() {
             for edge in self.residual_graph.edge_range(u) {
                 let v = self.residual_graph.target(edge);
-                if v != self.target && self.level[v] != usize::MAX {
-                    // node v is not the target, but it is already visited
+                if v != self.source && self.level[v] != usize::MAX {
+                    // node v is not the source, but it is already visited
                     continue;
                 }
-                let edge_capacity = self.residual_graph.data(edge).capacity;
+                let rev_edge = self.residual_graph.find_edge_unchecked(v, u);
+                let edge_capacity = self.residual_graph.data(rev_edge).capacity;
                 if edge_capacity < 1 {
                     // no flow on this edge
                     continue;
                 }
                 self.level[v] = self.level[u] + 1;
-                if v != self.target {
+                if v != self.source {
                     self.queue.push_back(v);
                 }
             }
         }
         let duration = start.elapsed();
-        println!("BFS took: {:?}, upper bound: {}", duration, self.level[self.target]);
-
-        self.level[self.target] != usize::MAX
+        println!("BFS took: {:?}, level[source]: {}, level[target]: {}", duration, self.level[self.source], self.level[self.target]);
+        self.level[self.source] != usize::MAX
     }
 
     fn dfs(&mut self) -> Option<i32> {
@@ -186,11 +188,11 @@ impl Dinic {
                     // v already in queue
                     continue;
                 }
-                if v != self.target && self.level[self.target] < self.level[v] {
-                    // level is deeper than the longest BFS path
-                    continue;
-                }
-                if v != self.target && self.level[u] + 1 != self.level[v] {
+                // if v != self.target && self.level[self.target] < self.level[v] {
+                //     // level is deeper than the longest BFS path
+                //     continue;
+                // }
+                if self.level[u] <= self.level[v] {
                     // edge is not leading to target and is not on a path in the BFS tree
                     continue;
                 }
