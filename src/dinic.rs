@@ -148,13 +148,15 @@ impl Dinic {
             for edge in self.residual_graph.edge_range(u) {
                 let v = self.residual_graph.target(edge);
                 if v != self.source && self.level[v] != usize::MAX {
-                    // node v is not the source, but it is already visited
+                    // node v is not the source, but it is already visited. the source might be reached multiple times
                     continue;
                 }
+
+                // fetch capacity of reverse edge
                 let rev_edge = self.residual_graph.find_edge_unchecked(v, u);
                 let edge_capacity = self.residual_graph.data(rev_edge).capacity;
                 if edge_capacity < 1 {
-                    // no flow on this edge
+                    // no capacity to use on this edge
                     continue;
                 }
                 self.level[v] = self.level[u] + 1;
@@ -164,7 +166,10 @@ impl Dinic {
             }
         }
         let duration = start.elapsed();
-        println!("BFS took: {:?}, level[source]: {}, level[target]: {}", duration, self.level[self.source], self.level[self.target]);
+        println!(
+            "BFS took: {:?}, upper bound on path length: {}",
+            duration, self.level[self.source]
+        );
         self.level[self.source] != usize::MAX
     }
 
@@ -172,7 +177,6 @@ impl Dinic {
         let start = Instant::now();
         self.dfs_count += 1;
         self.stack.clear();
-        // println!("DFS stack capacity: {}", self.stack.capacity());
         self.parents.fill(NodeID::MAX);
 
         self.stack.push((self.source, i32::MAX));
@@ -188,12 +192,8 @@ impl Dinic {
                     // v already in queue
                     continue;
                 }
-                // if v != self.target && self.level[self.target] < self.level[v] {
-                //     // level is deeper than the longest BFS path
-                //     continue;
-                // }
                 if self.level[u] <= self.level[v] {
-                    // edge is not leading to target and is not on a path in the BFS tree
+                    // edge is not leading to target on a path in the BFS tree
                     continue;
                 }
                 let available_capacity = self.residual_graph.data(edge).capacity;
@@ -225,7 +225,7 @@ impl Dinic {
                 }
             }
         }
-        
+
         let duration = start.elapsed();
         println!("DFS took: {:?} (unsuccessful)", duration);
         None
