@@ -134,43 +134,36 @@ impl Dinic {
         self.bfs_count += 1;
         // init
         self.level.fill(usize::MAX);
-        // self.queue.extend(self.sources.iter().copied());
         self.queue.clear();
         self.queue.push_back(self.source);
-        // for s in self.sources {
         self.level[self.source] = 0;
-        // self.queue.push_back(*s);
-        // }
-        // for t in self.targets {
-        // self.level[self.target] = usize::MAX - 1;
-        // }
+
+        let duration = start.elapsed();
+        println!("BFS init: {:?}", duration);
 
         // label residual graph nodes in BFS order
-        let mut found_path = false;
         while let Some(u) = self.queue.pop_front() {
             for edge in self.residual_graph.edge_range(u) {
-                let edge_data = self.residual_graph.data(edge);
                 let v = self.residual_graph.target(edge);
-                if edge_data.capacity < 1 {
+                if v != self.target && self.level[v] != usize::MAX {
+                    // node v is not the target, but it is already visited
+                    continue;
+                }
+                let edge_capacity = self.residual_graph.data(edge).capacity;
+                if edge_capacity < 1 {
                     // no flow on this edge
                     continue;
                 }
-                if self.level[v] != usize::MAX {
-                    // node already visited
-                    continue;
-                }
                 self.level[v] = self.level[u] + 1;
-                if v == self.target {
-                    found_path = true;
-                } else {
+                if v != self.target {
                     self.queue.push_back(v);
                 }
             }
         }
         let duration = start.elapsed();
-        println!("BFS took: {:?}", duration);
+        println!("BFS took: {:?}, upper bound: {}", duration, self.level[self.target]);
 
-        found_path
+        self.level[self.target] != usize::MAX
     }
 
     fn dfs(&mut self) -> Option<i32> {
@@ -180,33 +173,25 @@ impl Dinic {
         // println!("DFS stack capacity: {}", self.stack.capacity());
         self.parents.fill(NodeID::MAX);
 
-        // let duration = start.elapsed();
-        // println!(" DFS init1: {:?}", duration);
-
-        // for u in self.sources {
         self.stack.push((self.source, i32::MAX));
         self.parents[self.source] = self.source;
-        // }
 
         // let duration = start.elapsed();
         // println!(" DFS init2: {:?}", duration);
 
-        // for t in self.targets {
-        //     self.parents[*t] = NodeID::MAX - 1;
-        // }
-
-        let duration = start.elapsed();
-        println!(" DFS init3: {:?}", duration);
-
-        while let Some((node, flow)) = self.stack.pop() {
-            for edge in self.residual_graph.edge_range(node) {
-                let target = self.residual_graph.target(edge);
-                if self.parents[target] != NodeID::MAX {
-                    // target already in queue
+        while let Some((u, flow)) = self.stack.pop() {
+            for edge in self.residual_graph.edge_range(u) {
+                let v = self.residual_graph.target(edge);
+                if self.parents[v] != NodeID::MAX {
+                    // v already in queue
                     continue;
                 }
-                if self.level[node] > self.level[target] {
-                    // edge is not on a path in BFS tree
+                if v != self.target && self.level[self.target] < self.level[v] {
+                    // level is deeper than the longest BFS path
+                    continue;
+                }
+                if v != self.target && self.level[u] + 1 != self.level[v] {
+                    // edge is not leading to target and is not on a path in the BFS tree
                     continue;
                 }
                 let available_capacity = self.residual_graph.data(edge).capacity;
@@ -214,12 +199,11 @@ impl Dinic {
                     // no capacity to use on this edge
                     continue;
                 }
-                // let is_parent = self.parents[target] == NodeID::MAX - 1;
-                self.parents[target] = node;
+                self.parents[v] = u;
                 let flow = min(flow, available_capacity);
-                if target == self.target {
+                if v == self.target {
                     // reached a target. Unpack path, assign flow
-                    let mut v = target;
+                    let mut v = v; // mutable shadow
                     loop {
                         let u = self.parents[v];
                         if u == v {
@@ -235,11 +219,11 @@ impl Dinic {
                     println!("DFS took: {:?} (success)", duration);
                     return Some(flow);
                 } else {
-                    self.stack.push((target, flow));
+                    self.stack.push((v, flow));
                 }
             }
         }
-
+        
         let duration = start.elapsed();
         println!("DFS took: {:?} (unsuccessful)", duration);
         None
