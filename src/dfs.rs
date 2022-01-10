@@ -16,7 +16,7 @@ impl DFS {
     // TODO: Also pass Graph instance
     pub fn new(source_list: &[NodeID], target_list: &[NodeID], number_of_nodes: usize) -> Self {
         let mut temp = Self {
-            sources: source_list.iter().copied().collect(),
+            sources: source_list.to_vec(),
             target_set: BitVec::with_capacity(number_of_nodes),
             parents: Vec::new(),
             target: INVALID_NODE_ID,
