@@ -271,17 +271,15 @@ impl Dinic {
         let mut reachable = BitVec::with_capacity(self.residual_graph.number_of_nodes());
         reachable.resize(self.residual_graph.number_of_nodes(), false);
         let mut stack = vec![source];
+        stack.reserve(self.residual_graph.number_of_nodes());
+        reachable.set(source, true);
         while let Some(node) = stack.pop() {
-            // TODO: looks like this following is superflous work?
-            if *reachable.get(node as usize).unwrap() {
-                continue;
-            }
-            reachable.set(node as usize, true);
             for edge in self.residual_graph.edge_range(node) {
                 let target = self.residual_graph.target(edge);
                 let reached = reachable.get(target as usize).unwrap();
                 if !reached && self.residual_graph.data(edge).capacity > 0 {
-                    stack.push(self.residual_graph.target(edge));
+                    stack.push(target);
+                    reachable.set(target, true);
                 }
             }
         }

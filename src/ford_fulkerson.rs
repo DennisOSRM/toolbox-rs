@@ -166,35 +166,19 @@ impl FordFulkerson {
         // run a reachability analysis
         let mut reachable = BitVec::with_capacity(self.residual_graph.number_of_nodes());
         reachable.resize(self.residual_graph.number_of_nodes(), false);
-        let mut stack: Vec<usize> = vec![source];
+        let mut stack = vec![source];
+        stack.reserve(self.residual_graph.number_of_nodes());
+        reachable.set(source, true);
         while let Some(node) = stack.pop() {
-            // TODO: looks like this following is superflous work?
-            if *reachable.get(node as usize).unwrap() {
-                continue;
-            }
-            reachable.set(node as usize, true);
-            // println!("reached {}", node);
             for edge in self.residual_graph.edge_range(node) {
                 let target = self.residual_graph.target(edge);
                 let reached = reachable.get(target as usize).unwrap();
                 if !reached && self.residual_graph.data(edge).capacity > 0 {
-                    stack.push(self.residual_graph.target(edge));
+                    stack.push(target);
+                    reachable.set(target, true);
                 }
             }
         }
-
-        // retrieve min-cut by walking the graph
-        // todo(dl): expose as interface
-        // for s in 0..self.residual_graph.number_of_nodes() as NodeID {
-        //     for e in self.residual_graph.edge_range(s) {
-        //         let t = self.residual_graph.target(e);
-        //         if reachable.get(s as usize).unwrap() != reachable.get(t as usize).unwrap() {
-        //             println!("cut edge ({},{})", s, t);
-        //         }
-        //     }
-        // }
-
-        // println!("done.");
         Ok(reachable)
     }
 }
