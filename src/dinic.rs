@@ -123,11 +123,7 @@ impl Dinic {
         self.queue.reserve(number_of_nodes);
 
         let mut flow = 0;
-        loop {
-            if !self.bfs() {
-                // no path between sources and target possible anymore
-                break;
-            }
+        while self.bfs() {
             flow += self.dfs();
         }
         self.max_flow = flow;
