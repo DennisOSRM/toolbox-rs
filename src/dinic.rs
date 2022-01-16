@@ -1,3 +1,11 @@
+//! A Max-Flow computation implementing Cherkassky's variant of Dinitz' seminal
+//! algorithm. The implementation at hand is distinguished by three factors:
+//! 1) Computing the layer graph in a single BFS starting in t.
+//! 2) Omitting maintenance of the layer graph.
+//! 3) Running the augmentation phase as a single DFS.
+//!
+//! The DFS restarts after it found an augmenting path on the tail of the 
+//! saturated edge that is closest to the source.
 use crate::edge::Edge;
 use crate::edge::InputEdge;
 use crate::graph::{Graph, NodeID};
@@ -120,10 +128,7 @@ impl Dinic {
                 // no path between sources and target possible anymore
                 break;
             }
-            while let Some(pushed) = self.dfs() {
-                // incremental path in DFS found
-                flow += pushed;
-            }
+            flow += self.dfs();
         }
         self.max_flow = flow;
         self.finished = true;
@@ -173,7 +178,7 @@ impl Dinic {
         self.level[self.source] != usize::MAX
     }
 
-    fn dfs(&mut self) -> Option<i32> {
+    fn dfs(&mut self) -> i32 {
         let start = Instant::now();
         self.dfs_count += 1;
         self.stack.clear();
@@ -182,9 +187,9 @@ impl Dinic {
         self.stack.push((self.source, i32::MAX));
         self.parents[self.source] = self.source;
 
-        // let duration = start.elapsed();
-        // println!(" DFS init2: {:?}", duration);
-
+        let duration = start.elapsed();
+        println!(" DFS init2: {:?}", duration);
+        let mut blocking_flow = 0;
         while let Some((u, flow)) = self.stack.pop() {
             for edge in self.residual_graph.edge_range(u) {
                 let v = self.residual_graph.target(edge);
@@ -192,7 +197,7 @@ impl Dinic {
                     // v already in queue
                     continue;
                 }
-                if self.level[u] <= self.level[v] {
+                if self.level[u] < self.level[v] {
                     // edge is not leading to target on a path in the BFS tree
                     continue;
                 }
@@ -204,8 +209,11 @@ impl Dinic {
                 self.parents[v] = u;
                 let flow = min(flow, available_capacity);
                 if v == self.target {
-                    // reached a target. Unpack path, assign flow
+                    let duration = start.elapsed();
+                    println!(" reached target {}: {:?}", v, duration);
+                    // reached a target. Unpack path in reverse order, assign flow
                     let mut v = v; // mutable shadow
+                    let mut closest_tail = u;
                     loop {
                         let u = self.parents[v];
                         if u == v {
@@ -213,13 +221,31 @@ impl Dinic {
                         }
                         let fwd_edge = self.residual_graph.find_edge_unchecked(u, v);
                         self.residual_graph.data_mut(fwd_edge).capacity -= flow;
+                        if 0 == self.residual_graph.data_mut(fwd_edge).capacity {
+                            closest_tail = u;
+                        }
                         let rev_edge = self.residual_graph.find_edge_unchecked(v, u);
                         self.residual_graph.data_mut(rev_edge).capacity += flow;
                         v = u;
                     }
                     let duration = start.elapsed();
-                    println!("DFS took: {:?} (success)", duration);
-                    return Some(flow);
+                    println!(" augmentation took: {:?}", duration);
+
+                    // unwind stack till tail node, then continue the search
+                    let before = self.stack.len();
+                    while let Some((node, _)) = self.stack.pop() {
+                        if self.parents[node] == closest_tail {
+                            break; // while let
+                        }
+                    }
+                    blocking_flow += flow;
+                    println!(" stack len before: {before}, after: {}", self.stack.len());
+
+                    // make target reachable again
+                    self.parents[self.target] = NodeID::MAX;
+                    self.dfs_count += 1;
+
+                    break;  // for edge
                 } else {
                     self.stack.push((v, flow));
                 }
@@ -228,7 +254,8 @@ impl Dinic {
 
         let duration = start.elapsed();
         println!("DFS took: {:?} (unsuccessful)", duration);
-        None
+        // None
+        blocking_flow
     }
 
     pub fn max_flow(&self) -> Result<i32, String> {
