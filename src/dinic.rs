@@ -4,7 +4,7 @@
 //! 2) Omitting maintenance of the layer graph.
 //! 3) Running the augmentation phase as a single DFS.
 //!
-//! The DFS restarts after it found an augmenting path on the tail of the 
+//! The DFS restarts after it found an augmenting path on the tail of the
 //! saturated edge that is closest to the source.
 use crate::edge::Edge;
 use crate::edge::InputEdge;
@@ -241,7 +241,7 @@ impl Dinic {
                     self.parents[self.target] = NodeID::MAX;
                     self.dfs_count += 1;
 
-                    break;  // for edge
+                    break; // for edge
                 } else {
                     self.stack.push((v, flow));
                 }
