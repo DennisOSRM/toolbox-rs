@@ -28,8 +28,8 @@ pub struct PushRelabel {
     height: Vec<i32>, // TODO: limits the graph to 2bn edges
     excess: Vec<i32>,
     excess_nodes: Vec<NodeID>,
-    source_set: BitVec,
-    target_set: BitVec,
+    source: NodeID,
+    target: NodeID,
 }
 
 impl PushRelabel {
@@ -69,7 +69,7 @@ impl PushRelabel {
         //     self.excess_nodes.push(v);
         // }
         // IF w ≠ s,t AND w ∉ Q THEN Q.add(w)
-        if !self.source_set[v] && !self.target_set[v] && !self.excess_nodes.contains(&v) {
+        if v != self.source && self.target != v && !self.excess_nodes.contains(&v) {
             self.excess_nodes.push(v);
         }
     }
@@ -122,8 +122,11 @@ impl PushRelabel {
         }
     }
 
-    // todo(dl): add closure parameter to derive edge data
-    pub fn from_generic_edge_list(input_edges: Vec<impl Edge<ID = NodeID>>) -> Self {
+    pub fn from_generic_edge_list(
+        input_edges: Vec<impl Edge<ID = NodeID>>,
+        source: NodeID,
+        target: NodeID,
+    ) -> Self {
         let edge_list: Vec<InputEdge<EdgeCapacity>> = input_edges
             .into_iter()
             .map(|edge| InputEdge {
@@ -133,21 +136,25 @@ impl PushRelabel {
             })
             .collect();
 
-        // println!("created {} ff edges", edge_list.len());
-        PushRelabel::from_edge_list(edge_list)
+        println!("created {} ff edges", edge_list.len());
+        PushRelabel::from_edge_list(edge_list, source, target)
     }
 
-    pub fn from_edge_list(mut edge_list: Vec<InputEdge<EdgeCapacity>>) -> Self {
+    pub fn from_edge_list(
+        mut edge_list: Vec<InputEdge<EdgeCapacity>>,
+        source: usize,
+        target: usize,
+    ) -> Self {
         let number_of_edges = edge_list.len();
 
-        // println!("extending {} edges", edge_list.len());
+        println!("extending {} edges", edge_list.len());
         // blindly generate reverse edges for all edges with zero capacity
         edge_list.extend_from_within(..);
         edge_list.iter_mut().skip(number_of_edges).for_each(|edge| {
             edge.reverse();
             edge.data.capacity = 0;
         });
-        // println!("into {} edges", edge_list.len());
+        println!("into {} edges", edge_list.len());
 
         // dedup-merge edge set, by using the following trick: not the dedup(.) call
         // below takes the second argument as mut. When deduping equivalent values
@@ -164,12 +171,10 @@ impl PushRelabel {
             }
             result
         });
-        // println!("dedup-merged {} edges", edge_list.len());
 
         // at this point the edge set of the residual graph doesn't have any
         // duplicates anymore. note that this is fine, as we are looking to
         // compute a node partition.
-
         Self {
             residual_graph: StaticGraph::new(edge_list),
             max_flow: 0,
@@ -177,71 +182,45 @@ impl PushRelabel {
             height: Vec::new(),
             excess: Vec::new(),
             excess_nodes: Vec::new(),
-            source_set: BitVec::new(),
-            target_set: BitVec::new(),
+            source,
+            target,
         }
     }
 
-    pub fn run(&mut self, sources: &[NodeID], targets: &[NodeID]) {
+    pub fn run(&mut self) {
         let number_of_nodes = self.residual_graph.number_of_nodes();
 
         // init
         self.height = vec![0; number_of_nodes];
         self.excess = vec![0; number_of_nodes];
 
-        // let mut target_set: BitVec = BitVec::with_capacity(number_of_nodes);
-        self.target_set.resize(number_of_nodes, false);
-        for i in targets {
-            // println!("setting target {}", i);
-            self.target_set.set(*i as usize, true);
-        }
+        self.height[self.source] = number_of_nodes as i32;
+        println!("source height[{}]={}", self.source, number_of_nodes);
+        self.excess[self.source] = i32::MAX;
 
-        // let mut source_set: BitVec = BitVec::with_capacity(number_of_nodes);
-        self.source_set.resize(number_of_nodes, false);
-        for i in sources {
-            // println!("setting source {}", i);
-            self.source_set.set(*i as usize, true);
-        }
-
-        // TODO: this is not tight, should first init all sources, then start traversal
-        println!("source set: {:#?}", sources);
-        println!("target set: {:#?}", targets);
-        for s in sources {
-            self.height[*s] = number_of_nodes as i32;
-            println!("source height[{}]={}", s, number_of_nodes);
-            self.excess[*s] = i32::MAX;
-
-            for edge in self.residual_graph.edge_range(*s) {
-                let t = self.residual_graph.target(edge);
-                if self.source_set[t] {
-                    println!("ignoring edge ({},{})", s, t);
-                    // don't push edges inside source set
-                    continue;
-                }
-                println!("pushing edge ({},{})", s, t);
-                self.push(*s, t);
-            }
+        for edge in self.residual_graph.edge_range(self.source) {
+            let t = self.residual_graph.target(edge);
+            println!("pushing edge ({},{})", self.source, t);
+            self.push(self.source, t);
         }
 
         println!("<== init done ==>");
 
         while let Some(u) = self.excess_nodes.pop() {
-            if !self.source_set[u] && !self.target_set[u] {
+            if u != self.source && u != self.target {
                 self.discharge(u);
             }
         }
 
         let mut flow = 0;
-        for t in targets {
-            for rev_edge in self.residual_graph.edge_range(*t) {
-                let s = self.residual_graph.target(rev_edge);
-                let fwd_edge = self
-                    .residual_graph
-                    .find_edge(s, *t)
-                    .expect("Graph broken. Could not find expected edge");
-                // println!("flow({},{})={}", s, t, self.residual_graph.data(fwd_edge).flow);
-                flow += self.residual_graph.data(fwd_edge).flow;
-            }
+        for rev_edge in self.residual_graph.edge_range(self.target) {
+            let s = self.residual_graph.target(rev_edge);
+            let fwd_edge = self
+                .residual_graph
+                .find_edge(s, self.target)
+                .expect("Graph broken. Could not find expected edge");
+            // println!("flow({},{})={}", s, t, self.residual_graph.data(fwd_edge).flow);
+            flow += self.residual_graph.data(fwd_edge).flow;
         }
 
         self.max_flow = flow;
@@ -255,7 +234,7 @@ impl PushRelabel {
         Ok(self.max_flow)
     }
 
-    pub fn assignment(&self, sources: &[NodeID]) -> Result<BitVec, String> {
+    pub fn assignment(&self, source: NodeID) -> Result<BitVec, String> {
         if !self.finished {
             return Err("Assigment was not computed.".to_string());
         }
@@ -263,7 +242,7 @@ impl PushRelabel {
         // run a reachability analysis
         let mut reachable = BitVec::with_capacity(self.residual_graph.number_of_nodes());
         reachable.resize(self.residual_graph.number_of_nodes(), false);
-        let mut stack: Vec<usize> = sources.iter().copied().collect();
+        let mut stack = vec![source];//Vec<usize> = sources.iter().copied().collect();
         while let Some(node) = stack.pop() {
             // TODO: looks like this following is superflous work?
             if *reachable.get(node as usize).unwrap() {
@@ -295,7 +274,7 @@ mod tests {
     use bitvec::prelude::Lsb0;
 
     #[test]
-    fn max_flow_clr_single_source_target() {
+    fn max_flow_clr() {
         let edges = vec![
             InputEdge::new(0, 1, EdgeCapacity::new(16)),
             InputEdge::new(0, 2, EdgeCapacity::new(13)),
@@ -309,10 +288,10 @@ mod tests {
             InputEdge::new(4, 5, EdgeCapacity::new(4)),
         ];
 
-        let mut max_flow_solver = PushRelabel::from_edge_list(edges);
-        let sources = [0];
-        let targets = [5];
-        max_flow_solver.run(&sources, &targets);
+        let source = 0;
+        let target = 5;
+        let mut max_flow_solver = PushRelabel::from_edge_list(edges, source, target);
+        max_flow_solver.run();
 
         // it's OK to expect the solver to have run
         let max_flow = max_flow_solver
@@ -322,48 +301,10 @@ mod tests {
 
         // it's OK to expect the solver to have run
         let assignment = max_flow_solver
-            .assignment(&sources)
+            .assignment(source)
             .expect("assignment computation did not run");
 
         assert_eq!(assignment, bits![1, 1, 1, 0, 1, 0]);
-    }
-
-    #[test]
-    fn _single_source_target_multi_target_set() {
-        let edges = vec![
-            InputEdge::new(0, 1, EdgeCapacity::new(16)),
-            InputEdge::new(0, 2, EdgeCapacity::new(13)),
-            InputEdge::new(1, 2, EdgeCapacity::new(10)),
-            InputEdge::new(1, 3, EdgeCapacity::new(12)),
-            InputEdge::new(2, 1, EdgeCapacity::new(4)),
-            InputEdge::new(2, 4, EdgeCapacity::new(14)),
-            InputEdge::new(3, 2, EdgeCapacity::new(9)),
-            InputEdge::new(3, 5, EdgeCapacity::new(20)),
-            InputEdge::new(4, 3, EdgeCapacity::new(7)),
-            InputEdge::new(4, 5, EdgeCapacity::new(4)),
-            InputEdge::new(5, 6, EdgeCapacity::new(1)),
-            InputEdge::new(6, 1, EdgeCapacity::new(1)),
-            InputEdge::new(0, 7, EdgeCapacity::new(1)),
-            InputEdge::new(7, 1, EdgeCapacity::new(1)),
-        ];
-
-        let mut max_flow_solver = PushRelabel::from_edge_list(edges);
-        let sources = [0];
-        let targets = [5, 6];
-        max_flow_solver.run(&sources, &targets);
-
-        // it's OK to expect the solver to have run
-        let max_flow = max_flow_solver
-            .max_flow()
-            .expect("max flow computation did not run");
-        assert_eq!(23, max_flow);
-
-        // it's OK to expect the solver to have run
-        let assignment = max_flow_solver
-            .assignment(&sources)
-            .expect("assignment computation did not run");
-
-        assert_eq!(assignment, bits![1, 1, 1, 0, 1, 0, 0, 1]);
     }
 
     #[test]
@@ -383,10 +324,10 @@ mod tests {
             InputEdge::new(6, 3, EdgeCapacity::new(6)),
         ];
 
-        let mut max_flow_solver = PushRelabel::from_edge_list(edges);
-        let sources = [0];
-        let targets = [3];
-        max_flow_solver.run(&sources, &targets);
+        let source = 0;
+        let target = 3;
+        let mut max_flow_solver = PushRelabel::from_edge_list(edges, source, target);
+        max_flow_solver.run();
 
         // it's OK to expect the solver to have run
         let max_flow = max_flow_solver
@@ -396,7 +337,7 @@ mod tests {
 
         // it's OK to expect the solver to have run
         let assignment = max_flow_solver
-            .assignment(&sources)
+            .assignment(source)
             .expect("assignment computation did not run");
         assert_eq!(assignment, bits![1, 0, 0, 0, 1, 1, 0, 0]);
     }
@@ -423,10 +364,10 @@ mod tests {
             InputEdge::new(8, 10, EdgeCapacity::new(10)),
         ];
 
-        let mut max_flow_solver = PushRelabel::from_edge_list(edges);
-        let sources = [9];
-        let targets = [10];
-        max_flow_solver.run(&sources, &targets);
+        let source = 9;
+        let target = 10;
+        let mut max_flow_solver = PushRelabel::from_edge_list(edges, source, target);
+        max_flow_solver.run();
 
         // it's OK to expect the solver to have run
         let max_flow = max_flow_solver
@@ -436,7 +377,7 @@ mod tests {
 
         // it's OK to expect the solver to have run
         let assignment = max_flow_solver
-            .assignment(&sources)
+            .assignment(source)
             .expect("assignment computation did not run");
         assert_eq!(assignment, bits![0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0]);
     }
@@ -455,10 +396,10 @@ mod tests {
             InputEdge::new(4, 5, EdgeCapacity::new(8)),
         ];
 
-        let mut max_flow_solver = PushRelabel::from_edge_list(edges);
-        let sources = [0];
-        let targets = [5];
-        max_flow_solver.run(&sources, &targets);
+        let source = 0;
+        let target = 5;
+        let mut max_flow_solver = PushRelabel::from_edge_list(edges, source, target);
+        max_flow_solver.run();
 
         // it's OK to expect the solver to have run
         let max_flow = max_flow_solver
@@ -468,7 +409,7 @@ mod tests {
 
         // it's OK to expect the solver to have run
         let assignment = max_flow_solver
-            .assignment(&sources)
+            .assignment(source)
             .expect("assignment computation did not run");
         assert_eq!(assignment, bits![1, 1, 0, 1, 0, 0]);
     }
@@ -489,7 +430,7 @@ mod tests {
         ];
 
         // the expect(.) call is being tested
-        PushRelabel::from_edge_list(edges)
+        PushRelabel::from_edge_list(edges, 1, 2)
             .max_flow()
             .expect("max flow computation did not run");
     }
@@ -510,8 +451,8 @@ mod tests {
         ];
 
         // the expect(.) call is being tested
-        PushRelabel::from_edge_list(edges)
-            .assignment(&[0])
+        PushRelabel::from_edge_list(edges, 1, 2)
+            .assignment(1)
             .expect("assignment computation did not run");
     }
 }

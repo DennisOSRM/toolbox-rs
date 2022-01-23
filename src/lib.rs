@@ -10,5 +10,4 @@ pub mod graph;
 pub mod kruskal;
 pub mod push_relabel;
 pub mod static_graph;
-// pub mod tarjan;
 pub mod union_find;
