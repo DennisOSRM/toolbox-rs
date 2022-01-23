@@ -9,6 +9,7 @@
 use crate::edge::Edge;
 use crate::edge::InputEdge;
 use crate::graph::{Graph, NodeID};
+use crate::max_flow::MaxFlow;
 use crate::static_graph::StaticGraph;
 use bitvec::vec::BitVec;
 use core::cmp::min;
@@ -108,26 +109,6 @@ impl Dinic {
             source,
             target,
         }
-    }
-
-    pub fn run(&mut self) {
-        println!(
-            "V {}, E {}",
-            self.residual_graph.number_of_nodes(),
-            self.residual_graph.number_of_edges()
-        );
-
-        let number_of_nodes = self.residual_graph.number_of_nodes();
-        self.parents.resize(number_of_nodes, 0);
-        self.level.resize(number_of_nodes, usize::MAX);
-        self.queue.reserve(number_of_nodes);
-
-        let mut flow = 0;
-        while self.bfs() {
-            flow += self.dfs();
-        }
-        self.max_flow = flow;
-        self.finished = true;
     }
 
     // create layer graph L^(s,t) by doing a reverse BFS from target to source.
@@ -253,8 +234,29 @@ impl Dinic {
         // None
         blocking_flow
     }
+}
 
-    pub fn max_flow(&self) -> Result<i32, String> {
+impl MaxFlow for Dinic {
+    fn run(&mut self) {
+        println!(
+            "V {}, E {}",
+            self.residual_graph.number_of_nodes(),
+            self.residual_graph.number_of_edges()
+        );
+
+        let number_of_nodes = self.residual_graph.number_of_nodes();
+        self.parents.resize(number_of_nodes, 0);
+        self.level.resize(number_of_nodes, usize::MAX);
+        self.queue.reserve(number_of_nodes);
+
+        let mut flow = 0;
+        while self.bfs() {
+            flow += self.dfs();
+        }
+        self.max_flow = flow;
+        self.finished = true;
+    }
+    fn max_flow(&self) -> Result<i32, String> {
         if !self.finished {
             return Err("Assigment was not computed.".to_string());
         }
@@ -262,7 +264,7 @@ impl Dinic {
         Ok(self.max_flow)
     }
 
-    pub fn assignment(&self, source: NodeID) -> Result<BitVec, String> {
+    fn assignment(&self, source: NodeID) -> Result<BitVec, String> {
         if !self.finished {
             return Err("Assigment was not computed.".to_string());
         }
@@ -290,7 +292,8 @@ impl Dinic {
 #[cfg(test)]
 mod tests {
 
-    use crate::dinic::Dinic;
+    use crate::max_flow::MaxFlow;
+use crate::dinic::Dinic;
     use crate::dinic::EdgeCapacity;
     use crate::edge::InputEdge;
     use bitvec::bits;

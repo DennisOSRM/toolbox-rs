@@ -1,3 +1,4 @@
+use crate::max_flow::MaxFlow;
 use crate::bfs::BFS;
 use crate::edge::Edge;
 use crate::edge::InputEdge;
@@ -90,8 +91,10 @@ impl FordFulkerson {
             target,
         }
     }
+}
 
-    pub fn run(&mut self) {
+impl MaxFlow for FordFulkerson {
+    fn run(&mut self) {
         let mut bfs = BFS::new(
             &[self.source],
             &[self.target],
@@ -142,14 +145,14 @@ impl FordFulkerson {
         self.finished = true;
     }
 
-    pub fn max_flow(&self) -> Result<i32, String> {
+    fn max_flow(&self) -> Result<i32, String> {
         if !self.finished {
             return Err("Assigment was not computed.".to_string());
         }
         Ok(self.max_flow)
     }
 
-    pub fn assignment(&self, source: NodeID) -> Result<BitVec, String> {
+    fn assignment(&self, source: NodeID) -> Result<BitVec, String> {
         if !self.finished {
             return Err("Assigment was not computed.".to_string());
         }
@@ -177,7 +180,8 @@ impl FordFulkerson {
 #[cfg(test)]
 mod tests {
 
-    use crate::edge::InputEdge;
+    use crate::max_flow::MaxFlow;
+use crate::edge::InputEdge;
     use crate::ford_fulkerson::EdgeCapacity;
     use crate::ford_fulkerson::FordFulkerson;
     use bitvec::bits;

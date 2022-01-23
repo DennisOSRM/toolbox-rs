@@ -2,6 +2,7 @@ use crate::dfs::DFS;
 use crate::edge::Edge;
 use crate::edge::InputEdge;
 use crate::graph::{Graph, NodeID};
+use crate::max_flow::MaxFlow;
 use crate::static_graph::StaticGraph;
 use bitvec::vec::BitVec;
 use itertools::Itertools;
@@ -90,8 +91,10 @@ impl EdmondsKarp {
             target,
         }
     }
+}
 
-    pub fn run(&mut self) {
+impl MaxFlow for EdmondsKarp {
+    fn run(&mut self) {
         let mut dfs = DFS::new(
             &[self.source],
             &[self.target],
@@ -101,7 +104,6 @@ impl EdmondsKarp {
         // let mut iteration = 0;
         while dfs.run_with_filter(&self.residual_graph, filter) {
             let start = Instant::now();
-            
             // retrieve node path. The path is unambiguous, as we removed all duplicate edges
             // find min capacity on edges of the path
             let bootleneck_head_tail = dfs
@@ -128,7 +130,7 @@ impl EdmondsKarp {
             println!(" flow assignment2 took: {:?} (done)", duration);
 
             // assign flow to residual graph
-            for (a,b) in dfs.path_iter().tuple_windows() {
+            for (a, b) in dfs.path_iter().tuple_windows() {
                 let rev_edge = self.residual_graph.find_edge_unchecked(a, b);
                 let fwd_edge = self.residual_graph.find_edge_unchecked(b, a);
 
@@ -142,14 +144,14 @@ impl EdmondsKarp {
         self.finished = true;
     }
 
-    pub fn max_flow(&self) -> Result<i32, String> {
+    fn max_flow(&self) -> Result<i32, String> {
         if !self.finished {
             return Err("Assigment was not computed.".to_string());
         }
         Ok(self.max_flow)
     }
 
-    pub fn assignment(&self, source: NodeID) -> Result<BitVec, String> {
+    fn assignment(&self, source: NodeID) -> Result<BitVec, String> {
         if !self.finished {
             return Err("Assigment was not computed.".to_string());
         }
@@ -177,7 +179,8 @@ impl EdmondsKarp {
 #[cfg(test)]
 mod tests {
 
-    use crate::edge::InputEdge;
+    use crate::max_flow::MaxFlow;
+use crate::edge::InputEdge;
     use crate::edmonds_karp::EdgeCapacity;
     use crate::edmonds_karp::EdmondsKarp;
     use bitvec::bits;

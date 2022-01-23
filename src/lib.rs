@@ -9,6 +9,7 @@ pub mod edmonds_karp;
 pub mod ford_fulkerson;
 pub mod graph;
 pub mod kruskal;
+pub mod max_flow;
 pub mod static_graph;
 // pub mod thread_pool;
 pub mod union_find;
