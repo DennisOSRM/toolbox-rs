@@ -1,4 +1,4 @@
-use crate::bfs::BFS;
+use crate::dfs::DFS;
 use crate::edge::Edge;
 use crate::edge::InputEdge;
 use crate::graph::{Graph, NodeID};
@@ -18,7 +18,7 @@ impl EdgeCapacity {
     }
 }
 
-pub struct FordFulkerson {
+pub struct EdmondsKarp {
     residual_graph: StaticGraph<EdgeCapacity>,
     max_flow: i32,
     finished: bool,
@@ -26,7 +26,7 @@ pub struct FordFulkerson {
     target: NodeID,
 }
 
-impl FordFulkerson {
+impl EdmondsKarp {
     // todo(dl): add closure parameter to derive edge data
     pub fn from_generic_edge_list(
         input_edges: Vec<impl Edge<ID = NodeID>>,
@@ -43,7 +43,7 @@ impl FordFulkerson {
             .collect();
 
         println!("created {} ff edges", edge_list.len());
-        FordFulkerson::from_edge_list(edge_list, source, target)
+        EdmondsKarp::from_edge_list(edge_list, source, target)
     }
 
     pub fn from_edge_list(
@@ -92,19 +92,19 @@ impl FordFulkerson {
     }
 
     pub fn run(&mut self) {
-        let mut bfs = BFS::new(
+        let mut dfs = DFS::new(
             &[self.source],
             &[self.target],
             self.residual_graph.number_of_nodes(),
         );
         let filter = |graph: &StaticGraph<EdgeCapacity>, edge| graph.data(edge).capacity <= 0;
         // let mut iteration = 0;
-        while bfs.run_with_filter(&self.residual_graph, filter) {
+        while dfs.run_with_filter(&self.residual_graph, filter) {
             let start = Instant::now();
             
             // retrieve node path. The path is unambiguous, as we removed all duplicate edges
             // find min capacity on edges of the path
-            let bootleneck_head_tail = bfs
+            let bootleneck_head_tail = dfs
                 .path_iter()
                 .tuple_windows()
                 .min_by_key(|(a, b)| {
@@ -128,7 +128,7 @@ impl FordFulkerson {
             println!(" flow assignment2 took: {:?} (done)", duration);
 
             // assign flow to residual graph
-            for (a,b) in bfs.path_iter().tuple_windows() {
+            for (a,b) in dfs.path_iter().tuple_windows() {
                 let rev_edge = self.residual_graph.find_edge_unchecked(a, b);
                 let fwd_edge = self.residual_graph.find_edge_unchecked(b, a);
 
@@ -178,8 +178,8 @@ impl FordFulkerson {
 mod tests {
 
     use crate::edge::InputEdge;
-    use crate::ford_fulkerson::EdgeCapacity;
-    use crate::ford_fulkerson::FordFulkerson;
+    use crate::edmonds_karp::EdgeCapacity;
+    use crate::edmonds_karp::EdmondsKarp;
     use bitvec::bits;
     use bitvec::prelude::Lsb0;
 
@@ -200,7 +200,7 @@ mod tests {
 
         let source = 0;
         let target = 5;
-        let mut max_flow_solver = FordFulkerson::from_edge_list(edges, source, target);
+        let mut max_flow_solver = EdmondsKarp::from_edge_list(edges, source, target);
         max_flow_solver.run();
 
         // it's OK to expect the solver to have run
@@ -236,7 +236,7 @@ mod tests {
 
         let source = 0;
         let target = 3;
-        let mut max_flow_solver = FordFulkerson::from_edge_list(edges, source, target);
+        let mut max_flow_solver = EdmondsKarp::from_edge_list(edges, source, target);
         max_flow_solver.run();
 
         // it's OK to expect the solver to have run
@@ -276,7 +276,7 @@ mod tests {
 
         let source = 9;
         let target = 10;
-        let mut max_flow_solver = FordFulkerson::from_edge_list(edges, source, target);
+        let mut max_flow_solver = EdmondsKarp::from_edge_list(edges, source, target);
         max_flow_solver.run();
 
         // it's OK to expect the solver to have run
@@ -308,7 +308,7 @@ mod tests {
 
         let source = 0;
         let target = 5;
-        let mut max_flow_solver = FordFulkerson::from_edge_list(edges, source, target);
+        let mut max_flow_solver = EdmondsKarp::from_edge_list(edges, source, target);
         max_flow_solver.run();
 
         // it's OK to expect the solver to have run
@@ -340,7 +340,7 @@ mod tests {
         ];
 
         // the expect(.) call is being tested
-        FordFulkerson::from_edge_list(edges, 0, 1)
+        EdmondsKarp::from_edge_list(edges, 0, 1)
             .max_flow()
             .expect("max flow computation did not run");
     }
@@ -361,7 +361,7 @@ mod tests {
         ];
 
         // the expect(.) call is being tested
-        FordFulkerson::from_edge_list(edges, 0, 1)
+        EdmondsKarp::from_edge_list(edges, 0, 1)
             .assignment(0)
             .expect("assignment computation did not run");
     }
