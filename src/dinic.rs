@@ -1,10 +1,18 @@
-use crate::dfs::DFS;
+//! A Max-Flow computation implementing Cherkassky's variant of Dinitz' seminal
+//! algorithm. The implementation at hand is distinguished by three factors:
+//! 1) Computing the layer graph in a single BFS starting in t.
+//! 2) Omitting maintenance of the layer graph.
+//! 3) Running the augmentation phase as a single DFS.
+//!
+//! The DFS restarts after it found an augmenting path on the tail of the
+//! saturated edge that is closest to the source.
 use crate::edge::Edge;
 use crate::edge::InputEdge;
 use crate::graph::{Graph, NodeID};
 use crate::static_graph::StaticGraph;
 use bitvec::vec::BitVec;
-use itertools::Itertools;
+use core::cmp::min;
+use std::collections::VecDeque;
 use std::time::Instant;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -18,20 +26,26 @@ impl EdgeCapacity {
     }
 }
 
-pub struct FordFulkerson {
+pub struct Dinic {
     residual_graph: StaticGraph<EdgeCapacity>,
     max_flow: i32,
     finished: bool,
+    level: Vec<usize>,
+    parents: Vec<NodeID>,
+    stack: Vec<(NodeID, i32)>,
+    dfs_count: usize,
+    bfs_count: usize,
+    queue: VecDeque<NodeID>,
     source: NodeID,
     target: NodeID,
 }
 
-impl FordFulkerson {
+impl Dinic {
     // todo(dl): add closure parameter to derive edge data
     pub fn from_generic_edge_list(
         input_edges: Vec<impl Edge<ID = NodeID>>,
-        source: usize,
-        target: usize,
+        source: NodeID,
+        target: NodeID,
     ) -> Self {
         let edge_list: Vec<InputEdge<EdgeCapacity>> = input_edges
             .into_iter()
@@ -43,7 +57,7 @@ impl FordFulkerson {
             .collect();
 
         println!("created {} ff edges", edge_list.len());
-        FordFulkerson::from_edge_list(edge_list, source, target)
+        Dinic::from_edge_list(edge_list, source, target)
     }
 
     pub fn from_edge_list(
@@ -77,7 +91,6 @@ impl FordFulkerson {
             }
             result
         });
-        // println!("dedup-merged {} edges", edge_list.len());
 
         // at this point the edge set of the residual graph doesn't have any
         // duplicates anymore. note that this is fine, as we are looking to
@@ -86,66 +99,166 @@ impl FordFulkerson {
             residual_graph: StaticGraph::new(edge_list),
             max_flow: 0,
             finished: false,
+            level: Vec::new(),
+            parents: Vec::new(),
+            stack: Vec::new(),
+            dfs_count: 0,
+            bfs_count: 0,
+            queue: VecDeque::new(),
             source,
             target,
         }
     }
 
     pub fn run(&mut self) {
-        let mut bfs = DFS::new(
-            &[self.source],
-            &[self.target],
+        println!(
+            "V {}, E {}",
             self.residual_graph.number_of_nodes(),
+            self.residual_graph.number_of_edges()
         );
-        let filter = |graph: &StaticGraph<EdgeCapacity>, edge| graph.data(edge).capacity <= 0;
-        // let mut iteration = 0;
-        while bfs.run_with_filter(&self.residual_graph, filter) {
-            let start = Instant::now();
-            
-            // retrieve node path. The path is unambiguous, as we removed all duplicate edges
-            // find min capacity on edges of the path
-            let bootleneck_head_tail = bfs
-                .path_iter()
-                .tuple_windows()
-                .min_by_key(|(a, b)| {
-                    let edge = self.residual_graph.find_edge_unchecked(*b, *a);
-                    self.residual_graph.data(edge).capacity
-                })
-                .expect("graph is broken, couldn't find min edge");
-            let duration = start.elapsed();
-            println!(" flow assignment1 took: {:?} (done)", duration);
 
-            let bottleneck_edge = self
-                .residual_graph
-                .find_edge_unchecked(bootleneck_head_tail.1, bootleneck_head_tail.0);
-            // println!("  bottleneck edge: {}", bottleneck_edge);
-            let path_flow = self.residual_graph.data(bottleneck_edge).capacity;
-            debug_assert!(path_flow > 0);
-            // println!("min edge: {}, capacity: {}", bottleneck_edge, path_flow);
-            // sum up flow
-            self.max_flow += path_flow;
-            let duration = start.elapsed();
-            println!(" flow assignment2 took: {:?} (done)", duration);
+        let number_of_nodes = self.residual_graph.number_of_nodes();
+        self.parents.resize(number_of_nodes, 0);
+        self.level.resize(number_of_nodes, usize::MAX);
+        self.queue.reserve(number_of_nodes);
 
-            // assign flow to residual graph
-            for (a,b) in bfs.path_iter().tuple_windows() {
-                let rev_edge = self.residual_graph.find_edge_unchecked(a, b);
-                let fwd_edge = self.residual_graph.find_edge_unchecked(b, a);
+        let mut flow = 0;
+        while self.bfs() {
+            flow += self.dfs();
+        }
+        self.max_flow = flow;
+        self.finished = true;
+    }
 
-                self.residual_graph.data_mut(fwd_edge).capacity -= path_flow;
-                self.residual_graph.data_mut(rev_edge).capacity += path_flow;
+    // create layer graph L^(s,t) by doing a reverse BFS from target to source.
+    // All paths from s to t in the layer graph are then 'downhill'
+    fn bfs(&mut self) -> bool {
+        let start = Instant::now();
+        self.bfs_count += 1;
+        // init
+        self.level.fill(usize::MAX);
+        self.queue.clear();
+        self.queue.push_back(self.target);
+        self.level[self.target] = 0;
+
+        let duration = start.elapsed();
+        println!("BFS init: {:?}", duration);
+
+        // label residual graph nodes in BFS order, but in reverse starting from the target
+        while let Some(u) = self.queue.pop_front() {
+            for edge in self.residual_graph.edge_range(u) {
+                let v = self.residual_graph.target(edge);
+                if v != self.source && self.level[v] != usize::MAX {
+                    // node v is not the source, but it is already visited. the source might be reached multiple times
+                    continue;
+                }
+
+                // fetch capacity of reverse edge
+                let rev_edge = self.residual_graph.find_edge_unchecked(v, u);
+                let edge_capacity = self.residual_graph.data(rev_edge).capacity;
+                if edge_capacity < 1 {
+                    // no capacity to use on this edge
+                    continue;
+                }
+                self.level[v] = self.level[u] + 1;
+                if v != self.source {
+                    self.queue.push_back(v);
+                }
             }
-            let duration = start.elapsed();
-            println!(" flow assignment3 took: {:?} (done)", duration);
+        }
+        let duration = start.elapsed();
+        println!(
+            "BFS took: {:?}, upper bound on path length: {}",
+            duration, self.level[self.source]
+        );
+        self.level[self.source] != usize::MAX
+    }
+
+    fn dfs(&mut self) -> i32 {
+        let start = Instant::now();
+        self.dfs_count += 1;
+        self.stack.clear();
+        self.parents.fill(NodeID::MAX);
+
+        self.stack.push((self.source, i32::MAX));
+        self.parents[self.source] = self.source;
+
+        let duration = start.elapsed();
+        println!(" DFS init2: {:?}", duration);
+        let mut blocking_flow = 0;
+        while let Some((u, flow)) = self.stack.pop() {
+            for edge in self.residual_graph.edge_range(u) {
+                let v = self.residual_graph.target(edge);
+                if self.parents[v] != NodeID::MAX {
+                    // v already in queue
+                    continue;
+                }
+                if self.level[u] < self.level[v] {
+                    // edge is not leading to target on a path in the BFS tree
+                    continue;
+                }
+                let available_capacity = self.residual_graph.data(edge).capacity;
+                if available_capacity < 1 {
+                    // no capacity to use on this edge
+                    continue;
+                }
+                self.parents[v] = u;
+                let flow = min(flow, available_capacity);
+                if v == self.target {
+                    let duration = start.elapsed();
+                    println!(" reached target {}: {:?}", v, duration);
+                    // reached a target. Unpack path in reverse order, assign flow
+                    let mut v = v; // mutable shadow
+                    let mut closest_tail = u;
+                    loop {
+                        let u = self.parents[v];
+                        if u == v {
+                            break;
+                        }
+                        let fwd_edge = self.residual_graph.find_edge_unchecked(u, v);
+                        self.residual_graph.data_mut(fwd_edge).capacity -= flow;
+                        if 0 == self.residual_graph.data_mut(fwd_edge).capacity {
+                            closest_tail = u;
+                        }
+                        let rev_edge = self.residual_graph.find_edge_unchecked(v, u);
+                        self.residual_graph.data_mut(rev_edge).capacity += flow;
+                        v = u;
+                    }
+                    let duration = start.elapsed();
+                    println!(" augmentation took: {:?}", duration);
+
+                    // unwind stack till tail node, then continue the search
+                    let before = self.stack.len();
+                    while let Some((node, _)) = self.stack.pop() {
+                        if self.parents[node] == closest_tail {
+                            break; // while let
+                        }
+                    }
+                    blocking_flow += flow;
+                    println!(" stack len before: {before}, after: {}", self.stack.len());
+
+                    // make target reachable again
+                    self.parents[self.target] = NodeID::MAX;
+                    self.dfs_count += 1;
+
+                    break; // for edge
+                } else {
+                    self.stack.push((v, flow));
+                }
+            }
         }
 
-        self.finished = true;
+        let duration = start.elapsed();
+        println!("DFS took: {:?} (unsuccessful)", duration);
+        // None
+        blocking_flow
     }
 
     pub fn max_flow(&self) -> Result<i32, String> {
         if !self.finished {
             return Err("Assigment was not computed.".to_string());
         }
+        println!("DFS: {}, BFS: {}", self.dfs_count, self.bfs_count);
         Ok(self.max_flow)
     }
 
@@ -177,9 +290,9 @@ impl FordFulkerson {
 #[cfg(test)]
 mod tests {
 
+    use crate::dinic::Dinic;
+    use crate::dinic::EdgeCapacity;
     use crate::edge::InputEdge;
-    use crate::ford_fulkerson::EdgeCapacity;
-    use crate::ford_fulkerson::FordFulkerson;
     use bitvec::bits;
     use bitvec::prelude::Lsb0;
 
@@ -200,7 +313,7 @@ mod tests {
 
         let source = 0;
         let target = 5;
-        let mut max_flow_solver = FordFulkerson::from_edge_list(edges, source, target);
+        let mut max_flow_solver = Dinic::from_edge_list(edges, source, target);
         max_flow_solver.run();
 
         // it's OK to expect the solver to have run
@@ -236,7 +349,7 @@ mod tests {
 
         let source = 0;
         let target = 3;
-        let mut max_flow_solver = FordFulkerson::from_edge_list(edges, source, target);
+        let mut max_flow_solver = Dinic::from_edge_list(edges, source, target);
         max_flow_solver.run();
 
         // it's OK to expect the solver to have run
@@ -276,7 +389,7 @@ mod tests {
 
         let source = 9;
         let target = 10;
-        let mut max_flow_solver = FordFulkerson::from_edge_list(edges, source, target);
+        let mut max_flow_solver = Dinic::from_edge_list(edges, source, target);
         max_flow_solver.run();
 
         // it's OK to expect the solver to have run
@@ -308,7 +421,7 @@ mod tests {
 
         let source = 0;
         let target = 5;
-        let mut max_flow_solver = FordFulkerson::from_edge_list(edges, source, target);
+        let mut max_flow_solver = Dinic::from_edge_list(edges, source, target);
         max_flow_solver.run();
 
         // it's OK to expect the solver to have run
@@ -340,7 +453,7 @@ mod tests {
         ];
 
         // the expect(.) call is being tested
-        FordFulkerson::from_edge_list(edges, 0, 1)
+        Dinic::from_edge_list(edges, 1, 2)
             .max_flow()
             .expect("max flow computation did not run");
     }
@@ -361,8 +474,8 @@ mod tests {
         ];
 
         // the expect(.) call is being tested
-        FordFulkerson::from_edge_list(edges, 0, 1)
-            .assignment(0)
+        Dinic::from_edge_list(edges, 1, 2)
+            .assignment(1)
             .expect("assignment computation did not run");
     }
 }

@@ -1,10 +1,11 @@
 use crate::edge::Edge;
+use crate::graph::EdgeArrayEntry;
 use std::{cmp::max, ops::Range};
 
 use crate::graph::{EdgeID, Graph, NodeID};
 
 pub struct NodeArrayEntry {
-    first_edge: EdgeID,
+    pub first_edge: EdgeID,
 }
 
 impl NodeArrayEntry {
@@ -12,12 +13,6 @@ impl NodeArrayEntry {
         NodeArrayEntry { first_edge: e }
     }
 }
-
-pub struct EdgeArrayEntry<EdgeDataT> {
-    target: NodeID,
-    data: EdgeDataT,
-}
-
 pub struct StaticGraph<T: Ord> {
     node_array: Vec<NodeArrayEntry>,
     edge_array: Vec<EdgeArrayEntry<T>>,
@@ -70,6 +65,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
                 data: *edge.data(),
             })
             .collect();
+        println!("edge_array.len: {}", graph.edge_array.len());
         debug_assert!(graph.check_integrity());
         graph
     }
@@ -144,6 +140,14 @@ impl<T: Ord + Copy> Graph<T> for StaticGraph<T> {
             }
         }
         None
+    }
+    fn find_edge_unchecked(&self, s: NodeID, t: NodeID) -> EdgeID {
+        for edge in self.edge_range(s) {
+            if self.target(edge) == t {
+                return edge;
+            }
+        }
+        EdgeID::MAX
     }
 }
 
