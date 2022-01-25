@@ -1,80 +1,149 @@
-// use std::cmp::min;
+use crate::graph::Graph;
+use crate::graph::NodeID;
+use core::cmp::min;
 
-// struct Node {
-//   index: usize,
-//   low_link: usize,
-// }
+#[derive(Clone)]
+struct NodeInfo {
+    index: usize,
+    lowlink: NodeID,
+    caller: NodeID,
+    vindex: usize,
+}
 
-// impl Node {
-//     fn new(index: usize, low_link: usize) -> Self { Self { index, low_link } }
+impl NodeInfo {
+    pub fn new() -> Self {
+        NodeInfo {
+            index: usize::MAX,
+            lowlink: NodeID::MAX,
+            caller: NodeID::MAX,
+            vindex: usize::MAX,
+        }
+    }
 
-//     fn update_low_link(&mut self, update: usize) {
-//       self.low_link = min(self.low_link, update);
-//     }
-// }
+    fn update_lowlink(&mut self, update: NodeID) {
+        self.lowlink = min(self.lowlink, update);
+    }
+}
 
-// pub fn tarjan<G>(graph: &G) {
+pub struct Tarjan {
+    index: usize,
+    tarjanStack: Vec<NodeID>,
+    onStack: Vec<bool>,
+    nodes: Vec<NodeInfo>,
+}
 
-//   #[derive(Clone)]
-//   enum ExplorationState {
-//     Unseen,
-//     Unexplored,
-//     Completed
-//   }
+impl Tarjan {
+    pub fn new() -> Self {
+        Self {
+            index: 0,
+            tarjanStack: Vec::new(),
+            onStack: Vec::new(),
+            nodes: Vec::new(),
+        }
+    }
 
-//   let mut state = vec![ExplorationState::Unseen; graph.number_of_nodes()];
-//   let mut stack = Vec::new();
+    fn run<T>(&mut self, graph: &(impl Graph<T> + 'static)) -> Vec<usize> {
+        let mut assignment = Vec::new();
+        let mut index = 0;
+        let mut num_scc = 0;
+        assignment.resize(graph.number_of_nodes(), usize::MAX);
+        self.nodes.resize(graph.number_of_nodes(), NodeInfo::new());
+        self.onStack.resize(graph.number_of_nodes(), false);
+        for n in 0..graph.number_of_nodes() {
+            if self.nodes[n].index != usize::MAX {
+                continue;
+            }
+            // TODO(dluxen): consider moving to a function
+            self.nodes[n].index = index;
+            self.nodes[n].lowlink = index;
+            index += 1;
+            self.nodes[n].vindex = 0;
+            self.tarjanStack.push(n);
+            self.nodes[n].caller = usize::MAX;
+            self.onStack[n] = true;
 
-//   let mut index = 0;
-//   for root in graph.node_range() {
-//     if
+            let mut last = n;
+            loop {
+                if self.nodes[last].vindex < graph.out_degree(last) {
+                    let e = graph
+                        .edge_range(last)
+                        .skip(self.nodes[last].vindex)
+                        .next()
+                        .expect("edge range exhausted");
+                    let w = graph.target(e);
+                    // println!("explore ({n},{w})");
+                    self.nodes[last].vindex += 1;
+                    if self.nodes[w].index == usize::MAX {
+                        self.nodes[w].caller = last;
+                        self.nodes[w].vindex = 0;
+                        self.nodes[w].index = index;
+                        self.nodes[w].lowlink = index;
+                        index += 1;
+                        self.tarjanStack.push(w);
+                        self.onStack[w] = true;
+                        last = w;
+                    } else if self.onStack[w] {
+                        let prev_link = self.nodes[last].lowlink;
+                        self.nodes[last].lowlink = min(prev_link, self.nodes[w].index);
+                    }
+                } else {
+                    if self.nodes[last].lowlink == self.nodes[last].index {
+                        num_scc += 1;
+                        let mut top = self.tarjanStack.pop().expect("tarjanStack empty");
+                        self.onStack[top] = false;
+                        let mut size = 1;
+                        assignment[top] = num_scc;
+                        while top != last {
+                            top = self.tarjanStack.pop().expect("tarjanStack empty");
+                            self.onStack[top] = false;
+                            size += 1;
+                            assignment[top] = num_scc;
+                        }
+                        println!("detected SCC of size {size}");
+                    }
 
-//     stack.push(Node::new(0, 0));
+                    let new_last = self.nodes[last].caller;
+                    if new_last != usize::MAX {
+                        self.nodes[new_last].lowlink =
+                            min(self.nodes[new_last].lowlink, self.nodes[last].lowlink);
+                        last = new_last;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        assignment
+    }
+}
 
-//     while !stack.is_empty() {
+#[cfg(test)]
+mod tests {
+    use crate::edge::InputEdge;
+    use crate::static_graph::StaticGraph;
+    use crate::tarjan::Tarjan;
+    #[test]
+    fn scc_wiki1() {
+        type Graph = StaticGraph<i32>;
+        let edges = vec![
+            InputEdge::new(0, 1, 3),
+            InputEdge::new(1, 2, 3),
+            InputEdge::new(1, 4, 1),
+            InputEdge::new(1, 5, 6),
+            InputEdge::new(2, 3, 2),
+            InputEdge::new(2, 6, 2),
+            InputEdge::new(3, 2, 2),
+            InputEdge::new(3, 7, 2),
+            InputEdge::new(4, 0, 2),
+            InputEdge::new(4, 5, 2),
+            InputEdge::new(5, 6, 2),
+            InputEdge::new(6, 5, 2),
+            InputEdge::new(7, 3, 2),
+            InputEdge::new(7, 6, 2),
+        ];
+        let graph = Graph::new(edges);
 
-//     }
-//   }
-
-// }
-
-// // # Tarjan's algorithm.
-// // def sconnect(v):
-// // global next, nextgroup
-// // work = [(v, 0)] # NEW: Recursion stack.
-// // while work:
-// //     v, i = work[-1] # i is next successor to process.
-// //     del work[-1]
-// //     if i == 0: # When first visiting a vertex:
-// //         index[v] = next
-// //         lowlink[v] = next
-// //         next += 1
-// //         stack.append(v)
-// //         onstack[v] = True
-// //     recurse = False
-// //     for j in range(i, len(adj[v])):
-// //         w = adj[v][j]
-// //         if index[w] == None:
-// //             # CHANGED: Add w to recursion stack.
-// //             work.append((v, j+1))
-// //             work.append((w, 0))
-// //             recurse = True
-// //             break
-// //         elif onstack[w]:
-// //             lowlink[v] = min(lowlink[v], index[w])
-// //     if recurse: continue # NEW
-// //     if index[v] == lowlink[v]:
-// //         com = []
-// //         while True:
-// //             w = stack[-1]
-// //             del stack[-1]
-// //             onstack[w] = False
-// //             com.append(w)
-// //             groupid[w] = nextgroup
-// //             if w == v: break
-// //         groups.append(com)
-// //         nextgroup += 1
-// //     if work: # NEW: v was recursively visited.
-// //         w = v
-// //         v, _ = work[-1]
-// //         lowlink[v] = min(lowlink[v], lowlink[w])
+        let mut tarjan = Tarjan::new();
+        assert_eq!(vec![3, 3, 2, 2, 3, 1, 1, 2], tarjan.run(&graph));
+    }
+}
