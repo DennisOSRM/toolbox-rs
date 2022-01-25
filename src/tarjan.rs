@@ -3,7 +3,7 @@ use crate::graph::NodeID;
 use core::cmp::min;
 
 #[derive(Clone)]
-struct NodeInfo {
+struct DFSNode {
     index: usize,
     lowlink: NodeID,
     caller: NodeID,
@@ -11,9 +11,9 @@ struct NodeInfo {
     on_stack: bool,
 }
 
-impl NodeInfo {
+impl DFSNode {
     pub fn new() -> Self {
-        NodeInfo {
+        DFSNode {
             index: usize::MAX,
             lowlink: NodeID::MAX,
             caller: NodeID::MAX,
@@ -23,9 +23,11 @@ impl NodeInfo {
     }
 }
 
+// TODO: consider making this a function
+// TODO: consider adding handlers for small/large SCCs
 pub struct Tarjan {
     tarjan_stack: Vec<NodeID>,
-    dfs_state: Vec<NodeInfo>,
+    dfs_state: Vec<DFSNode>,
 }
 
 impl Default for Tarjan {
@@ -44,18 +46,22 @@ impl Tarjan {
 
     pub fn run<T>(&mut self, graph: &(impl Graph<T> + 'static)) -> Vec<usize> {
         let mut assignment = Vec::new();
+        assignment.resize(graph.number_of_nodes(), usize::MAX);
         let mut index = 0;
         let mut num_scc = 0;
-        assignment.resize(graph.number_of_nodes(), usize::MAX);
+
+        // TODO: does this need to be a struct member?
         self.dfs_state
-            .resize(graph.number_of_nodes(), NodeInfo::new());
+            .resize(graph.number_of_nodes(), DFSNode::new());
 
         // assign each node to an SCC if not yet done
-        for n in 0..graph.number_of_nodes() {
+        for n in graph.node_range() {
             if self.dfs_state[n].index != usize::MAX {
                 continue;
             }
-            // TODO: consider moving to a function
+            // TODO: consider moving the following to a function to save indentation
+
+            // TODO: could setting the state be done in a cleaner way?
             self.dfs_state[n].caller = usize::MAX; // marker denoting the end of recursion
             self.dfs_state[n].neighbor = 0;
             self.dfs_state[n].index = index;
@@ -111,6 +117,7 @@ impl Tarjan {
                         );
                         last = new_last;
                     } else {
+                        debug_assert!(n == last);
                         break;
                     }
                 }
