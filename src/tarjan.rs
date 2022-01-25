@@ -157,4 +157,20 @@ mod tests {
         let mut tarjan = Tarjan::new();
         assert_eq!(vec![3, 3, 2, 2, 3, 1, 1, 2], tarjan.run(&graph));
     }
+
+    #[test]
+    fn geekforgeeks() {
+        type Graph = StaticGraph<i32>;
+        let edges = vec![
+            InputEdge::new(1, 0, 3),
+            InputEdge::new(0, 3, 3),
+            InputEdge::new(0, 2, 1),
+            InputEdge::new(2, 1, 6),
+            InputEdge::new(3, 4, 2),
+        ];
+        let graph = Graph::new(edges);
+
+        let mut tarjan = Tarjan::new();
+        assert_eq!(vec![3, 3, 3, 2, 1], tarjan.run(&graph));
+    }
 }
