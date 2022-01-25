@@ -49,20 +49,22 @@ impl Tarjan {
         assignment.resize(graph.number_of_nodes(), usize::MAX);
         self.dfs_state
             .resize(graph.number_of_nodes(), NodeInfo::new());
+
+        // assign each node to an SCC if not yet done
         for n in 0..graph.number_of_nodes() {
             if self.dfs_state[n].index != usize::MAX {
                 continue;
             }
             // TODO: consider moving to a function
+            self.dfs_state[n].caller = usize::MAX; // marker denoting the end of recursion
+            self.dfs_state[n].neighbor = 0;
             self.dfs_state[n].index = index;
             self.dfs_state[n].lowlink = index;
-            index += 1;
-            self.dfs_state[n].neighbor = 0;
-            self.tarjan_stack.push(n);
-            self.dfs_state[n].caller = usize::MAX;
             self.dfs_state[n].on_stack = true;
-
+            self.tarjan_stack.push(n);
+            index += 1;
             let mut last = n;
+
             loop {
                 if self.dfs_state[last].neighbor < graph.out_degree(last) {
                     let e = graph
@@ -76,9 +78,9 @@ impl Tarjan {
                         self.dfs_state[w].neighbor = 0;
                         self.dfs_state[w].index = index;
                         self.dfs_state[w].lowlink = index;
-                        index += 1;
-                        self.tarjan_stack.push(w);
                         self.dfs_state[w].on_stack = true;
+                        self.tarjan_stack.push(w);
+                        index += 1;
                         last = w;
                     } else if self.dfs_state[w].on_stack {
                         let prev_link = self.dfs_state[last].lowlink;
@@ -87,15 +89,15 @@ impl Tarjan {
                 } else {
                     if self.dfs_state[last].lowlink == self.dfs_state[last].index {
                         num_scc += 1;
-                        let mut top = self.tarjan_stack.pop().expect("tarjan_stack empty");
-                        self.dfs_state[top].on_stack = false;
-                        let mut size = 1;
-                        assignment[top] = num_scc;
-                        while top != last {
-                            top = self.tarjan_stack.pop().expect("tarjan_stack empty");
+                        let mut size = 0;
+                        loop {
+                            let top = self.tarjan_stack.pop().expect("tarjan_stack empty");
                             self.dfs_state[top].on_stack = false;
                             size += 1;
                             assignment[top] = num_scc;
+                            if top == last {
+                                break;
+                            }
                         }
                         // TODO: add handler for small/large SCCs
                         println!("detected SCC of size {size}");
