@@ -3,24 +3,14 @@ use crate::edge::Edge;
 use crate::edge::InputEdge;
 use crate::graph::{Graph, NodeID};
 use crate::max_flow::MaxFlow;
+use crate::max_flow::ResidualCapacity;
 use crate::static_graph::StaticGraph;
 use bitvec::vec::BitVec;
 use itertools::Itertools;
 use std::time::Instant;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct EdgeCapacity {
-    pub capacity: i32,
-}
-
-impl EdgeCapacity {
-    pub fn new(capacity: i32) -> EdgeCapacity {
-        EdgeCapacity { capacity }
-    }
-}
-
 pub struct EdmondsKarp {
-    residual_graph: StaticGraph<EdgeCapacity>,
+    residual_graph: StaticGraph<ResidualCapacity>,
     max_flow: i32,
     finished: bool,
     source: NodeID,
@@ -34,12 +24,12 @@ impl EdmondsKarp {
         source: usize,
         target: usize,
     ) -> Self {
-        let edge_list: Vec<InputEdge<EdgeCapacity>> = input_edges
+        let edge_list: Vec<InputEdge<ResidualCapacity>> = input_edges
             .into_iter()
             .map(|edge| InputEdge {
                 source: edge.source(),
                 target: edge.target(),
-                data: EdgeCapacity::new(1),
+                data: ResidualCapacity::new(1),
             })
             .collect();
 
@@ -48,7 +38,7 @@ impl EdmondsKarp {
     }
 
     pub fn from_edge_list(
-        mut edge_list: Vec<InputEdge<EdgeCapacity>>,
+        mut edge_list: Vec<InputEdge<ResidualCapacity>>,
         source: usize,
         target: usize,
     ) -> Self {
@@ -100,7 +90,7 @@ impl MaxFlow for EdmondsKarp {
             &[self.target],
             self.residual_graph.number_of_nodes(),
         );
-        let filter = |graph: &StaticGraph<EdgeCapacity>, edge| graph.data(edge).capacity <= 0;
+        let filter = |graph: &StaticGraph<ResidualCapacity>, edge| graph.data(edge).capacity <= 0;
         // let mut iteration = 0;
         while dfs.run_with_filter(&self.residual_graph, filter) {
             let start = Instant::now();
@@ -179,26 +169,26 @@ impl MaxFlow for EdmondsKarp {
 #[cfg(test)]
 mod tests {
 
-    use crate::max_flow::MaxFlow;
-use crate::edge::InputEdge;
-    use crate::edmonds_karp::EdgeCapacity;
+    use crate::edge::InputEdge;
     use crate::edmonds_karp::EdmondsKarp;
+    use crate::max_flow::MaxFlow;
+    use crate::max_flow::ResidualCapacity;
     use bitvec::bits;
     use bitvec::prelude::Lsb0;
 
     #[test]
     fn max_flow_clr() {
         let edges = vec![
-            InputEdge::new(0, 1, EdgeCapacity::new(16)),
-            InputEdge::new(0, 2, EdgeCapacity::new(13)),
-            InputEdge::new(1, 2, EdgeCapacity::new(10)),
-            InputEdge::new(1, 3, EdgeCapacity::new(12)),
-            InputEdge::new(2, 1, EdgeCapacity::new(4)),
-            InputEdge::new(2, 4, EdgeCapacity::new(14)),
-            InputEdge::new(3, 2, EdgeCapacity::new(9)),
-            InputEdge::new(3, 5, EdgeCapacity::new(20)),
-            InputEdge::new(4, 3, EdgeCapacity::new(7)),
-            InputEdge::new(4, 5, EdgeCapacity::new(4)),
+            InputEdge::new(0, 1, ResidualCapacity::new(16)),
+            InputEdge::new(0, 2, ResidualCapacity::new(13)),
+            InputEdge::new(1, 2, ResidualCapacity::new(10)),
+            InputEdge::new(1, 3, ResidualCapacity::new(12)),
+            InputEdge::new(2, 1, ResidualCapacity::new(4)),
+            InputEdge::new(2, 4, ResidualCapacity::new(14)),
+            InputEdge::new(3, 2, ResidualCapacity::new(9)),
+            InputEdge::new(3, 5, ResidualCapacity::new(20)),
+            InputEdge::new(4, 3, ResidualCapacity::new(7)),
+            InputEdge::new(4, 5, ResidualCapacity::new(4)),
         ];
 
         let source = 0;
@@ -223,18 +213,18 @@ use crate::edge::InputEdge;
     #[test]
     fn max_flow_ita() {
         let edges = vec![
-            InputEdge::new(0, 1, EdgeCapacity::new(5)),
-            InputEdge::new(0, 4, EdgeCapacity::new(7)),
-            InputEdge::new(0, 5, EdgeCapacity::new(6)),
-            InputEdge::new(1, 2, EdgeCapacity::new(4)),
-            InputEdge::new(1, 7, EdgeCapacity::new(3)),
-            InputEdge::new(4, 7, EdgeCapacity::new(4)),
-            InputEdge::new(4, 6, EdgeCapacity::new(1)),
-            InputEdge::new(5, 6, EdgeCapacity::new(5)),
-            InputEdge::new(2, 3, EdgeCapacity::new(3)),
-            InputEdge::new(7, 3, EdgeCapacity::new(7)),
-            InputEdge::new(6, 7, EdgeCapacity::new(1)),
-            InputEdge::new(6, 3, EdgeCapacity::new(6)),
+            InputEdge::new(0, 1, ResidualCapacity::new(5)),
+            InputEdge::new(0, 4, ResidualCapacity::new(7)),
+            InputEdge::new(0, 5, ResidualCapacity::new(6)),
+            InputEdge::new(1, 2, ResidualCapacity::new(4)),
+            InputEdge::new(1, 7, ResidualCapacity::new(3)),
+            InputEdge::new(4, 7, ResidualCapacity::new(4)),
+            InputEdge::new(4, 6, ResidualCapacity::new(1)),
+            InputEdge::new(5, 6, ResidualCapacity::new(5)),
+            InputEdge::new(2, 3, ResidualCapacity::new(3)),
+            InputEdge::new(7, 3, ResidualCapacity::new(7)),
+            InputEdge::new(6, 7, ResidualCapacity::new(1)),
+            InputEdge::new(6, 3, ResidualCapacity::new(6)),
         ];
 
         let source = 0;
@@ -258,23 +248,23 @@ use crate::edge::InputEdge;
     #[test]
     fn max_flow_yt() {
         let edges = vec![
-            InputEdge::new(9, 0, EdgeCapacity::new(5)),
-            InputEdge::new(9, 1, EdgeCapacity::new(10)),
-            InputEdge::new(9, 2, EdgeCapacity::new(15)),
-            InputEdge::new(0, 3, EdgeCapacity::new(10)),
-            InputEdge::new(1, 0, EdgeCapacity::new(15)),
-            InputEdge::new(1, 4, EdgeCapacity::new(20)),
-            InputEdge::new(2, 5, EdgeCapacity::new(25)),
-            InputEdge::new(3, 4, EdgeCapacity::new(25)),
-            InputEdge::new(3, 6, EdgeCapacity::new(10)),
-            InputEdge::new(4, 2, EdgeCapacity::new(5)),
-            InputEdge::new(4, 7, EdgeCapacity::new(30)),
-            InputEdge::new(5, 7, EdgeCapacity::new(20)),
-            InputEdge::new(5, 8, EdgeCapacity::new(10)),
-            InputEdge::new(7, 8, EdgeCapacity::new(15)),
-            InputEdge::new(6, 10, EdgeCapacity::new(5)),
-            InputEdge::new(7, 10, EdgeCapacity::new(15)),
-            InputEdge::new(8, 10, EdgeCapacity::new(10)),
+            InputEdge::new(9, 0, ResidualCapacity::new(5)),
+            InputEdge::new(9, 1, ResidualCapacity::new(10)),
+            InputEdge::new(9, 2, ResidualCapacity::new(15)),
+            InputEdge::new(0, 3, ResidualCapacity::new(10)),
+            InputEdge::new(1, 0, ResidualCapacity::new(15)),
+            InputEdge::new(1, 4, ResidualCapacity::new(20)),
+            InputEdge::new(2, 5, ResidualCapacity::new(25)),
+            InputEdge::new(3, 4, ResidualCapacity::new(25)),
+            InputEdge::new(3, 6, ResidualCapacity::new(10)),
+            InputEdge::new(4, 2, ResidualCapacity::new(5)),
+            InputEdge::new(4, 7, ResidualCapacity::new(30)),
+            InputEdge::new(5, 7, ResidualCapacity::new(20)),
+            InputEdge::new(5, 8, ResidualCapacity::new(10)),
+            InputEdge::new(7, 8, ResidualCapacity::new(15)),
+            InputEdge::new(6, 10, ResidualCapacity::new(5)),
+            InputEdge::new(7, 10, ResidualCapacity::new(15)),
+            InputEdge::new(8, 10, ResidualCapacity::new(10)),
         ];
 
         let source = 9;
@@ -298,15 +288,15 @@ use crate::edge::InputEdge;
     #[test]
     fn max_flow_ff() {
         let edges = vec![
-            InputEdge::new(0, 1, EdgeCapacity::new(7)),
-            InputEdge::new(0, 2, EdgeCapacity::new(3)),
-            InputEdge::new(1, 2, EdgeCapacity::new(1)),
-            InputEdge::new(1, 3, EdgeCapacity::new(6)),
-            InputEdge::new(2, 4, EdgeCapacity::new(8)),
-            InputEdge::new(3, 5, EdgeCapacity::new(2)),
-            InputEdge::new(3, 2, EdgeCapacity::new(3)),
-            InputEdge::new(4, 3, EdgeCapacity::new(2)),
-            InputEdge::new(4, 5, EdgeCapacity::new(8)),
+            InputEdge::new(0, 1, ResidualCapacity::new(7)),
+            InputEdge::new(0, 2, ResidualCapacity::new(3)),
+            InputEdge::new(1, 2, ResidualCapacity::new(1)),
+            InputEdge::new(1, 3, ResidualCapacity::new(6)),
+            InputEdge::new(2, 4, ResidualCapacity::new(8)),
+            InputEdge::new(3, 5, ResidualCapacity::new(2)),
+            InputEdge::new(3, 2, ResidualCapacity::new(3)),
+            InputEdge::new(4, 3, ResidualCapacity::new(2)),
+            InputEdge::new(4, 5, ResidualCapacity::new(8)),
         ];
 
         let source = 0;
@@ -331,15 +321,15 @@ use crate::edge::InputEdge;
     #[should_panic]
     fn flow_not_computed() {
         let edges = vec![
-            InputEdge::new(0, 1, EdgeCapacity::new(7)),
-            InputEdge::new(0, 2, EdgeCapacity::new(3)),
-            InputEdge::new(1, 2, EdgeCapacity::new(1)),
-            InputEdge::new(1, 3, EdgeCapacity::new(6)),
-            InputEdge::new(2, 4, EdgeCapacity::new(8)),
-            InputEdge::new(3, 5, EdgeCapacity::new(2)),
-            InputEdge::new(3, 2, EdgeCapacity::new(3)),
-            InputEdge::new(4, 3, EdgeCapacity::new(2)),
-            InputEdge::new(4, 5, EdgeCapacity::new(8)),
+            InputEdge::new(0, 1, ResidualCapacity::new(7)),
+            InputEdge::new(0, 2, ResidualCapacity::new(3)),
+            InputEdge::new(1, 2, ResidualCapacity::new(1)),
+            InputEdge::new(1, 3, ResidualCapacity::new(6)),
+            InputEdge::new(2, 4, ResidualCapacity::new(8)),
+            InputEdge::new(3, 5, ResidualCapacity::new(2)),
+            InputEdge::new(3, 2, ResidualCapacity::new(3)),
+            InputEdge::new(4, 3, ResidualCapacity::new(2)),
+            InputEdge::new(4, 5, ResidualCapacity::new(8)),
         ];
 
         // the expect(.) call is being tested
@@ -352,15 +342,15 @@ use crate::edge::InputEdge;
     #[should_panic]
     fn assignment_not_computed() {
         let edges = vec![
-            InputEdge::new(0, 1, EdgeCapacity::new(7)),
-            InputEdge::new(0, 2, EdgeCapacity::new(3)),
-            InputEdge::new(1, 2, EdgeCapacity::new(1)),
-            InputEdge::new(1, 3, EdgeCapacity::new(6)),
-            InputEdge::new(2, 4, EdgeCapacity::new(8)),
-            InputEdge::new(3, 5, EdgeCapacity::new(2)),
-            InputEdge::new(3, 2, EdgeCapacity::new(3)),
-            InputEdge::new(4, 3, EdgeCapacity::new(2)),
-            InputEdge::new(4, 5, EdgeCapacity::new(8)),
+            InputEdge::new(0, 1, ResidualCapacity::new(7)),
+            InputEdge::new(0, 2, ResidualCapacity::new(3)),
+            InputEdge::new(1, 2, ResidualCapacity::new(1)),
+            InputEdge::new(1, 3, ResidualCapacity::new(6)),
+            InputEdge::new(2, 4, ResidualCapacity::new(8)),
+            InputEdge::new(3, 5, ResidualCapacity::new(2)),
+            InputEdge::new(3, 2, ResidualCapacity::new(3)),
+            InputEdge::new(4, 3, ResidualCapacity::new(2)),
+            InputEdge::new(4, 5, ResidualCapacity::new(8)),
         ];
 
         // the expect(.) call is being tested
