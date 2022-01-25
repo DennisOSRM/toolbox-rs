@@ -83,8 +83,8 @@ impl Tarjan {
                         index += 1;
                         last = w;
                     } else if self.dfs_state[w].on_stack {
-                        let prev_link = self.dfs_state[last].lowlink;
-                        self.dfs_state[last].lowlink = min(prev_link, self.dfs_state[w].index);
+                        self.dfs_state[last].lowlink =
+                            min(self.dfs_state[last].lowlink, self.dfs_state[w].index);
                     }
                 } else {
                     if self.dfs_state[last].lowlink == self.dfs_state[last].index {
