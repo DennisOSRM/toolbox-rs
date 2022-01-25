@@ -1,3 +1,7 @@
+/// computes the strongly-connected components (SCCs) of a di-graph G.
+/// The SCCs are equivalence classes of the the relation that nodes
+/// u and v belong to the same SCC iff there exists a path u->v in G
+/// as well as another path v->u.
 use crate::graph::Graph;
 use crate::graph::NodeID;
 use core::cmp::min;
@@ -172,5 +176,27 @@ mod tests {
 
         let mut tarjan = Tarjan::new();
         assert_eq!(vec![3, 3, 3, 2, 1], tarjan.run(&graph));
+    }
+
+    #[test]
+    fn stanford2() {
+        type Graph = StaticGraph<i32>;
+        let edges = vec![
+            InputEdge::new(0, 6, 3),
+            InputEdge::new(6, 3, 3),
+            InputEdge::new(3, 0, 1),
+            InputEdge::new(6, 8, 6),
+            InputEdge::new(8, 5, 2),
+            InputEdge::new(5, 2, 2),
+            InputEdge::new(2, 8, 2),
+            InputEdge::new(5, 7, 2),
+            InputEdge::new(7, 1, 2),
+            InputEdge::new(4, 7, 2),
+            InputEdge::new(1, 4, 2),
+        ];
+        let graph = Graph::new(edges);
+
+        let mut tarjan = Tarjan::new();
+        assert_eq!(vec![3, 1, 2, 3, 1, 2, 3, 1, 2], tarjan.run(&graph));
     }
 }
