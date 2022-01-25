@@ -7,7 +7,8 @@ struct NodeInfo {
     index: usize,
     lowlink: NodeID,
     caller: NodeID,
-    vindex: usize,
+    neighbor: usize,
+    on_stack: bool,
 }
 
 impl NodeInfo {
@@ -16,96 +17,96 @@ impl NodeInfo {
             index: usize::MAX,
             lowlink: NodeID::MAX,
             caller: NodeID::MAX,
-            vindex: usize::MAX,
+            neighbor: usize::MAX,
+            on_stack: false,
         }
-    }
-
-    fn update_lowlink(&mut self, update: NodeID) {
-        self.lowlink = min(self.lowlink, update);
     }
 }
 
 pub struct Tarjan {
-    index: usize,
-    tarjanStack: Vec<NodeID>,
-    onStack: Vec<bool>,
-    nodes: Vec<NodeInfo>,
+    tarjan_stack: Vec<NodeID>,
+    dfs_state: Vec<NodeInfo>,
+}
+
+impl Default for Tarjan {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Tarjan {
     pub fn new() -> Self {
         Self {
-            index: 0,
-            tarjanStack: Vec::new(),
-            onStack: Vec::new(),
-            nodes: Vec::new(),
+            tarjan_stack: Vec::new(),
+            dfs_state: Vec::new(),
         }
     }
 
-    fn run<T>(&mut self, graph: &(impl Graph<T> + 'static)) -> Vec<usize> {
+    pub fn run<T>(&mut self, graph: &(impl Graph<T> + 'static)) -> Vec<usize> {
         let mut assignment = Vec::new();
         let mut index = 0;
         let mut num_scc = 0;
         assignment.resize(graph.number_of_nodes(), usize::MAX);
-        self.nodes.resize(graph.number_of_nodes(), NodeInfo::new());
-        self.onStack.resize(graph.number_of_nodes(), false);
+        self.dfs_state
+            .resize(graph.number_of_nodes(), NodeInfo::new());
         for n in 0..graph.number_of_nodes() {
-            if self.nodes[n].index != usize::MAX {
+            if self.dfs_state[n].index != usize::MAX {
                 continue;
             }
-            // TODO(dluxen): consider moving to a function
-            self.nodes[n].index = index;
-            self.nodes[n].lowlink = index;
+            // TODO: consider moving to a function
+            self.dfs_state[n].index = index;
+            self.dfs_state[n].lowlink = index;
             index += 1;
-            self.nodes[n].vindex = 0;
-            self.tarjanStack.push(n);
-            self.nodes[n].caller = usize::MAX;
-            self.onStack[n] = true;
+            self.dfs_state[n].neighbor = 0;
+            self.tarjan_stack.push(n);
+            self.dfs_state[n].caller = usize::MAX;
+            self.dfs_state[n].on_stack = true;
 
             let mut last = n;
             loop {
-                if self.nodes[last].vindex < graph.out_degree(last) {
+                if self.dfs_state[last].neighbor < graph.out_degree(last) {
                     let e = graph
                         .edge_range(last)
-                        .skip(self.nodes[last].vindex)
-                        .next()
+                        .nth(self.dfs_state[last].neighbor)
                         .expect("edge range exhausted");
                     let w = graph.target(e);
-                    // println!("explore ({n},{w})");
-                    self.nodes[last].vindex += 1;
-                    if self.nodes[w].index == usize::MAX {
-                        self.nodes[w].caller = last;
-                        self.nodes[w].vindex = 0;
-                        self.nodes[w].index = index;
-                        self.nodes[w].lowlink = index;
+                    self.dfs_state[last].neighbor += 1;
+                    if self.dfs_state[w].index == usize::MAX {
+                        self.dfs_state[w].caller = last;
+                        self.dfs_state[w].neighbor = 0;
+                        self.dfs_state[w].index = index;
+                        self.dfs_state[w].lowlink = index;
                         index += 1;
-                        self.tarjanStack.push(w);
-                        self.onStack[w] = true;
+                        self.tarjan_stack.push(w);
+                        self.dfs_state[w].on_stack = true;
                         last = w;
-                    } else if self.onStack[w] {
-                        let prev_link = self.nodes[last].lowlink;
-                        self.nodes[last].lowlink = min(prev_link, self.nodes[w].index);
+                    } else if self.dfs_state[w].on_stack {
+                        let prev_link = self.dfs_state[last].lowlink;
+                        self.dfs_state[last].lowlink = min(prev_link, self.dfs_state[w].index);
                     }
                 } else {
-                    if self.nodes[last].lowlink == self.nodes[last].index {
+                    if self.dfs_state[last].lowlink == self.dfs_state[last].index {
                         num_scc += 1;
-                        let mut top = self.tarjanStack.pop().expect("tarjanStack empty");
-                        self.onStack[top] = false;
+                        let mut top = self.tarjan_stack.pop().expect("tarjan_stack empty");
+                        self.dfs_state[top].on_stack = false;
                         let mut size = 1;
                         assignment[top] = num_scc;
                         while top != last {
-                            top = self.tarjanStack.pop().expect("tarjanStack empty");
-                            self.onStack[top] = false;
+                            top = self.tarjan_stack.pop().expect("tarjan_stack empty");
+                            self.dfs_state[top].on_stack = false;
                             size += 1;
                             assignment[top] = num_scc;
                         }
+                        // TODO: add handler for small/large SCCs
                         println!("detected SCC of size {size}");
                     }
 
-                    let new_last = self.nodes[last].caller;
+                    let new_last = self.dfs_state[last].caller;
                     if new_last != usize::MAX {
-                        self.nodes[new_last].lowlink =
-                            min(self.nodes[new_last].lowlink, self.nodes[last].lowlink);
+                        self.dfs_state[new_last].lowlink = min(
+                            self.dfs_state[new_last].lowlink,
+                            self.dfs_state[last].lowlink,
+                        );
                         last = new_last;
                     } else {
                         break;
@@ -122,6 +123,7 @@ mod tests {
     use crate::edge::InputEdge;
     use crate::static_graph::StaticGraph;
     use crate::tarjan::Tarjan;
+
     #[test]
     fn scc_wiki1() {
         type Graph = StaticGraph<i32>;
