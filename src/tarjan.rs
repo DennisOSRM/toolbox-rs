@@ -1,9 +1,4 @@
-/// computes the strongly-connected components (SCCs) of a di-graph G.
-/// The SCCs are equivalence classes of the the relation that nodes
-/// u and v belong to the same SCC iff there exists a path u->v in G
-/// as well as another path v->u.
-use crate::graph::Graph;
-use crate::graph::NodeID;
+use crate::graph::{Graph, NodeID};
 use core::cmp::min;
 
 #[derive(Clone)]

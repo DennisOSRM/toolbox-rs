@@ -1,8 +1,8 @@
-use crate::edge::Edge;
-use crate::graph::EdgeArrayEntry;
-use std::{cmp::max, ops::Range};
-
-use crate::graph::{EdgeID, Graph, NodeID};
+use crate::{
+    edge::Edge,
+    graph::{EdgeArrayEntry, EdgeID, Graph, NodeID},
+};
+use core::{cmp::max, ops::Range};
 
 pub struct NodeArrayEntry {
     pub first_edge: EdgeID,

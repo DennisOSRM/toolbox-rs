@@ -1,8 +1,6 @@
-use bitvec::vec::BitVec;
-use std::collections::VecDeque;
-use std::time::Instant;
-
 use crate::graph::{EdgeID, Graph, NodeID, INVALID_NODE_ID};
+use bitvec::vec::BitVec;
+use std::{collections::VecDeque, time::Instant};
 
 pub struct BFS {
     sources: Vec<NodeID>,

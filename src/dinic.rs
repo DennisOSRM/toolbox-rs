@@ -6,16 +6,15 @@
 //!
 //! The DFS restarts after it found an augmenting path on the tail of the
 //! saturated edge that is closest to the source.
-use crate::edge::Edge;
-use crate::edge::InputEdge;
-use crate::graph::{Graph, NodeID};
-use crate::max_flow::MaxFlow;
-use crate::max_flow::ResidualCapacity;
-use crate::static_graph::StaticGraph;
+use crate::{
+    edge::{Edge, InputEdge},
+    graph::{Graph, NodeID},
+    max_flow::{MaxFlow, ResidualCapacity},
+    static_graph::StaticGraph,
+};
 use bitvec::vec::BitVec;
 use core::cmp::min;
-use std::collections::VecDeque;
-use std::time::Instant;
+use std::{collections::VecDeque, time::Instant};
 
 pub struct Dinic {
     residual_graph: StaticGraph<ResidualCapacity>,

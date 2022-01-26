@@ -1,10 +1,10 @@
-use crate::dfs::DFS;
-use crate::edge::Edge;
-use crate::edge::InputEdge;
-use crate::graph::{Graph, NodeID};
-use crate::max_flow::MaxFlow;
-use crate::max_flow::ResidualCapacity;
-use crate::static_graph::StaticGraph;
+use crate::{
+    dfs::DFS,
+    edge::{Edge, InputEdge},
+    graph::{Graph, NodeID},
+    max_flow::{MaxFlow, ResidualCapacity},
+    static_graph::StaticGraph,
+};
 use bitvec::vec::BitVec;
 use itertools::Itertools;
 use std::time::Instant;

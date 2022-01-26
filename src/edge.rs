@@ -1,5 +1,5 @@
 use crate::graph::NodeID;
-use std::mem::swap;
+use core::mem::swap;
 
 pub trait Edge {
     type ID;
