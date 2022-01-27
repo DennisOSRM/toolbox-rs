@@ -3,9 +3,9 @@ use core::cmp::min;
 
 #[derive(Clone)]
 struct DFSNode {
+    caller: NodeID,
     index: usize,
     lowlink: NodeID,
-    caller: NodeID,
     neighbor: usize,
     on_stack: bool,
 }
@@ -13,9 +13,9 @@ struct DFSNode {
 impl DFSNode {
     pub fn new() -> Self {
         DFSNode {
+            caller: NodeID::MAX,
             index: usize::MAX,
             lowlink: NodeID::MAX,
-            caller: NodeID::MAX,
             neighbor: usize::MAX,
             on_stack: false,
         }
@@ -24,8 +24,8 @@ impl DFSNode {
 
 // TODO: consider making this a function
 pub struct Tarjan {
-    tarjan_stack: Vec<NodeID>,
     dfs_state: Vec<DFSNode>,
+    tarjan_stack: Vec<NodeID>,
 }
 
 impl Default for Tarjan {
@@ -37,8 +37,8 @@ impl Default for Tarjan {
 impl Tarjan {
     pub fn new() -> Self {
         Self {
-            tarjan_stack: Vec::new(),
             dfs_state: Vec::new(),
+            tarjan_stack: Vec::new(),
         }
     }
 
