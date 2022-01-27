@@ -49,7 +49,6 @@ impl Tarjan {
         let mut index = 0;
         let mut num_scc = 0;
 
-        // TODO: does this need to be a struct member?
         self.dfs_state
             .resize(graph.number_of_nodes(), DFSNode::new());
 
@@ -60,7 +59,6 @@ impl Tarjan {
             }
             // TODO: consider moving the following to a function to save indentation
 
-            // TODO: could setting the state be done in a cleaner way?
             self.stack_push(n, usize::MAX, index);
             index += 1;
             let mut last = n;
@@ -94,7 +92,7 @@ impl Tarjan {
                                 break;
                             }
                         }
-                        // TODO: add handler for small/large SCCs
+                        // TODO: call handler for small/large SCCs
                         println!("detected SCC of size {size}");
                     }
 
