@@ -23,7 +23,6 @@ impl DFSNode {
 }
 
 // TODO: consider making this a function
-// TODO: consider adding handlers for small/large SCCs
 pub struct Tarjan {
     tarjan_stack: Vec<NodeID>,
     dfs_state: Vec<DFSNode>,
@@ -43,6 +42,7 @@ impl Tarjan {
         }
     }
 
+    // TODO: consider adding handlers for small/large SCCs
     pub fn run<T>(&mut self, graph: &(impl Graph<T> + 'static)) -> Vec<usize> {
         let mut assignment = Vec::new();
         assignment.resize(graph.number_of_nodes(), usize::MAX);
@@ -61,12 +61,7 @@ impl Tarjan {
             // TODO: consider moving the following to a function to save indentation
 
             // TODO: could setting the state be done in a cleaner way?
-            self.dfs_state[n].caller = usize::MAX; // marker denoting the end of recursion
-            self.dfs_state[n].neighbor = 0;
-            self.dfs_state[n].index = index;
-            self.dfs_state[n].lowlink = index;
-            self.dfs_state[n].on_stack = true;
-            self.tarjan_stack.push(n);
+            self.stack_push(n, usize::MAX, index);
             index += 1;
             let mut last = n;
 
@@ -79,12 +74,7 @@ impl Tarjan {
                     let w = graph.target(e);
                     self.dfs_state[last].neighbor += 1;
                     if self.dfs_state[w].index == usize::MAX {
-                        self.dfs_state[w].caller = last;
-                        self.dfs_state[w].neighbor = 0;
-                        self.dfs_state[w].index = index;
-                        self.dfs_state[w].lowlink = index;
-                        self.dfs_state[w].on_stack = true;
-                        self.tarjan_stack.push(w);
+                        self.stack_push(w, last, index);
                         index += 1;
                         last = w;
                     } else if self.dfs_state[w].on_stack {
@@ -123,6 +113,15 @@ impl Tarjan {
             }
         }
         assignment
+    }
+
+    fn stack_push(&mut self, w: usize, caller: usize, index: usize) {
+        self.dfs_state[w].caller = caller;
+        self.dfs_state[w].neighbor = 0;
+        self.dfs_state[w].index = index;
+        self.dfs_state[w].lowlink = index;
+        self.dfs_state[w].on_stack = true;
+        self.tarjan_stack.push(w);
     }
 }
 
