@@ -1,4 +1,4 @@
-use std::ops::Range;
+use core::ops::Range;
 
 pub type NodeID = usize;
 pub type EdgeID = usize;

@@ -1,7 +1,6 @@
 use core::hash::Hash;
-use std::{collections::HashMap, fmt::Debug, usize};
-
 use num::{Bounded, Integer};
+use std::{collections::HashMap, fmt::Debug, usize};
 
 struct HeapNode<NodeID: Copy + Integer, Weight: Bounded + Copy + Integer + Debug, Data> {
     node: NodeID,

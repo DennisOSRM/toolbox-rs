@@ -3,11 +3,11 @@ name = "toolbox"
 version = "0.1.0"
 edition = "2021"
 
-[[example]]
-name = "instantiate"
+# [[example]]
+# name = "instantiate"
 
-[[example]]
-name = "web_server"
+# [[example]]
+# name = "web_server"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

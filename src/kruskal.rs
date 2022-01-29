@@ -1,6 +1,5 @@
 use crate::{edge::SimpleEdge, union_find::UnionFind};
-use core::cmp::max;
-use std::cmp::Reverse;
+use core::cmp::{max, Reverse};
 use std::collections::BinaryHeap;
 
 pub fn kruskal(input_edges: &[SimpleEdge]) -> (u32, Vec<SimpleEdge>) {
