@@ -30,6 +30,7 @@ pub struct PushRelabel {
     excess_nodes: Vec<NodeID>,
     source: NodeID,
     target: NodeID,
+    on_stack: Vec<bool>,
 }
 
 impl PushRelabel {
@@ -41,10 +42,10 @@ impl PushRelabel {
         let mut fwd_edge_data = self.residual_graph.data_mut(fwd_edge);
         let d = min(self.excess[u], fwd_edge_data.remaining_capacity());
         fwd_edge_data.flow += d;
-        println!(
-            "  pushing flow({},{})={} - fwd_edge_data.flow={}",
-            u, v, d, fwd_edge_data.flow
-        );
+        // println!(
+        //     "  pushing flow({},{})={} - fwd_edge_data.flow={}",
+        //     u, v, d, fwd_edge_data.flow
+        // );
 
         let rev_edge = self
             .residual_graph
@@ -52,16 +53,16 @@ impl PushRelabel {
             .expect("Graph broken, could not find expected rev_edge");
         let mut rev_edge_data = self.residual_graph.data_mut(rev_edge);
         rev_edge_data.flow -= d;
-        println!(
-            "  pushing flow({},{})={} - rev_edge_data.flow={}",
-            v, u, d, rev_edge_data.flow
-        );
+        // println!(
+        //     "  pushing flow({},{})={} - rev_edge_data.flow={}",
+        //     v, u, d, rev_edge_data.flow
+        // );
 
         self.excess[u] -= d;
-        println!("  self.excess[{}]={}", u, self.excess[u]);
+        // println!("  self.excess[{}]={}", u, self.excess[u]);
         debug_assert!(self.excess[u] >= 0);
         self.excess[v] += d;
-        println!("  self.excess[{}]={}", v, self.excess[v]);
+        // println!("  self.excess[{}]={}", v, self.excess[v]);
         debug_assert!(self.excess[v] >= 0);
 
         // if d >= 0 && self.excess[v] == d {
@@ -69,12 +70,15 @@ impl PushRelabel {
         //     self.excess_nodes.push(v);
         // }
         // IF w ≠ s,t AND w ∉ Q THEN Q.add(w)
-        if v != self.source && self.target != v && !self.excess_nodes.contains(&v) {
+        if v != self.source && self.target != v && !self.on_stack[v] {
             self.excess_nodes.push(v);
+            self.on_stack[v] = true;
         }
     }
 
     fn relabel(&mut self, v: NodeID) {
+        assert_ne!(v, self.source);
+        assert_ne!(v, self.target);
         let mut d = i32::MAX;
         for edge in self.residual_graph.edge_range(v) {
             let edge_data = self.residual_graph.data_mut(edge);
@@ -83,41 +87,42 @@ impl PushRelabel {
                 d = min(d, self.height[t]);
             }
         }
+        assert!((d as usize) < (self.residual_graph.number_of_nodes() * 2) - 1);
 
         if d < i32::MAX {
-            println!("  relabel height[{}]={}", v, d + 1);
+            // println!("  relabel height[{}]={}", v, d + 1);
             self.height[v] = d + 1;
-            println!("  pushing {} to queue", v);
+            // println!("  pushing {} to queue", v);
             self.excess_nodes.push(v);
         }
     }
 
     fn discharge(&mut self, u: NodeID) {
-        println!("popped {} from queue", u);
+        // println!("popped {} from queue", u);
         for edge in self.residual_graph.edge_range(u) {
             if self.excess[u] <= 0 {
-                println!("node {} doesn't have excess flow anymore", u);
+                // println!("node {} doesn't have excess flow anymore", u);
                 break;
             }
             let v = self.residual_graph.target(edge);
             let edge_data = self.residual_graph.data(edge);
 
             if edge_data.remaining_capacity() > 0 && self.height[u] == self.height[v] + 1 {
-                println!("pushing edge ({},{})", u, v);
+                // println!("pushing edge ({},{})", u, v);
                 self.push(u, v);
-            } else {
-                println!(
-                    "ignoring edge ({},{}), height[u]={}, height[v]={}, capacity={}",
-                    u,
-                    v,
-                    self.height[u],
-                    self.height[v],
-                    edge_data.remaining_capacity()
-                );
+            // } else {
+            //     println!(
+            //         "ignoring edge ({},{}), height[u]={}, height[v]={}, capacity={}",
+            //         u,
+            //         v,
+            //         self.height[u],
+            //         self.height[v],
+            //         edge_data.remaining_capacity()
+            //     );
             }
         }
         if self.excess[u] > 0 {
-            println!("relabel {}", u);
+            // println!("relabel {}", u);
             self.relabel(u);
         }
     }
@@ -184,6 +189,7 @@ impl PushRelabel {
             excess_nodes: Vec::new(),
             source,
             target,
+            on_stack: Vec::new(),
         }
     }
 
@@ -193,20 +199,19 @@ impl PushRelabel {
         // init
         self.height = vec![0; number_of_nodes];
         self.excess = vec![0; number_of_nodes];
+        self.on_stack= vec![false; number_of_nodes];
 
         self.height[self.source] = number_of_nodes as i32;
-        println!("source height[{}]={}", self.source, number_of_nodes);
         self.excess[self.source] = i32::MAX;
 
         for edge in self.residual_graph.edge_range(self.source) {
             let t = self.residual_graph.target(edge);
-            println!("pushing edge ({},{})", self.source, t);
             self.push(self.source, t);
         }
-
-        println!("<== init done ==>");
+        self.excess[self.source] = 0;
 
         while let Some(u) = self.excess_nodes.pop() {
+            self.on_stack[u] = false;
             if u != self.source && u != self.target {
                 self.discharge(u);
             }
@@ -242,7 +247,7 @@ impl PushRelabel {
         // run a reachability analysis
         let mut reachable = BitVec::with_capacity(self.residual_graph.number_of_nodes());
         reachable.resize(self.residual_graph.number_of_nodes(), false);
-        let mut stack = vec![source];//Vec<usize> = sources.iter().copied().collect();
+        let mut stack = vec![source]; //Vec<usize> = sources.iter().copied().collect();
         while let Some(node) = stack.pop() {
             // TODO: looks like this following is superflous work?
             if *reachable.get(node as usize).unwrap() {
@@ -254,7 +259,7 @@ impl PushRelabel {
                 let target = self.residual_graph.target(edge);
                 let reached = reachable.get(target as usize).unwrap();
                 if !reached && self.residual_graph.data(edge).remaining_capacity() > 0 {
-                    stack.push(self.residual_graph.target(edge));
+                    stack.push(target);
                 }
             }
         }
