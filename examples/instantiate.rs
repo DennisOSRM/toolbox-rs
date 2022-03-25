@@ -1,4 +1,4 @@
-use toolbox::{edge::InputEdge, graph::Graph, static_graph::StaticGraph};
+use toolbox_rs::{edge::InputEdge, graph::Graph, static_graph::StaticGraph};
 fn main() {
     type Graph = StaticGraph<i32>;
     let edges = vec![
