@@ -1,5 +1,5 @@
 use rand::{distributions::Standard, Rng};
-use toolbox_rs::rdx_sort::rdx_sort::RadixSort;
+use toolbox_rs::rdx_sort::radix::Sort;
 
 fn main() {
     let rng = rand::thread_rng();
