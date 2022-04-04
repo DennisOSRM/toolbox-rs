@@ -12,7 +12,7 @@ env:
 jobs:
   build:
 
-    runs-on: [self-hosted, linux]
+    runs-on: [self-hosted, linux, X64, ARM64]
 
     steps:
     - uses: actions/checkout@v2
