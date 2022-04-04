@@ -11,8 +11,11 @@ env:
 
 jobs:
   build:
+    strategy:
+      matrix:
+        arch: [X64, ARM64]
 
-    runs-on: [self-hosted, linux, X64, ARM64]
+    runs-on: [self-hosted, linux]
 
     steps:
     - uses: actions/checkout@v2
