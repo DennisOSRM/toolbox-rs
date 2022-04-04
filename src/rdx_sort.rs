@@ -1,4 +1,4 @@
-pub mod rdx_sort {
+pub mod radix {
     use core::mem;
 
     pub trait RadixType: Clone + Copy + Default {
@@ -89,11 +89,11 @@ pub mod rdx_sort {
             (self.to_bits() >> (round << 3)) as u8
         }
     }
-    pub trait RadixSort {
+    pub trait Sort {
         fn rdx_sort(&mut self);
     }
 
-    impl<T: 'static + RadixType> RadixSort for Vec<T> {
+    impl<T: 'static + RadixType> Sort for Vec<T> {
         fn rdx_sort(&mut self) {
             // TODO(dl): Add an explanation of how radix sort works
             let mut output = vec![T::default(); self.len()];
@@ -199,7 +199,7 @@ pub mod rdx_sort {
 mod tests {
     use rand::Rng;
 
-    use super::rdx_sort::RadixSort;
+    use super::radix::Sort;
 
     #[test]
     fn tenknumbers() {
