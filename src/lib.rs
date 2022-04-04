@@ -10,6 +10,7 @@ pub mod ford_fulkerson;
 pub mod graph;
 pub mod kruskal;
 pub mod max_flow;
+pub mod projection;
 pub mod rdx_sort;
 pub mod static_graph;
 pub mod tarjan;
