@@ -7,6 +7,7 @@ pub mod dinic;
 pub mod edge;
 pub mod edmonds_karp;
 pub mod ford_fulkerson;
+pub mod geometry;
 pub mod graph;
 pub mod kruskal;
 pub mod max_flow;
