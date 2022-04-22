@@ -1,5 +1,5 @@
 # Based on https://github.com/starkat99/appveyor-rust
-os: Visual Studio 2015
+os: Visual Studio 2022
 environment:
   matrix:
     - channel: stable
