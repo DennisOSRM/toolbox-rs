@@ -1,8 +1,8 @@
 // next-first heuristic for bin packing
 // runs in O(N) and yields a 2-approximation
-pub fn bin_pack(items: &[u32], capacity: u32) -> u32 {
+pub fn bin_pack(items: &[u32], _capacity: u32) -> u32 {
     let mut res = 0;
-    let mut remaining_capacity = capacity;
+    let mut remaining_capacity = _capacity;
 
     // TODO: return assignment
 
@@ -10,7 +10,7 @@ pub fn bin_pack(items: &[u32], capacity: u32) -> u32 {
         // If this item can't fit in current bin
         if *item > remaining_capacity {
             res += 1;
-            remaining_capacity = capacity - item;
+            remaining_capacity = _capacity - item;
         } else {
             remaining_capacity -= item;
         }
