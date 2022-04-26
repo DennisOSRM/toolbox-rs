@@ -1,5 +1,5 @@
 pub mod distance {
-    use crate::wgs84::wgs84::EARTH_RADIUS_KM;
+    use crate::wgs84::EARTH_RADIUS_KM;
 
     pub fn haversine(
         latitude1: f64,
@@ -64,7 +64,7 @@ mod tests {
     pub fn haversine_sf_nyc() {
         assert_eq!((haversine(-122.416389, 37.7775, -74.006111, 40.712778) * 1000.) as u32, 5387354)
     }
-    
+
     #[test]
     pub fn vincenty_sf_nyc() {
         assert_eq!((vincenty(-122.416389, 37.7775, -74.006111, 40.712778) * 1000.) as u32, 5387354)

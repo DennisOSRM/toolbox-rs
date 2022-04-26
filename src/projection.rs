@@ -1,5 +1,5 @@
 pub mod mercator {
-    use crate::wgs84::wgs84::EARTH_RADIUS_KM;
+    use crate::wgs84::EARTH_RADIUS_KM;
 
     pub fn lon2x(lon: f64) -> f64 {
         EARTH_RADIUS_KM * 1000. * lon.to_radians()
