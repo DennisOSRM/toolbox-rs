@@ -1,6 +1,5 @@
 pub mod mercator {
-    // length of semi-major axis of the WGS84 ellipsoid, i.e. radius at equator
-    const EARTH_RADIUS_KM: f64 = 6_378.137;
+    use crate::wgs84::EARTH_RADIUS_KM;
 
     pub fn lon2x(lon: f64) -> f64 {
         EARTH_RADIUS_KM * 1000. * lon.to_radians()
