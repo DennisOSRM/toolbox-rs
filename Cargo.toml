@@ -1,12 +1,12 @@
 [package]
 description = "A toolbox of basic data structures and algorithms"
 edition = "2021"
-homepage = "https://github.com/DennisOSRM/toolbox"
+homepage = "https://github.com/DennisOSRM/toolbox-rs"
 license = "MIT"
 name = "toolbox-rs"
 readme = "README.md"
-repository = "https://github.com/DennisOSRM/toolbox"
-version = "0.1.1"
+repository = "https://github.com/DennisOSRM/toolbox-rs"
+version = "0.1.2"
 
 [[example]]
 name = "instantiate"
