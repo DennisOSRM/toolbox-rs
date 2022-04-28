@@ -22,5 +22,5 @@ rand = "0.8.4"
 debug = true
 
 [[bench]]
-name = "distance"
+name = "bench_main"
 harness = false
