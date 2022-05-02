@@ -2,7 +2,6 @@ use std::ops::Index;
 
 pub struct Coefficients([(i32, i32); 4]);
 // coefficients for rotation matrix at 0, 90, 180 and 270 degrees
-// defined by sin(angle), cosine is shifted by 90 degrees ie one offset
 
 impl Default for Coefficients {
     fn default() -> Self {
