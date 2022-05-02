@@ -1,3 +1,5 @@
+use std::sync::{atomic::AtomicI32, Arc};
+
 use crate::graph::NodeID;
 use bitvec::vec::BitVec;
 
@@ -14,6 +16,7 @@ impl ResidualCapacity {
 
 pub trait MaxFlow {
     fn run(&mut self);
+    fn run_with_upper_bound(&mut self, bound: Arc<AtomicI32>);
     fn max_flow(&self) -> Result<i32, String>;
     fn assignment(&self, source: NodeID) -> Result<BitVec, String>;
 }

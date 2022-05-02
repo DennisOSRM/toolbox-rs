@@ -7,6 +7,9 @@ use crate::{
 };
 use bitvec::vec::BitVec;
 use itertools::Itertools;
+use log::warn;
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 pub struct FordFulkerson {
@@ -15,6 +18,7 @@ pub struct FordFulkerson {
     finished: bool,
     source: NodeID,
     target: NodeID,
+    bound: Option<Arc<AtomicI32>>,
 }
 
 impl FordFulkerson {
@@ -79,11 +83,18 @@ impl FordFulkerson {
             finished: false,
             source,
             target,
+            bound: None,
         }
     }
 }
 
 impl MaxFlow for FordFulkerson {
+    fn run_with_upper_bound(&mut self, bound: Arc<AtomicI32>) {
+        warn!("Upper bound {} is discarded", bound.load(Ordering::Relaxed));
+        self.bound = Some(bound);
+        self.run()
+    }
+
     fn run(&mut self) {
         let mut bfs = BFS::new(
             &[self.source],

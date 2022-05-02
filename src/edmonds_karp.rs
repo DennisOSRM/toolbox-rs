@@ -7,7 +7,14 @@ use crate::{
 };
 use bitvec::vec::BitVec;
 use itertools::Itertools;
-use std::time::Instant;
+use log::warn;
+use std::{
+    sync::{
+        atomic::{AtomicI32, Ordering},
+        Arc,
+    },
+    time::Instant,
+};
 
 pub struct EdmondsKarp {
     residual_graph: StaticGraph<ResidualCapacity>,
@@ -15,6 +22,7 @@ pub struct EdmondsKarp {
     finished: bool,
     source: NodeID,
     target: NodeID,
+    bound: Option<Arc<AtomicI32>>,
 }
 
 impl EdmondsKarp {
@@ -79,11 +87,18 @@ impl EdmondsKarp {
             finished: false,
             source,
             target,
+            bound: None,
         }
     }
 }
 
 impl MaxFlow for EdmondsKarp {
+    fn run_with_upper_bound(&mut self, bound: Arc<AtomicI32>) {
+        warn!("Upper bound {} is discarded", bound.load(Ordering::Relaxed));
+        self.bound = Some(bound);
+        self.run()
+    }
+
     fn run(&mut self) {
         let mut dfs = DFS::new(
             &[self.source],
