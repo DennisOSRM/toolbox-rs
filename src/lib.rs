@@ -10,6 +10,7 @@ pub mod ford_fulkerson;
 pub mod geometry;
 pub mod graph;
 pub mod great_circle;
+pub mod inertial_flow;
 pub mod kruskal;
 pub mod max_flow;
 pub mod projection;
