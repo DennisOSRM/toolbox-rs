@@ -1,4 +1,17 @@
 pub mod primitives {
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct FPCoordinate {
+        pub lat: i32,
+        pub lon: i32,
+    }
+
+    impl FPCoordinate {
+        pub fn new(lat: i32, lon: i32) -> Self {
+            Self { lat, lon }
+        }
+    }
+
     #[derive(Clone, Copy, Debug, PartialEq)]
     pub struct Point {
         pub x: f64,
