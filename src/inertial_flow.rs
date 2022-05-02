@@ -27,7 +27,7 @@ mod tests {
     use super::Coefficients;
 
     #[test]
-    fn iterate_withwrap() {
+    fn iterate_with_wrap() {
         let coefficients = Coefficients::new();
 
         (0..4).zip(4..8).for_each(|index| {
