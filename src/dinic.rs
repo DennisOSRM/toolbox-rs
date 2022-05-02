@@ -13,6 +13,7 @@ use crate::{
     static_graph::StaticGraph,
 };
 use bitvec::vec::BitVec;
+use log::{debug, info};
 use core::cmp::min;
 use std::{collections::VecDeque, time::Instant};
 
@@ -46,7 +47,7 @@ impl Dinic {
             })
             .collect();
 
-        println!("created {} ff edges", edge_list.len());
+        debug!("created {} ff edges", edge_list.len());
         Dinic::from_edge_list(edge_list, source, target)
     }
 
@@ -57,14 +58,14 @@ impl Dinic {
     ) -> Self {
         let number_of_edges = edge_list.len();
 
-        println!("extending {} edges", edge_list.len());
+        debug!("extending {} edges", edge_list.len());
         // blindly generate reverse edges for all edges with zero capacity
         edge_list.extend_from_within(..);
         edge_list.iter_mut().skip(number_of_edges).for_each(|edge| {
             edge.reverse();
             edge.data.capacity = 0;
         });
-        println!("into {} edges", edge_list.len());
+        debug!("into {} edges", edge_list.len());
 
         // dedup-merge edge set, by using the following trick: not the dedup(.) call
         // below takes the second argument as mut. When deduping equivalent values
@@ -112,7 +113,7 @@ impl Dinic {
         self.level[self.target] = 0;
 
         let duration = start.elapsed();
-        println!("BFS init: {:?}", duration);
+        debug!("BFS init: {:?}", duration);
 
         // label residual graph nodes in BFS order, but in reverse starting from the target
         while let Some(u) = self.queue.pop_front() {
@@ -137,7 +138,7 @@ impl Dinic {
             }
         }
         let duration = start.elapsed();
-        println!(
+        debug!(
             "BFS took: {:?}, upper bound on path length: {}",
             duration, self.level[self.source]
         );
@@ -154,7 +155,7 @@ impl Dinic {
         self.parents[self.source] = self.source;
 
         let duration = start.elapsed();
-        println!(" DFS init2: {:?}", duration);
+        debug!(" DFS init2: {:?}", duration);
         let mut blocking_flow = 0;
         while let Some((u, flow)) = self.stack.pop() {
             for edge in self.residual_graph.edge_range(u) {
@@ -176,7 +177,7 @@ impl Dinic {
                 let flow = min(flow, available_capacity);
                 if v == self.target {
                     let duration = start.elapsed();
-                    println!(" reached target {}: {:?}", v, duration);
+                    debug!(" reached target {}: {:?}", v, duration);
                     // reached a target. Unpack path in reverse order, assign flow
                     let mut v = v; // mutable shadow
                     let mut closest_tail = u;
@@ -195,7 +196,7 @@ impl Dinic {
                         v = u;
                     }
                     let duration = start.elapsed();
-                    println!(" augmentation took: {:?}", duration);
+                    debug!(" augmentation took: {:?}", duration);
 
                     // unwind stack till tail node, then continue the search
                     let before = self.stack.len();
@@ -205,7 +206,7 @@ impl Dinic {
                         }
                     }
                     blocking_flow += flow;
-                    println!(" stack len before: {before}, after: {}", self.stack.len());
+                    debug!(" stack len before: {before}, after: {}", self.stack.len());
 
                     // make target reachable again
                     self.parents[self.target] = NodeID::MAX;
@@ -219,7 +220,7 @@ impl Dinic {
         }
 
         let duration = start.elapsed();
-        println!("DFS took: {:?} (unsuccessful)", duration);
+        debug!("DFS took: {:?} (unsuccessful)", duration);
         // None
         blocking_flow
     }
@@ -227,8 +228,8 @@ impl Dinic {
 
 impl MaxFlow for Dinic {
     fn run(&mut self) {
-        println!(
-            "V {}, E {}",
+        debug!(
+            "residual graph size: V {}, E {}",
             self.residual_graph.number_of_nodes(),
             self.residual_graph.number_of_edges()
         );
@@ -249,7 +250,7 @@ impl MaxFlow for Dinic {
         if !self.finished {
             return Err("Assigment was not computed.".to_string());
         }
-        println!("DFS: {}, BFS: {}", self.dfs_count, self.bfs_count);
+        info!("finished in {} DFS, and {} BFS runs", self.dfs_count, self.bfs_count);
         Ok(self.max_flow)
     }
 

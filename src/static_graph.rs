@@ -65,7 +65,6 @@ impl<T: Ord + Copy> StaticGraph<T> {
                 data: *edge.data(),
             })
             .collect();
-        println!("edge_array.len: {}", graph.edge_array.len());
         debug_assert!(graph.check_integrity());
         graph
     }
