@@ -19,13 +19,34 @@ pub struct StaticGraph<T: Ord> {
 }
 
 impl<T: Ord + Copy> StaticGraph<T> {
+    // In time O(V+E) check that the following invariants hold:
+    // a) the target node of each edge is smaller than the number of nodes
+    // b) index values for nodes first_edges are strictly increasing
+    pub fn check_integrity(&self) -> bool {
+        self.edge_array
+            .iter()
+            .all(|edge_entry| (edge_entry.target) < self.number_of_nodes())
+            && self
+                .node_array
+                .windows(2)
+                .all(|pair| pair[0].first_edge <= pair[1].first_edge)
+    }
     pub fn default() -> Self {
         Self {
             node_array: Vec::new(),
             edge_array: Vec::new(),
         }
     }
+
     pub fn new(mut input: Vec<impl Edge<ID = NodeID, DATA = T> + Ord>) -> Self {
+        // sort input edges by source/target/data
+        // TODO(dl): sorting by source suffices to construct adjacency array
+        input.sort();
+
+        Self::new_from_sorted_list(input)
+    }
+
+    pub fn new_from_sorted_list(input: Vec<impl Edge<ID = NodeID, DATA = T> + Ord>) -> Self {
         // TODO: renumber IDs if necessary
         let number_of_edges = input.len();
         let mut number_of_nodes = 0;
@@ -38,10 +59,6 @@ impl<T: Ord + Copy> StaticGraph<T> {
         // +1 as we are going to add one sentinel node at the end
         graph.node_array.reserve(number_of_nodes + 1);
         graph.edge_array.reserve(number_of_edges);
-
-        // sort input edges by source/target/data
-        // TODO(dl): sorting by source suffices to construct adjacency array
-        input.sort();
 
         // add first entry manually, rest will be computed
         graph.node_array.push(NodeArrayEntry::new(0));
@@ -67,19 +84,6 @@ impl<T: Ord + Copy> StaticGraph<T> {
             .collect();
         debug_assert!(graph.check_integrity());
         graph
-    }
-
-    // In time O(V+E) check that the following invariants hold:
-    // a) the target node of each edge is smaller than the number of nodes
-    // b) index values for nodes first_edges are strictly increasing
-    pub fn check_integrity(&self) -> bool {
-        self.edge_array
-            .iter()
-            .all(|edge_entry| (edge_entry.target) < self.number_of_nodes())
-            && self
-                .node_array
-                .windows(2)
-                .all(|pair| pair[0].first_edge <= pair[1].first_edge)
     }
 }
 
