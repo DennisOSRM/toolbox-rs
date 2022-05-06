@@ -39,6 +39,10 @@ impl<EdgeDataT: Eq> InputEdge<EdgeDataT> {
         }
     }
 
+    pub fn is_parallel_to(&self, other: &Self) -> bool {
+        self.source == other.source && self.target == other.target
+    }
+
     pub fn reverse(&mut self) {
         swap(&mut self.source, &mut self.target);
     }
