@@ -48,3 +48,14 @@ impl<EdgeDataT: Eq> InputEdge<EdgeDataT> {
     }
 }
 pub type SimpleEdge = InputEdge<u32>;
+
+#[test]
+fn edges_parallel() {
+    let edge1 = SimpleEdge::new(1, 2, 3);
+    let edge2 = SimpleEdge::new(1, 2, 6);
+
+    assert!(edge1.is_parallel_to(&edge1));
+    assert!(edge1.is_parallel_to(&edge2));
+    assert!(edge2.is_parallel_to(&edge1));
+    assert!(edge2.is_parallel_to(&edge2));
+}
