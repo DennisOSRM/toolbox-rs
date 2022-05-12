@@ -3,6 +3,7 @@ pub mod bfs;
 pub mod bin_pack;
 pub mod cycle_check;
 pub mod dfs;
+pub mod dimacs;
 pub mod dinic;
 pub mod edge;
 pub mod edmonds_karp;
