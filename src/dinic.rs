@@ -13,9 +13,16 @@ use crate::{
     static_graph::StaticGraph,
 };
 use bitvec::vec::BitVec;
-use log::{debug, info};
 use core::cmp::min;
-use std::{collections::VecDeque, time::Instant};
+use log::debug;
+use std::{
+    collections::VecDeque,
+    sync::{
+        atomic::{AtomicI32, Ordering},
+        Arc,
+    },
+    time::Instant,
+};
 
 pub struct Dinic {
     residual_graph: StaticGraph<ResidualCapacity>,
@@ -29,6 +36,7 @@ pub struct Dinic {
     queue: VecDeque<NodeID>,
     source: NodeID,
     target: NodeID,
+    bound: Option<Arc<AtomicI32>>,
 }
 
 impl Dinic {
@@ -38,6 +46,7 @@ impl Dinic {
         source: NodeID,
         target: NodeID,
     ) -> Self {
+        debug!("instantiating max-flow solver");
         let edge_list: Vec<InputEdge<ResidualCapacity>> = input_edges
             .into_iter()
             .map(|edge| InputEdge {
@@ -61,33 +70,41 @@ impl Dinic {
         debug!("extending {} edges", edge_list.len());
         // blindly generate reverse edges for all edges with zero capacity
         edge_list.extend_from_within(..);
+        debug!("into {} edges", edge_list.len());
+
         edge_list.iter_mut().skip(number_of_edges).for_each(|edge| {
             edge.reverse();
             edge.data.capacity = 0;
         });
-        debug!("into {} edges", edge_list.len());
+        debug!("sorting after reversing");
 
         // dedup-merge edge set, by using the following trick: not the dedup(.) call
         // below takes the second argument as mut. When deduping equivalent values
         // a and b, then a is accumulated onto b.
-        edge_list.sort_unstable();
+        edge_list.sort_unstable_by_key(|a| {
+            // returning a tuple yields a lexical sort
+            (a.source, a.target)
+        });
+        debug!("start dedup");
         edge_list.dedup_by(|a, mut b| {
             // edges a and b are assumed to be equivalent in the residual graph if
             // (and only if) they are parallel. In other words, this removes parallel
             // edges in the residual graph and accumulates capacities on the remaining
             // egde.
-            let result = a.source == b.source && a.target == b.target;
-            if result {
+            let edges_are_parallel = a.is_parallel_to(b);
+            if edges_are_parallel {
                 b.data.capacity += a.data.capacity;
             }
-            result
+            edges_are_parallel
         });
+
+        debug!("dedup done");
 
         // at this point the edge set of the residual graph doesn't have any
         // duplicates anymore. note that this is fine, as we are looking to
         // compute a node partition.
         Self {
-            residual_graph: StaticGraph::new(edge_list),
+            residual_graph: StaticGraph::new_from_sorted_list(edge_list),
             max_flow: 0,
             finished: false,
             level: Vec::new(),
@@ -98,6 +115,7 @@ impl Dinic {
             queue: VecDeque::new(),
             source,
             target,
+            bound: None,
         }
     }
 
@@ -227,6 +245,13 @@ impl Dinic {
 }
 
 impl MaxFlow for Dinic {
+    fn run_with_upper_bound(&mut self, bound: Arc<AtomicI32>) {
+        debug!("upper bound: {}", bound.load(Ordering::Relaxed));
+
+        self.bound = Some(bound);
+        self.run()
+    }
+
     fn run(&mut self) {
         debug!(
             "residual graph size: V {}, E {}",
@@ -242,6 +267,17 @@ impl MaxFlow for Dinic {
         let mut flow = 0;
         while self.bfs() {
             flow += self.dfs();
+            if let Some(bound) = &self.bound {
+                // break early if an upper bound is known to the computation
+                if flow > bound.load(Ordering::Relaxed) {
+                    debug!("aborting max flow computation at {flow}");
+                    self.max_flow = flow;
+                    return;
+                }
+            }
+        }
+        if let Some(bound) = &self.bound {
+            bound.fetch_min(flow, Ordering::Relaxed);
         }
         self.max_flow = flow;
         self.finished = true;
@@ -250,7 +286,10 @@ impl MaxFlow for Dinic {
         if !self.finished {
             return Err("Assigment was not computed.".to_string());
         }
-        info!("finished in {} DFS, and {} BFS runs", self.dfs_count, self.bfs_count);
+        debug!(
+            "finished in {} DFS, and {} BFS runs",
+            self.dfs_count, self.bfs_count
+        );
         Ok(self.max_flow)
     }
 
