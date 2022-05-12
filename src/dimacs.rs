@@ -1,9 +1,13 @@
-use std::{io::{self, BufRead}, path::Path, fs::File};
+use std::{
+    fs::File,
+    io::{self, BufRead},
+    path::Path,
+};
 
 use itertools::Itertools;
 use log::{debug, info};
 
-use crate::{graph::NodeID, edge::InputEdge, geometry::primitives::FPCoordinate};
+use crate::{edge::InputEdge, geometry::primitives::FPCoordinate, graph::NodeID};
 
 // The output is wrapped in a Result to allow matching on errors
 // Returns an Iterator to the Reader of the lines of the file.
