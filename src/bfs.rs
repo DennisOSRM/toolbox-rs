@@ -1,5 +1,6 @@
 use crate::graph::{EdgeID, Graph, NodeID, INVALID_NODE_ID};
 use bitvec::vec::BitVec;
+use log::{debug, info};
 use std::{collections::VecDeque, time::Instant};
 
 pub struct BFS {
@@ -81,10 +82,10 @@ impl BFS {
                     // unsafe is used for performance, here, as the graph is consistent by construction
                     if *self.target_set.get_unchecked(target) {
                         self.target = target;
-                        // println!("setting target {}", self.target);
+                        debug!("setting target {}", self.target);
                         // check if we have found our target if it exists
                         let duration = start.elapsed();
-                        println!("D/BFS took: {:?} (done)", duration);
+                        info!("D/BFS took: {:?} (done)", duration);
                         return true;
                     }
                 }
@@ -93,7 +94,7 @@ impl BFS {
         }
 
         let duration = start.elapsed();
-        println!("BFS took: {:?} (done)", duration);
+        info!("BFS took: {:?} (done)", duration);
 
         // return true only if target set was empty
         self.empty_target_set
@@ -148,7 +149,7 @@ pub struct PathIter<'a> {
 
 impl<'a> PathIter<'a> {
     pub fn new(bfs: &BFS) -> PathIter {
-        // println!("init: {}", bfs.target);
+        debug!("init: {}", bfs.target);
         PathIter {
             bfs,
             id: bfs.target,

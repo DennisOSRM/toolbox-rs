@@ -1,3 +1,5 @@
+use log::info;
+
 use crate::graph::{Graph, NodeID};
 use core::cmp::min;
 
@@ -93,7 +95,7 @@ impl Tarjan {
                             }
                         }
                         // TODO: call handler for small/large SCCs
-                        println!("detected SCC of size {size}");
+                        info!("detected SCC of size {size}");
                     }
 
                     let new_last = self.dfs_state[last].caller;

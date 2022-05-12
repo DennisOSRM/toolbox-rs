@@ -82,7 +82,6 @@ mod tests {
         let p = Point { x: 1., y: 2. };
         let s = Segment(Point { x: 0., y: 0. }, Point { x: 0., y: 10. });
         let (distance, location) = distance_to_segment(p, s);
-        // println!("distance: {distance} - {:?}", location);
         assert_eq!(distance, 1.);
         assert_eq!(location, Point { x: 0., y: 2. });
     }

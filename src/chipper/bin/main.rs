@@ -77,7 +77,6 @@ fn main() {
                     + coordinates[*a].lat * current_coefficients.1
             });
 
-            // TODO: make thresholds configurable
             let size_of_contraction = proxy_vector.len() as f64 * args.b_factor;
             let sources = &proxy_vector[0..size_of_contraction as usize];
             let targets = &proxy_vector[(proxy_vector.len() - size_of_contraction as usize) + 1..];

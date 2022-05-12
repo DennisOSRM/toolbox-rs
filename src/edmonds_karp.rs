@@ -7,7 +7,7 @@ use crate::{
 };
 use bitvec::vec::BitVec;
 use itertools::Itertools;
-use log::warn;
+use log::{warn, debug};
 use std::{
     sync::{
         atomic::{AtomicI32, Ordering},
@@ -41,7 +41,7 @@ impl EdmondsKarp {
             })
             .collect();
 
-        println!("created {} ff edges", edge_list.len());
+        debug!("created {} ff edges", edge_list.len());
         EdmondsKarp::from_edge_list(edge_list, source, target)
     }
 
@@ -52,14 +52,14 @@ impl EdmondsKarp {
     ) -> Self {
         let number_of_edges = edge_list.len();
 
-        println!("extending {} edges", edge_list.len());
+        debug!("extending {} edges", edge_list.len());
         // blindly generate reverse edges for all edges with zero capacity
         edge_list.extend_from_within(..);
         edge_list.iter_mut().skip(number_of_edges).for_each(|edge| {
             edge.reverse();
             edge.data.capacity = 0;
         });
-        println!("into {} edges", edge_list.len());
+        debug!("into {} edges", edge_list.len());
 
         // dedup-merge edge set, by using the following trick: not the dedup(.) call
         // below takes the second argument as mut. When deduping equivalent values
@@ -76,7 +76,7 @@ impl EdmondsKarp {
             }
             result
         });
-        // println!("dedup-merged {} edges", edge_list.len());
+        debug!("dedup-merged {} edges", edge_list.len());
 
         // at this point the edge set of the residual graph doesn't have any
         // duplicates anymore. note that this is fine, as we are looking to
@@ -120,19 +120,19 @@ impl MaxFlow for EdmondsKarp {
                 })
                 .expect("graph is broken, couldn't find min edge");
             let duration = start.elapsed();
-            println!(" flow assignment1 took: {:?} (done)", duration);
+            debug!(" flow assignment1 took: {:?} (done)", duration);
 
             let bottleneck_edge = self
                 .residual_graph
                 .find_edge_unchecked(bootleneck_head_tail.1, bootleneck_head_tail.0);
-            // println!("  bottleneck edge: {}", bottleneck_edge);
+            debug!("  bottleneck edge: {}", bottleneck_edge);
             let path_flow = self.residual_graph.data(bottleneck_edge).capacity;
             debug_assert!(path_flow > 0);
-            // println!("min edge: {}, capacity: {}", bottleneck_edge, path_flow);
+            debug!("min edge: {}, capacity: {}", bottleneck_edge, path_flow);
             // sum up flow
             self.max_flow += path_flow;
             let duration = start.elapsed();
-            println!(" flow assignment2 took: {:?} (done)", duration);
+            debug!(" flow assignment2 took: {:?} (done)", duration);
 
             // assign flow to residual graph
             for (a, b) in dfs.path_iter().tuple_windows() {
@@ -143,7 +143,7 @@ impl MaxFlow for EdmondsKarp {
                 self.residual_graph.data_mut(rev_edge).capacity += path_flow;
             }
             let duration = start.elapsed();
-            println!(" flow assignment3 took: {:?} (done)", duration);
+            debug!(" flow assignment3 took: {:?} (done)", duration);
         }
 
         self.finished = true;
