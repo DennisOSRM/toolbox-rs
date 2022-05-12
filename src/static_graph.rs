@@ -77,7 +77,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
 
         graph.edge_array = input
             .iter()
-            .map(|edge| EdgeArrayEntry {
+            .map(move |edge| EdgeArrayEntry {
                 target: edge.target(),
                 data: *edge.data(),
             })
