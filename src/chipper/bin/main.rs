@@ -110,6 +110,7 @@ fn main() {
                     edge_count_before,
                     edges.len()
                 );
+                edges.shrink_to_fit();
             }
 
             let mut max_flow_solver = Dinic::from_generic_edge_list(edges, 0, 1);

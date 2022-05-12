@@ -48,8 +48,8 @@ impl Dinic {
     ) -> Self {
         debug!("instantiating max-flow solver");
         let edge_list: Vec<InputEdge<ResidualCapacity>> = input_edges
-            .into_iter()
-            .map(|edge| InputEdge {
+            .iter()
+            .map(move |edge| InputEdge {
                 source: edge.source(),
                 target: edge.target(),
                 data: ResidualCapacity::new(1),
@@ -97,7 +97,7 @@ impl Dinic {
             }
             edges_are_parallel
         });
-
+        edge_list.shrink_to_fit();
         debug!("dedup done");
 
         // at this point the edge set of the residual graph doesn't have any

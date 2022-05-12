@@ -34,7 +34,7 @@ impl EdmondsKarp {
     ) -> Self {
         let edge_list: Vec<InputEdge<ResidualCapacity>> = input_edges
             .into_iter()
-            .map(|edge| InputEdge {
+            .map(move |edge| InputEdge {
                 source: edge.source(),
                 target: edge.target(),
                 data: ResidualCapacity::new(1),
