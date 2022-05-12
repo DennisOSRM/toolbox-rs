@@ -4,6 +4,7 @@ use env_logger::Env;
 use itertools::Itertools;
 use log::{debug, info};
 use rayon::prelude::*;
+use core::panic;
 use std::{
     fs::File,
     io::Write,
@@ -28,6 +29,9 @@ struct Args {
 
     #[clap(short, long)]
     remove_eigenloops: bool,
+
+    #[clap(short, long, default_value_t = 0.25)]
+    b_factor: f64,
 }
 
 fn main() {
@@ -43,6 +47,11 @@ fn main() {
 
     // parse command line parameters
     let args = Args::parse();
+
+    if args.b_factor > 0.5 || args.b_factor < 0. {
+        panic!("balance factor must be between 0 and 0.5");
+    }
+    info!("balance factor: {}", args.b_factor);
     info!("loading graph from {}", args.graph);
     info!("loading coordinates from {}", args.coordinates);
 
@@ -69,8 +78,9 @@ fn main() {
             });
 
             // TODO: make thresholds configurable
-            let sources = &proxy_vector[0..proxy_vector.len() / 4];
-            let targets = &proxy_vector[(proxy_vector.len() * 3 / 4) + 1..];
+            let size_of_contraction = proxy_vector.len() as f64 * args.b_factor;
+            let sources = &proxy_vector[0..size_of_contraction as usize];
+            let targets = &proxy_vector[(proxy_vector.len() - size_of_contraction as usize) + 1..];
 
             info!("[{idx}] renumbering of inertial flow graph");
             let mut renumbering_table = vec![usize::MAX; coordinates.len()];
@@ -87,7 +97,7 @@ fn main() {
             let mut edges = edges.clone();
             let mut i = 1;
             for mut e in &mut edges {
-                // nodes in the edge set are numbered consecutively
+                // nodes in the in the graph have to be numbered consecutively
                 if renumbering_table[e.source] == usize::MAX {
                     i += 1;
                     renumbering_table[e.source] = i;
