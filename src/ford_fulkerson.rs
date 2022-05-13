@@ -7,7 +7,7 @@ use crate::{
 };
 use bitvec::vec::BitVec;
 use itertools::Itertools;
-use log::{warn, debug};
+use log::{debug, warn};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -24,12 +24,12 @@ pub struct FordFulkerson {
 impl FordFulkerson {
     // todo(dl): add closure parameter to derive edge data
     pub fn from_generic_edge_list(
-        input_edges: Vec<impl Edge<ID = NodeID>>,
+        input_edges: &[impl Edge<ID = NodeID>],
         source: usize,
         target: usize,
     ) -> Self {
         let edge_list: Vec<InputEdge<ResidualCapacity>> = input_edges
-            .into_iter()
+            .iter()
             .map(move |edge| InputEdge {
                 source: edge.source(),
                 target: edge.target(),

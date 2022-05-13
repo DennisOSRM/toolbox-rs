@@ -42,7 +42,7 @@ pub struct Dinic {
 impl Dinic {
     // todo(dl): add closure parameter to derive edge data
     pub fn from_generic_edge_list(
-        input_edges: Vec<impl Edge<ID = NodeID>>,
+        input_edges: &[impl Edge<ID = NodeID>],
         source: NodeID,
         target: NodeID,
     ) -> Self {
