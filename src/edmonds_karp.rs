@@ -7,7 +7,7 @@ use crate::{
 };
 use bitvec::vec::BitVec;
 use itertools::Itertools;
-use log::{warn, debug};
+use log::{debug, warn};
 use std::{
     sync::{
         atomic::{AtomicI32, Ordering},
