@@ -7,7 +7,7 @@ use bitvec::prelude::BitVec;
 use itertools::Itertools;
 use log::{debug, info};
 
-use crate::{dinic::Dinic, edge::InputEdge, geometry::primitives::FPCoordinate, max_flow::MaxFlow};
+use crate::{dinic::Dinic, edge::InputEdge, geometry::primitives::FPCoordinate, max_flow::{MaxFlow, ResidualCapacity}};
 
 pub struct Coefficients([(i32, i32); 4]);
 // coefficients for rotation matrix at 0, 90, 180 and 270 degrees
@@ -42,7 +42,7 @@ impl Index<usize> for Coefficients {
 /// * `upper_bound` - a global upperbound to the best inertial flow cut
 pub fn sub_step(
     index: usize,
-    input_edges: &[InputEdge<i32>],
+    input_edges: &[InputEdge<ResidualCapacity>],
     coordinates: &[FPCoordinate],
     b_factor: f64,
     upper_bound: Arc<AtomicI32>,
@@ -102,7 +102,7 @@ pub fn sub_step(
     );
     edges.shrink_to_fit();
 
-    let mut max_flow_solver = Dinic::from_generic_edge_list(&edges, 0, 1);
+    let mut max_flow_solver = Dinic::from_edge_list(edges, 0, 1);
     info!("[{index}] instantiated min-cut solver");
     max_flow_solver.run_with_upper_bound(upper_bound);
 

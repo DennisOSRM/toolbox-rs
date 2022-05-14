@@ -12,6 +12,7 @@ use std::{
 use toolbox_rs::{
     dimacs,
     inertial_flow::{self},
+    max_flow::ResidualCapacity,
 };
 
 #[derive(Parser, Debug)]
@@ -55,7 +56,7 @@ fn main() {
     info!("loading graph from {}", args.graph);
     info!("loading coordinates from {}", args.coordinates);
 
-    let edges = dimacs::read_graph(&args.graph);
+    let edges = dimacs::read_graph::<ResidualCapacity>(&args.graph, dimacs::WeightType::Unit);
     info!("edge count: {}", edges.len());
 
     let coordinates = dimacs::read_coordinates(&args.coordinates);
