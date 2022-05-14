@@ -14,7 +14,7 @@ use crate::{
 };
 use bitvec::vec::BitVec;
 use core::cmp::min;
-use log::debug;
+use log::{debug, info};
 use std::{
     collections::VecDeque,
     sync::{
@@ -270,7 +270,7 @@ impl MaxFlow for Dinic {
             if let Some(bound) = &self.bound {
                 // break early if an upper bound is known to the computation
                 if flow > bound.load(Ordering::Relaxed) {
-                    debug!("aborting max flow computation at {flow}");
+                    info!("aborting max flow computation at {flow}");
                     self.max_flow = flow;
                     return;
                 }

@@ -109,7 +109,6 @@ pub fn sub_step(
     let max_flow = max_flow_solver.max_flow();
 
     if max_flow.is_err() {
-        info!("[{index}] exiting max flow computation early with");
         // Error is returned in case the search is aborted early
         return (i32::MAX, 0., BitVec::new(), Vec::new());
     }
