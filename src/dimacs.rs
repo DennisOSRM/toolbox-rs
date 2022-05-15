@@ -9,6 +9,11 @@ use log::{debug, info};
 
 use crate::{edge::InputEdge, geometry::primitives::FPCoordinate, graph::NodeID};
 
+pub enum WeightType {
+    Unit,
+    Original,
+}
+
 // The output is wrapped in a Result to allow matching on errors
 // Returns an Iterator to the Reader of the lines of the file.
 fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
@@ -19,7 +24,10 @@ where
     Ok(io::BufReader::new(file).lines())
 }
 
-pub fn read_graph(filename: &str) -> Vec<InputEdge<i32>> {
+pub fn read_graph<T: std::cmp::Eq + From<i32>>(
+    filename: &str,
+    weight_type: WeightType,
+) -> Vec<InputEdge<T>> {
     let mut comment_count = 0;
     let mut problem_count = 0;
     let mut edges = Vec::new();
@@ -51,10 +59,13 @@ pub fn read_graph(filename: &str) -> Vec<InputEdge<i32>> {
                 let target = tokens[1].parse::<NodeID>().unwrap();
                 let data = tokens[2].parse::<i32>().unwrap();
 
-                edges.push(InputEdge {
+                edges.push(InputEdge::<T> {
                     source,
                     target,
-                    data,
+                    data: match &weight_type {
+                        WeightType::Unit => T::from(1),
+                        WeightType::Original => T::from(data),
+                    },
                 });
             }
             _ => {}

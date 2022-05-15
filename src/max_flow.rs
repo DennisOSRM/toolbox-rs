@@ -14,6 +14,12 @@ impl ResidualCapacity {
     }
 }
 
+impl From<i32> for ResidualCapacity {
+    fn from(item: i32) -> Self {
+        ResidualCapacity { capacity: item }
+    }
+}
+
 pub trait MaxFlow {
     fn run(&mut self);
     fn run_with_upper_bound(&mut self, bound: Arc<AtomicI32>);
