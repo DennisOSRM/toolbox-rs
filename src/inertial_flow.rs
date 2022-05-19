@@ -200,7 +200,7 @@ mod tests {
         ];
 
         let (flow, balance, assignment, _table) =
-            sub_step(3, &edges, &coordinates, 0.45, upper_bound);
+            sub_step(3, &edges, &coordinates, 0.25, upper_bound);
         assert_eq!(flow, 1);
         assert_eq!(balance, 0.5);
         assert_eq!(assignment.len(), 6);
