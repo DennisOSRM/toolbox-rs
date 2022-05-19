@@ -14,6 +14,7 @@ pub mod great_circle;
 pub mod inertial_flow;
 pub mod kruskal;
 pub mod max_flow;
+pub mod partition;
 pub mod projection;
 pub mod rdx_sort;
 pub mod static_graph;
