@@ -14,6 +14,8 @@ use toolbox_rs::{
     inertial_flow::{self},
     max_flow::ResidualCapacity,
 };
+mod command_line;
+use crate::command_line::recursion_in_range;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -33,6 +35,10 @@ struct Args {
     /// balance factor to use
     #[clap(short, long, default_value_t = 0.25)]
     b_factor: f64,
+
+    /// Network recursion to use
+    #[clap(short, long, parse(try_from_str=recursion_in_range), default_value_t = 0)]
+    recursion_depth: usize,
 }
 
 fn main() {
@@ -52,6 +58,7 @@ fn main() {
     if args.b_factor > 0.5 || args.b_factor < 0. {
         panic!("balance factor must be between 0 and 0.5");
     }
+    info!("recursion depth: {}", args.recursion_depth);
     info!("balance factor: {}", args.b_factor);
     info!("loading graph from {}", args.graph);
     info!("loading coordinates from {}", args.coordinates);
