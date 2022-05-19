@@ -1,4 +1,5 @@
 use std::{
+    cmp::max,
     ops::Index,
     sync::{atomic::AtomicI32, Arc},
 };
@@ -7,7 +8,12 @@ use bitvec::prelude::BitVec;
 use itertools::Itertools;
 use log::{debug, info};
 
-use crate::{dinic::Dinic, edge::InputEdge, geometry::primitives::FPCoordinate, max_flow::{MaxFlow, ResidualCapacity}};
+use crate::{
+    dinic::Dinic,
+    edge::InputEdge,
+    geometry::primitives::FPCoordinate,
+    max_flow::{MaxFlow, ResidualCapacity},
+};
 
 pub struct Coefficients([(i32, i32); 4]);
 // coefficients for rotation matrix at 0, 90, 180 and 270 degrees
@@ -38,18 +44,19 @@ impl Index<usize> for Coefficients {
 /// * `index` - which of the (0..4) substeps to execute
 /// * `edges` - a list of edges that represents the input graph
 /// * `coordinates` - immutable slice of coordinates of the graphs nodes
-/// * `b_factor` - balance factor, i.e. how many nodes get contracted
+/// * `balance_factor` - balance factor, i.e. how many nodes get contracted
 /// * `upper_bound` - a global upperbound to the best inertial flow cut
 pub fn sub_step(
     index: usize,
     input_edges: &[InputEdge<ResidualCapacity>],
     coordinates: &[FPCoordinate],
-    b_factor: f64,
+    balance_factor: f64,
     upper_bound: Arc<AtomicI32>,
 ) -> (i32, f64, bitvec::vec::BitVec, Vec<usize>) {
     assert!(index < 4);
-    assert!(b_factor > 0.);
-    assert!(b_factor < 0.5);
+    assert!(balance_factor > 0.);
+    assert!(balance_factor < 0.5);
+    assert!(coordinates.len() > 2);
 
     let current_coefficients = &Coefficients::new()[index];
     info!("[{index}] sorting cooefficient: {:?}", current_coefficients);
@@ -59,12 +66,16 @@ pub fn sub_step(
         coordinates[*a].lon * current_coefficients.0 + coordinates[*a].lat * current_coefficients.1
     });
 
-    let size_of_contraction = proxy_vector.len() as f64 * b_factor;
+    let size_of_contraction = max(1, (proxy_vector.len() as f64 * balance_factor) as usize);
     let sources = &proxy_vector[0..size_of_contraction as usize];
-    let targets = &proxy_vector[(proxy_vector.len() - size_of_contraction as usize) + 1..];
+    let targets = &proxy_vector[proxy_vector.len() - (size_of_contraction as usize)..];
+
+    assert!(!sources.is_empty());
+    assert!(!targets.is_empty());
 
     info!("[{index}] renumbering of inertial flow graph");
     let mut renumbering_table = vec![usize::MAX; coordinates.len()];
+    // nodes in the in the graph have to be numbered consecutively.
     // the mapping is input id -> dinic id
 
     for s in sources {
@@ -77,16 +88,16 @@ pub fn sub_step(
     // each thread holds their own copy of the edge set
     let mut edges = Vec::new();
     edges.extend_from_slice(input_edges);
-    let mut i = 1;
+    let mut current_id = 2;
     for mut e in &mut edges {
         // nodes in the in the graph have to be numbered consecutively
         if renumbering_table[e.source] == usize::MAX {
-            i += 1;
-            renumbering_table[e.source] = i;
+            renumbering_table[e.source] = current_id;
+            current_id += 1;
         }
         if renumbering_table[e.target] == usize::MAX {
-            i += 1;
-            renumbering_table[e.target] = i;
+            renumbering_table[e.target] = current_id;
+            current_id += 1;
         }
         e.source = renumbering_table[e.source];
         e.target = renumbering_table[e.target];
@@ -102,6 +113,7 @@ pub fn sub_step(
     );
     edges.shrink_to_fit();
 
+    info!("[{index}] instantiating min-cut solver, epsilon {balance_factor}");
     let mut max_flow_solver = Dinic::from_edge_list(edges, 0, 1);
     info!("[{index}] instantiated min-cut solver");
     max_flow_solver.run_with_upper_bound(upper_bound);
@@ -136,6 +148,16 @@ pub fn sub_step(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{atomic::AtomicI32, Arc};
+
+    use bitvec::bits;
+    use bitvec::prelude::*;
+
+    use crate::{
+        edge::InputEdge, geometry::primitives::FPCoordinate, inertial_flow::sub_step,
+        max_flow::ResidualCapacity,
+    };
+
     use super::Coefficients;
 
     #[test]
@@ -145,5 +167,43 @@ mod tests {
         (0..4).zip(4..8).for_each(|index| {
             assert_eq!(coefficients[index.0], coefficients[index.1]);
         });
+    }
+
+    #[test]
+    fn inertial_flow() {
+        let edges = vec![
+            InputEdge::new(0, 1, ResidualCapacity::new(1)),
+            InputEdge::new(1, 0, ResidualCapacity::new(1)),
+            InputEdge::new(0, 2, ResidualCapacity::new(1)),
+            InputEdge::new(2, 0, ResidualCapacity::new(1)),
+            InputEdge::new(1, 2, ResidualCapacity::new(1)),
+            InputEdge::new(2, 1, ResidualCapacity::new(1)),
+            InputEdge::new(2, 4, ResidualCapacity::new(1)),
+            InputEdge::new(4, 2, ResidualCapacity::new(1)),
+            InputEdge::new(3, 5, ResidualCapacity::new(1)),
+            InputEdge::new(5, 3, ResidualCapacity::new(1)),
+            InputEdge::new(4, 3, ResidualCapacity::new(1)),
+            InputEdge::new(3, 4, ResidualCapacity::new(1)),
+            InputEdge::new(4, 5, ResidualCapacity::new(1)),
+            InputEdge::new(5, 4, ResidualCapacity::new(1)),
+        ];
+
+        let upper_bound = Arc::new(AtomicI32::new(6));
+
+        let coordinates = vec![
+            FPCoordinate::new(1, 0),
+            FPCoordinate::new(2, 1),
+            FPCoordinate::new(0, 1),
+            FPCoordinate::new(2, 2),
+            FPCoordinate::new(0, 2),
+            FPCoordinate::new(1, 3),
+        ];
+
+        let (flow, balance, assignment, _table) =
+            sub_step(3, &edges, &coordinates, 0.25, upper_bound);
+        assert_eq!(flow, 1);
+        assert_eq!(balance, 0.5);
+        assert_eq!(assignment.len(), 6);
+        assert_eq!(assignment, bits![1, 0, 0, 0, 1, 1]);
     }
 }
