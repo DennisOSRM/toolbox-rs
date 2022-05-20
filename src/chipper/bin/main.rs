@@ -1,21 +1,23 @@
+mod command_line;
+mod serialize;
+
 use clap::Parser;
 use core::panic;
 use env_logger::Env;
 
+use crate::{
+    command_line::recursion_in_range,
+    serialize::{assignment_csv, binary_partition_file, geometry_list},
+};
 use log::info;
 use rayon::prelude::*;
-use std::{
-    fs::File,
-    io::Write,
-    sync::{atomic::AtomicI32, Arc},
-};
+use std::sync::{atomic::AtomicI32, Arc};
 use toolbox_rs::{
     dimacs,
     inertial_flow::{self},
     max_flow::ResidualCapacity,
+    partition::PartitionID,
 };
-mod command_line;
-use crate::command_line::recursion_in_range;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -28,9 +30,13 @@ struct Args {
     #[clap(short, long)]
     coordinates: String,
 
-    /// path to the output file
+    /// path to the cut-csv file
+    #[clap(short = 'o', long, default_value_t = String::new())]
+    cut_csv: String,
+
+    /// path to the assignment-csv file
     #[clap(short, long, default_value_t = String::new())]
-    output: String,
+    assignment_csv: String,
 
     /// balance factor to use
     #[clap(short, long, default_value_t = 0.25)]
@@ -39,6 +45,10 @@ struct Args {
     /// Network recursion to use
     #[clap(short, long, parse(try_from_str=recursion_in_range), default_value_t = 0)]
     recursion_depth: usize,
+
+    /// path to the output file with partition ids
+    #[clap(short, long, default_value_t = String::new())]
+    partition_file: String,
 }
 
 fn main() {
@@ -69,6 +79,8 @@ fn main() {
     let coordinates = dimacs::read_coordinates(&args.coordinates);
     info!("coordinate count: {}", coordinates.len());
 
+    let mut partition_ids = vec![PartitionID::root(); coordinates.len()];
+
     // we use the count of coordinates as an upper bound to the cut size
     let upper_bound = Arc::new(AtomicI32::new(coordinates.len().try_into().unwrap()));
 
@@ -96,50 +108,39 @@ fn main() {
     let (max_flow, balance, assignment, renumbering_table) = best_max_flow.unwrap();
     info!("best max-flow: {}, balance: {:.3}", max_flow, balance);
 
-    if !args.output.is_empty() {
-        let mut file = File::create(&args.output).expect("output file cannot be opened");
-        file.write_all("latitude, longitude\n".as_bytes())
-            .expect("error writing file");
-
-        // fetch the cut and output its geometry
-        info!("writing cut geometry to {}", &args.output);
-        for edge in &edges {
-            if assignment[renumbering_table[edge.source]]
-                != assignment[renumbering_table[edge.target]]
-            {
-                file.write_all(
-                    (coordinates[edge.source].lat as f64 / 1000000.)
-                        .to_string()
-                        .as_bytes(),
-                )
-                .expect("error writing file");
-                file.write_all(b", ").expect("error writing file");
-                file.write_all(
-                    (coordinates[edge.source].lon as f64 / 1000000.)
-                        .to_string()
-                        .as_bytes(),
-                )
-                .expect("error writing file");
-                file.write_all(b"\n").expect("error writing file");
-
-                file.write_all(
-                    (coordinates[edge.target].lat as f64 / 1000000.)
-                        .to_string()
-                        .as_bytes(),
-                )
-                .expect("error writing file");
-                file.write_all(b", ").expect("error writing file");
-                file.write_all(
-                    (coordinates[edge.target].lon as f64 / 1000000.)
-                        .to_string()
-                        .as_bytes(),
-                )
-                .expect("error writing file");
-                file.write_all(b"\n").expect("error writing file");
-            }
+    info!("assigning partition ids to all nodes");
+    // assign ids for nodes
+    for i in 0..partition_ids.len() {
+        match assignment[renumbering_table[i]] {
+            true => partition_ids[i] = partition_ids[i].left_child(),
+            false => partition_ids[i] = partition_ids[i].right_child(),
         }
-        file.flush().expect("error writing file");
-        info!("done.");
     }
-    //TODO: assign ids for nodes and iterate on both halves
+
+    // TODO: iterate on both halves
+
+    if !args.assignment_csv.is_empty() {
+        info!(
+            "writing partition ids into csv file: {}",
+            args.assignment_csv
+        );
+        assignment_csv(&args.assignment_csv, &partition_ids, &coordinates);
+    }
+
+    if !args.cut_csv.is_empty() {
+        info!("writing cut geometry to {}", &args.cut_csv);
+        geometry_list(
+            &args.cut_csv,
+            edges,
+            assignment,
+            renumbering_table,
+            coordinates,
+        );
+    }
+
+    if !args.partition_file.is_empty() {
+        info!("writing partition ids to {}", &args.partition_file);
+        binary_partition_file(&args.partition_file, partition_ids);
+    }
+    info!("done.");
 }
