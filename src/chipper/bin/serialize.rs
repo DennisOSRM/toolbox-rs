@@ -12,7 +12,7 @@ pub fn geometry_list(
     renumbering_table: Vec<usize>,
     coordinates: Vec<toolbox_rs::geometry::primitives::FPCoordinate>,
 ) {
-    let mut file = File::create(file_path).expect("output file cannot be opened");
+    let mut file = BufWriter::new(File::create(file_path).expect("output file cannot be opened"));
     file.write_all("latitude, longitude\n".as_bytes())
         .expect("error writing file");
     // fetch the cut and output its geometry
@@ -58,7 +58,7 @@ pub fn assignment_csv(
     partition_ids: &[PartitionID],
     coordinates: &[toolbox_rs::geometry::primitives::FPCoordinate],
 ) {
-    let mut file = File::create(filename).expect("output file cannot be opened");
+    let mut file = BufWriter::new(File::create(filename).expect("output file cannot be opened"));
     file.write_all("partition_id, latitude, longitude\n".as_bytes())
         .expect("error writing file");
     for i in 0..partition_ids.len() {
