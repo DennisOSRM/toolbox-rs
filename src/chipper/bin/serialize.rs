@@ -5,19 +5,18 @@ use std::{
 };
 use toolbox_rs::{max_flow::ResidualCapacity, partition::PartitionID};
 
-pub fn geometry_list(
+pub fn cut_csv(
     file_path: &str,
-    edges: Vec<toolbox_rs::edge::InputEdge<ResidualCapacity>>,
-    assignment: bitvec::prelude::BitVec,
-    renumbering_table: Vec<usize>,
-    coordinates: Vec<toolbox_rs::geometry::primitives::FPCoordinate>,
+    edges: &[toolbox_rs::edge::InputEdge<ResidualCapacity>],
+    partition_ids: &[PartitionID],
+    coordinates: &[toolbox_rs::geometry::primitives::FPCoordinate],
 ) {
     let mut file = File::create(file_path).expect("output file cannot be opened");
     file.write_all("latitude, longitude\n".as_bytes())
         .expect("error writing file");
     // fetch the cut and output its geometry
-    for edge in &edges {
-        if assignment[renumbering_table[edge.source]] != assignment[renumbering_table[edge.target]]
+    for edge in edges {
+        if partition_ids[edge.source] != partition_ids[edge.target]
         {
             file.write_all(
                 (coordinates[edge.source].lat as f64 / 1000000.)
