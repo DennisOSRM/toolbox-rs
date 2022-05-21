@@ -7,7 +7,7 @@ use env_logger::Env;
 
 use crate::{
     command_line::recursion_in_range,
-    serialize::{assignment_csv, binary_partition_file, geometry_list},
+    serialize::{assignment_csv, binary_partition_file, cut_csv},
 };
 use log::info;
 use rayon::prelude::*;
@@ -42,9 +42,9 @@ struct Args {
     #[clap(short, long, default_value_t = 0.25)]
     b_factor: f64,
 
-    /// Network recursion to use
-    #[clap(short, long, parse(try_from_str=recursion_in_range), default_value_t = 0)]
-    recursion_depth: usize,
+    /// target level of the resulting partition
+    #[clap(short, long, parse(try_from_str=recursion_in_range), default_value_t = 1)]
+    target_level: usize,
 
     /// path to the output file with partition ids
     #[clap(short, long, default_value_t = String::new())]
@@ -68,7 +68,7 @@ fn main() {
     if args.b_factor > 0.5 || args.b_factor < 0. {
         panic!("balance factor must be between 0 and 0.5");
     }
-    info!("recursion depth: {}", args.recursion_depth);
+    info!("target level: {}", args.target_level);
     info!("balance factor: {}", args.b_factor);
     info!("loading graph from {}", args.graph);
     info!("loading coordinates from {}", args.coordinates);
@@ -129,13 +129,7 @@ fn main() {
 
     if !args.cut_csv.is_empty() {
         info!("writing cut geometry to {}", &args.cut_csv);
-        geometry_list(
-            &args.cut_csv,
-            edges,
-            assignment,
-            renumbering_table,
-            coordinates,
-        );
+        cut_csv(&args.cut_csv, &edges, &partition_ids, &coordinates);
     }
 
     if !args.partition_file.is_empty() {
