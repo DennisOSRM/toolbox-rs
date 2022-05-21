@@ -39,6 +39,18 @@ impl PartitionID {
         PartitionID(temp + 1)
     }
 
+    /// Transform the ID into its left child
+    pub fn make_left_child(&mut self) {
+        self.0 <<= 1;
+        self.0 += 0;
+    }
+
+    /// Transform the ID into its right child
+    pub fn make_right_child(&mut self) {
+        self.0 <<= 1;
+        self.0 += 1;
+    }
+
     /// Returns a new PartitionID from an u32
     pub fn new(id: u32) -> Self {
         // the id scheme is designed in a way that the number of leading zeros is always odd
@@ -50,6 +62,16 @@ impl PartitionID {
     pub fn level(&self) -> u8 {
         // magic number 31 := 32 - 1, as 1 is the root's ID
         (31 - self.0.leading_zeros()).try_into().unwrap()
+    }
+
+    /// Returns whether the ID id a left child
+    pub fn is_left_child(&self) -> bool {
+        self.0 % 2 == 0
+    }
+
+    /// Returns whether the ID id a right child
+    pub fn is_right_child(&self) -> bool {
+        self.0 % 2 == 1
     }
 }
 
@@ -107,5 +129,15 @@ mod tests {
         let (left_child, right_child) = id.children();
         assert_eq!(left_child, id.left_child());
         assert_eq!(right_child, id.right_child());
+    }
+
+    #[test]
+    fn is_left_right_child() {
+        let id = PartitionID(12345);
+        let (left_child, right_child) = id.children();
+        assert_eq!(left_child, id.left_child());
+        assert_eq!(right_child, id.right_child());
+        assert!(left_child.is_left_child());
+        assert!(right_child.is_right_child());
     }
 }
