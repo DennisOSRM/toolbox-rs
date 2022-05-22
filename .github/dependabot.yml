@@ -1,0 +1,14 @@
+version: 2
+updates:
+- package-ecosystem: cargo
+  directory: "/"
+  schedule:
+    interval: daily
+    time: "01:00"
+# Enable version updates for Actions
+- package-ecosystem: "github-actions"
+  # Look for `.github/workflows` in the `root` directory
+  directory: "/"
+  # Check for updates once a week
+  schedule:
+    interval: "weekly"
