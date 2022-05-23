@@ -5,7 +5,6 @@ use std::{
 };
 
 use bitvec::prelude::BitVec;
-use itertools::Itertools;
 use log::{debug, info};
 
 use crate::{
@@ -43,6 +42,7 @@ impl Index<usize> for Coefficients {
 ///
 /// * `index` - which of the (0..4) substeps to execute
 /// * `edges` - a list of edges that represents the input graph
+/// * `node_id_list` - list of node ids
 /// * `coordinates` - immutable slice of coordinates of the graphs nodes
 /// * `balance_factor` - balance factor, i.e. how many nodes get contracted
 /// * `upper_bound` - a global upperbound to the best inertial flow cut
@@ -50,6 +50,7 @@ pub fn sub_step(
     index: usize,
     input_edges: &[InputEdge<ResidualCapacity>],
     coordinates: &[FPCoordinate],
+    node_id_list: &[usize],
     balance_factor: f64,
     upper_bound: Arc<AtomicI32>,
 ) -> (i32, f64, bitvec::vec::BitVec, Vec<usize>) {
@@ -60,15 +61,15 @@ pub fn sub_step(
 
     let current_coefficients = &Coefficients::new()[index];
     info!("[{index}] sorting cooefficient: {:?}", current_coefficients);
-    // generate proxy list to be sorted. The coordinates vector itself is not touched.
-    let mut proxy_vector = (0..coordinates.len()).collect_vec();
-    proxy_vector.sort_unstable_by_key(|a| -> i32 {
+    // the iteration proxy list to be sorted. The coordinates vector itself is not touched.
+    let mut node_id_list = node_id_list.to_vec();
+    node_id_list.sort_unstable_by_key(|a| -> i32 {
         coordinates[*a].lon * current_coefficients.0 + coordinates[*a].lat * current_coefficients.1
     });
 
-    let size_of_contraction = max(1, (proxy_vector.len() as f64 * balance_factor) as usize);
-    let sources = &proxy_vector[0..size_of_contraction as usize];
-    let targets = &proxy_vector[proxy_vector.len() - (size_of_contraction as usize)..];
+    let size_of_contraction = max(1, (node_id_list.len() as f64 * balance_factor) as usize);
+    let sources = &node_id_list[0..size_of_contraction as usize];
+    let targets = &node_id_list[node_id_list.len() - (size_of_contraction as usize)..];
 
     assert!(!sources.is_empty());
     assert!(!targets.is_empty());
@@ -89,6 +90,7 @@ pub fn sub_step(
     let mut edges = Vec::new();
     edges.extend_from_slice(input_edges);
     let mut current_id = 2;
+
     for mut e in &mut edges {
         // nodes in the in the graph have to be numbered consecutively
         if renumbering_table[e.source] == usize::MAX {
@@ -102,6 +104,13 @@ pub fn sub_step(
         e.source = renumbering_table[e.source];
         e.target = renumbering_table[e.target];
     }
+    // for i in &node_id_list {
+    //     if renumbering_table[*i] == usize::MAX {
+    //         println!("missing renumbering for node {i}");
+    //         renumbering_table[*i] = current_id;
+    //         current_id += 1;
+    //     }
+    // }
     info!("[{index}] instantiating min-cut solver, epsilon 0.25");
 
     // remove eigenloops especially from contracted regions
@@ -152,6 +161,7 @@ mod tests {
 
     use bitvec::bits;
     use bitvec::prelude::*;
+    use itertools::Itertools;
 
     use crate::{
         edge::InputEdge, geometry::primitives::FPCoordinate, inertial_flow::sub_step,
@@ -198,9 +208,10 @@ mod tests {
             FPCoordinate::new(0, 2),
             FPCoordinate::new(1, 3),
         ];
+        let node_id_list = (0..coordinates.len()).collect_vec();
 
         let (flow, balance, assignment, _table) =
-            sub_step(3, &edges, &coordinates, 0.25, upper_bound);
+            sub_step(3, &edges, &coordinates, &node_id_list, 0.25, upper_bound);
         assert_eq!(flow, 1);
         assert_eq!(balance, 0.5);
         assert_eq!(assignment.len(), 6);

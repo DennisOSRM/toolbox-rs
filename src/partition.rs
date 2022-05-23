@@ -24,13 +24,13 @@ impl PartitionID {
     /// Returns a left-right ordered tuple of children for a given ID
     pub fn children(&self) -> (PartitionID, PartitionID) {
         let temp = self.0 << 1;
-        (PartitionID(temp + 0), PartitionID(temp + 1))
+        (PartitionID(temp), PartitionID(temp + 1))
     }
 
     /// Returns the left child of a ID
     pub fn left_child(&self) -> PartitionID {
         let temp = self.0 << 1;
-        PartitionID(temp + 0)
+        PartitionID(temp)
     }
 
     /// Returns the right child of a ID

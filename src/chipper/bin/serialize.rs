@@ -16,8 +16,7 @@ pub fn cut_csv(
         .expect("error writing file");
     // fetch the cut and output its geometry
     for edge in edges {
-        if partition_ids[edge.source] != partition_ids[edge.target]
-        {
+        if partition_ids[edge.source] != partition_ids[edge.target] {
             file.write_all(
                 (coordinates[edge.source].lat as f64 / 1000000.)
                     .to_string()
@@ -82,7 +81,7 @@ pub fn assignment_csv(
     }
 }
 
-pub fn binary_partition_file(partition_file: &str, partition_ids: Vec<PartitionID>) {
+pub fn binary_partition_file(partition_file: &str, partition_ids: &[PartitionID]) {
     let mut f = BufWriter::new(File::create(partition_file).unwrap());
     serialize_into(&mut f, &partition_ids).unwrap();
 }
