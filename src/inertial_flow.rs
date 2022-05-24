@@ -54,10 +54,10 @@ pub fn sub_step(
     balance_factor: f64,
     upper_bound: Arc<AtomicI32>,
 ) -> (i32, f64, bitvec::vec::BitVec, Vec<usize>) {
-    assert!(index < 4);
-    assert!(balance_factor > 0.);
-    assert!(balance_factor < 0.5);
-    assert!(coordinates.len() > 2);
+    debug_assert!(index < 4);
+    debug_assert!(balance_factor > 0.);
+    debug_assert!(balance_factor < 0.5);
+    debug_assert!(coordinates.len() > 2);
 
     let current_coefficients = &Coefficients::new()[index];
     info!("[{index}] sorting cooefficient: {:?}", current_coefficients);
@@ -71,8 +71,8 @@ pub fn sub_step(
     let sources = &node_id_list[0..size_of_contraction as usize];
     let targets = &node_id_list[node_id_list.len() - (size_of_contraction as usize)..];
 
-    assert!(!sources.is_empty());
-    assert!(!targets.is_empty());
+    debug_assert!(!sources.is_empty());
+    debug_assert!(!targets.is_empty());
 
     info!("[{index}] renumbering of inertial flow graph");
     let mut renumbering_table = vec![usize::MAX; coordinates.len()];
