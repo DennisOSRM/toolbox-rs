@@ -1,6 +1,6 @@
 pub mod primitives {
 
-    #[derive(Clone, Copy, Debug, PartialEq)]
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct FPCoordinate {
         pub lat: i32,
         pub lon: i32,
