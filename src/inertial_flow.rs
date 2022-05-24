@@ -104,13 +104,6 @@ pub fn sub_step(
         e.source = renumbering_table[e.source];
         e.target = renumbering_table[e.target];
     }
-    // for i in &node_id_list {
-    //     if renumbering_table[*i] == usize::MAX {
-    //         println!("missing renumbering for node {i}");
-    //         renumbering_table[*i] = current_id;
-    //         current_id += 1;
-    //     }
-    // }
     info!("[{index}] instantiating min-cut solver, epsilon 0.25");
 
     // remove eigenloops especially from contracted regions
