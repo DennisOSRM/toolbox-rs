@@ -1,53 +1,16 @@
 mod command_line;
 mod serialize;
 
-use clap::Parser;
-use core::panic;
 use env_logger::Env;
 use itertools::Itertools;
 
-use crate::{
-    command_line::recursion_in_range,
-    serialize::{assignment_csv, binary_partition_file, cut_csv},
-};
 use log::info;
 use rayon::prelude::*;
 use std::sync::{atomic::AtomicI32, Arc};
 use toolbox_rs::{
     dimacs, edge::Edge, inertial_flow, max_flow::ResidualCapacity, partition::PartitionID,
 };
-
-#[derive(Parser, Debug)]
-#[clap(author, version, about, long_about = None)]
-struct Args {
-    /// path to the input graph
-    #[clap(short, long)]
-    graph: String,
-
-    /// path to the input coordinates
-    #[clap(short, long)]
-    coordinates: String,
-
-    /// path to the cut-csv file
-    #[clap(short = 'o', long, default_value_t = String::new())]
-    cut_csv: String,
-
-    /// path to the assignment-csv file
-    #[clap(short, long, default_value_t = String::new())]
-    assignment_csv: String,
-
-    /// balance factor to use
-    #[clap(short, long, default_value_t = 0.25)]
-    b_factor: f64,
-
-    /// target level of the resulting partition
-    #[clap(short, long, parse(try_from_str=recursion_in_range), default_value_t = 1)]
-    target_level: u8,
-
-    /// path to the output file with partition ids
-    #[clap(short, long, default_value_t = String::new())]
-    partition_file: String,
-}
+use {command_line::Arguments, serialize::write_results};
 
 fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
@@ -60,22 +23,18 @@ fn main() {
     println!(r#"    _|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_|"""""| "#);
     println!(r#"    "`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-' "#);
 
-    // parse command line parameters
-    let args = Args::parse();
-
-    if args.b_factor > 0.5 || args.b_factor < 0. {
-        panic!("balance factor must be between 0 and 0.5");
-    }
-    info!("target level: {}", args.target_level);
-    info!("balance factor: {}", args.b_factor);
-    info!("loading graph from {}", args.graph);
-    info!("loading coordinates from {}", args.coordinates);
+    // parse and print command line parameters
+    let args = <Arguments as clap::Parser>::parse();
+    info!("{args}");
 
     let edges = dimacs::read_graph::<ResidualCapacity>(&args.graph, dimacs::WeightType::Unit);
-    info!("edge count: {}", edges.len());
 
     let coordinates = dimacs::read_coordinates(&args.coordinates);
-    info!("coordinate count: {}", coordinates.len());
+    info!(
+        "loaded {} nodes and {} edges",
+        coordinates.len(),
+        edges.len()
+    );
 
     let mut partition_ids = vec![PartitionID::root(); coordinates.len()];
 
@@ -107,7 +66,7 @@ fn main() {
                 .min_by(|a, b| {
                     if a.0 == b.0 {
                         // note that a and b are inverted here on purpose:
-                        // balance is at most 0.5 and we want the closest, ie. largest value to it
+                        // balance is at most 0.5 and the closer the value the more balanced the partitions
                         return b.1.partial_cmp(&a.1).unwrap();
                     }
                     a.0.cmp(&b.0)
@@ -157,20 +116,7 @@ fn main() {
         level_queue = next_level_queue;
     }
 
-    if !args.assignment_csv.is_empty() {
-        info!("writing partition csv into: {}", args.assignment_csv);
-        assignment_csv(&args.assignment_csv, &partition_ids, &coordinates);
-    }
-
-    if !args.cut_csv.is_empty() {
-        info!("writing cut csv to {}", &args.cut_csv);
-        cut_csv(&args.cut_csv, &edges, &partition_ids, &coordinates);
-    }
-
-    if !args.partition_file.is_empty() {
-        info!("writing partition ids to {}", &args.partition_file);
-        binary_partition_file(&args.partition_file, &partition_ids);
-    }
+    write_results(&args, &partition_ids, &coordinates, &edges);
 
     for id in partition_ids {
         debug_assert_eq!(id.level(), args.target_level);
