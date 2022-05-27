@@ -64,7 +64,7 @@ fn main() {
         let next_job_queue = current_job_queue
             .iter()
             .enumerate()
-            .map(|(id, job)| {
+            .flat_map(|(id, job)| {
                 pb.set_message(format!("cell #{}", id));
                 pb.inc(1);
 
@@ -83,7 +83,7 @@ fn main() {
                             upper_bound.clone(),
                         )
                     })
-                    .min_by(|a, b| flow_cmp(a, b));
+                    .min_by(flow_cmp);
 
                 let result = best_max_flow.unwrap();
                 debug!(
@@ -96,12 +96,12 @@ fn main() {
                 let (mut left_ids, mut right_ids): (Vec<ProxyId>, Vec<ProxyId>) =
                     job.2.iter().partition(|id| result.assignment[(id).node_id]);
 
-                (&mut left_ids).into_iter().for_each(|id| {
+                (&mut left_ids).iter_mut().for_each(|id| {
                     id.partition_id.make_left_child();
                     left_set[id.node_id] = id.partition_id;
                 });
                 (&mut right_ids)
-                    .into_iter()
+                    .iter_mut()
                     .for_each(|id| id.partition_id.make_right_child());
 
                 // partition edge and node id sets for the next iterationß
@@ -117,7 +117,6 @@ fn main() {
                     (right_edges, &coordinates, right_ids),
                 ];
             })
-            .flatten()
             .collect();
         current_level += 1;
         pb.finish_with_message(format!("level {current_level} done"));
@@ -128,8 +127,7 @@ fn main() {
     let mut partition_ids = vec![PartitionID::root(); coordinates.len()];
     current_job_queue
         .iter()
-        .map(|job| &job.2)
-        .flatten()
+        .flat_map(|job| &job.2)
         .for_each(|proxy| {
             partition_ids[proxy.node_id] = proxy.partition_id;
         });
