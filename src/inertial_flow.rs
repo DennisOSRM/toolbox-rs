@@ -40,8 +40,6 @@ pub struct FlowResult {
     pub flow: i32,
     pub balance: f64,
     pub assignment: bitvec::vec::BitVec,
-    // TODO: make superflous by renumbering before returning
-    pub renumbering_table: Vec<usize>,
 }
 
 pub fn flow_cmp(a: &FlowResult, b: &FlowResult) -> std::cmp::Ordering {
@@ -64,20 +62,20 @@ pub fn flow_cmp(a: &FlowResult, b: &FlowResult) -> std::cmp::Ordering {
 /// * `balance_factor` - balance factor, i.e. how many nodes get contracted
 /// * `upper_bound` - a global upperbound to the best inertial flow cut
 pub fn sub_step(
-    index: usize,
+    axis: usize,
     input_edges: &[InputEdge<ResidualCapacity>],
     coordinates: &[FPCoordinate],
     node_id_list: &[usize],
     balance_factor: f64,
     upper_bound: Arc<AtomicI32>,
 ) -> FlowResult {
-    debug_assert!(index < 4);
+    debug_assert!(axis < 4);
     debug_assert!(balance_factor > 0.);
     debug_assert!(balance_factor < 0.5);
     debug_assert!(coordinates.len() > 2);
 
-    let current_coefficients = &Coefficients::new()[index];
-    debug!("[{index}] sorting cooefficient: {:?}", current_coefficients);
+    let current_coefficients = &Coefficients::new()[axis];
+    debug!("[{axis}] sorting cooefficient: {:?}", current_coefficients);
     // the iteration proxy list to be sorted. The coordinates vector itself is not touched.
     let mut node_id_list = node_id_list.to_vec();
     node_id_list.sort_unstable_by_key(|a| -> i32 {
@@ -91,7 +89,7 @@ pub fn sub_step(
     debug_assert!(!sources.is_empty());
     debug_assert!(!targets.is_empty());
 
-    debug!("[{index}] renumbering of inertial flow graph");
+    debug!("[{axis}] renumbering of inertial flow graph");
     let mut renumbering_table = vec![usize::MAX; coordinates.len()];
     // nodes in the in the graph have to be numbered consecutively.
     // the mapping is input id -> dinic id
@@ -121,20 +119,20 @@ pub fn sub_step(
         e.source = renumbering_table[e.source];
         e.target = renumbering_table[e.target];
     }
-    debug!("[{index}] instantiating min-cut solver, epsilon 0.25");
+    debug!("[{axis}] instantiating min-cut solver, epsilon 0.25");
 
     // remove eigenloops especially from contracted regions
     let edge_count_before = edges.len();
     edges.retain(|edge| edge.source != edge.target);
     debug!(
-        "[{index}] eigenloop removal - edge count before {edge_count_before}, after {}",
+        "[{axis}] eigenloop removal - edge count before {edge_count_before}, after {}",
         edges.len()
     );
     edges.shrink_to_fit();
 
-    debug!("[{index}] instantiating min-cut solver, epsilon {balance_factor}");
+    debug!("[{axis}] instantiating min-cut solver, epsilon {balance_factor}");
     let mut max_flow_solver = Dinic::from_edge_list(edges, 0, 1);
-    debug!("[{index}] instantiated min-cut solver");
+    debug!("[{axis}] instantiated min-cut solver");
     max_flow_solver.run_with_upper_bound(upper_bound);
 
     let max_flow = max_flow_solver.max_flow();
@@ -145,33 +143,44 @@ pub fn sub_step(
             flow: i32::MAX,
             balance: 0.,
             assignment: BitVec::new(),
-            renumbering_table: Vec::new(),
         };
     }
     let flow = max_flow.expect("max flow computation did not run");
 
-    debug!("[{index}] computed max flow: {flow}");
-    let assignment = max_flow_solver
+    debug!("[{axis}] computed max flow: {flow}");
+    let intermediate_assignment = max_flow_solver
         .assignment(0)
         .expect("max flow computation did not run");
 
-    let left_size = assignment.iter().filter(|b| !**b).count() + sources.len() - 1;
-    let right_size = assignment.iter().filter(|b| **b).count() + targets.len() - 1;
+    let left_size = intermediate_assignment.iter().filter(|b| !**b).count() + sources.len() - 1;
+    let right_size = intermediate_assignment.iter().filter(|b| **b).count() + targets.len() - 1;
     debug!(
-        "[{index}] assignment has {} total entries",
+        "[{axis}] assignment has {} total entries",
         left_size + right_size
     );
-    debug!("[{index}] assignment has {right_size} 1-entries");
-    debug!("[{index}] assignment has {left_size} 0-entries");
+    debug!("[{axis}] assignment has {right_size} 1-entries");
+    debug!("[{axis}] assignment has {left_size} 0-entries");
 
     let balance = std::cmp::min(left_size, right_size) as f64 / (right_size + left_size) as f64;
-    debug!("[{index}] balance: {balance}");
+    debug!("[{axis}] balance: {balance}");
+
+    let mut assignment = BitVec::with_capacity(coordinates.len());
+    assignment.resize(coordinates.len(), false);
+
+    // explode intermediate assigment
+    for id in &node_id_list {
+        let index = renumbering_table[*id];
+        if index == usize::MAX {
+            assignment.set(*id, id % 2 == 0);
+        } else {
+            assignment.set(*id, intermediate_assignment[index]);
+        }
+    }
 
     FlowResult {
         flow,
         balance,
         assignment,
-        renumbering_table,
     }
 }
 
@@ -194,8 +203,8 @@ mod tests {
     fn iterate_with_wrap() {
         let coefficients = Coefficients::new();
 
-        (0..4).zip(4..8).for_each(|index| {
-            assert_eq!(coefficients[index.0], coefficients[index.1]);
+        (0..4).zip(4..8).for_each(|indices| {
+            assert_eq!(coefficients[indices.0], coefficients[indices.1]);
         });
     }
 
@@ -234,6 +243,6 @@ mod tests {
         assert_eq!(result.flow, 1);
         assert_eq!(result.balance, 0.5);
         assert_eq!(result.assignment.len(), 6);
-        assert_eq!(result.assignment, bits![1, 0, 0, 0, 1, 1]);
+        assert_eq!(result.assignment, bits![0, 0, 0, 1, 1, 1]);
     }
 }

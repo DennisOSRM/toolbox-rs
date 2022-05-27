@@ -1,6 +1,7 @@
 mod command_line;
 mod serialize;
 
+use bool_ext::BoolExt;
 use env_logger::Env;
 use itertools::Itertools;
 
@@ -9,7 +10,11 @@ use log::{debug, info};
 use rayon::prelude::*;
 use std::sync::{atomic::AtomicI32, Arc};
 use toolbox_rs::{
-    dimacs, edge::Edge, inertial_flow::{self, FlowResult, flow_cmp}, max_flow::ResidualCapacity, partition::PartitionID,
+    dimacs,
+    edge::Edge,
+    inertial_flow::{self, flow_cmp, FlowResult},
+    max_flow::ResidualCapacity,
+    partition::PartitionID,
 };
 use {command_line::Arguments, serialize::write_results};
 
@@ -39,7 +44,7 @@ fn main() {
 
     let mut partition_ids = vec![PartitionID::root(); coordinates.len()];
 
-    // enqueue job for root node
+    // enqueue initial job for root node
     let proxy_vector = (0..coordinates.len()).collect_vec();
     let job = (edges.clone(), &coordinates, proxy_vector);
     let mut current_job_queue = vec![job];
@@ -76,23 +81,19 @@ fn main() {
                 .min_by(|a, b| flow_cmp(a, b));
 
             let result = best_max_flow.unwrap();
-            debug!("best max-flow: {}, balance: {:.3}", result.flow, result.balance);
+            debug!(
+                "best max-flow: {}, balance: {:.3}",
+                result.flow, result.balance
+            );
 
             debug!("assigning partition ids to all nodes");
-            // assign ids for nodes by iterating over the proxy vector elements
+            // assign child ids for nodes by iterating over the proxy vector elements
             job.2.iter().for_each(|id| {
-                // TODO: if this doesn't work in parallel then return all the assignments, collect and flatten, s.t. the partition ids are assigned at the end of the level
-                let index_of_node = result.renumbering_table[*id];
-                // unconnected nodes don't have an assignment, i.e. an index into the assigment, they are assigned semi-randomly by their id being odd or even
-                if (index_of_node < partition_ids.len() && result.assignment[index_of_node])
-                    || (index_of_node >= partition_ids.len() && index_of_node % 2 == 0)
-                {
-                    partition_ids[*id].make_left_child();
-                } else {
-                    partition_ids[*id].make_right_child();
-                }
+                result.assignment[*id]
+                    .and_do(|| partition_ids[*id].make_left_child())
+                    .or_do(|| partition_ids[*id].make_right_child());
             });
-            // partition proxy vector and edge sets
+            // partition edge and node id sets for the next iterationß
             debug!("generating next level edges");
             let (left_edges, right_edges): (Vec<_>, Vec<_>) = (&job.0)
                 .iter()
