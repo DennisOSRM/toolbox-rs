@@ -1,7 +1,6 @@
 mod command_line;
 mod serialize;
 
-use bool_ext::BoolExt;
 use env_logger::Env;
 use itertools::Itertools;
 
@@ -12,7 +11,7 @@ use std::sync::{atomic::AtomicI32, Arc};
 use toolbox_rs::{
     dimacs,
     edge::Edge,
-    inertial_flow::{self, flow_cmp, FlowResult},
+    inertial_flow::{self, flow_cmp, FlowResult, ProxyId},
     max_flow::ResidualCapacity,
     partition::PartitionID,
 };
@@ -42,10 +41,13 @@ fn main() {
         edges.len()
     );
 
-    let mut partition_ids = vec![PartitionID::root(); coordinates.len()];
-
     // enqueue initial job for root node
-    let proxy_vector = (0..coordinates.len()).collect_vec();
+    let proxy_vector = (0..coordinates.len())
+        .map(|i| ProxyId {
+            node_id: i,
+            partition_id: PartitionID::root(),
+        })
+        .collect_vec();
     let job = (edges.clone(), &coordinates, proxy_vector);
     let mut current_job_queue = vec![job];
 
@@ -55,67 +57,87 @@ fn main() {
 
     let mut current_level = 0;
     while !current_job_queue.is_empty() && current_level < args.target_level {
-        let mut next_job_queue = Vec::new();
+        // let mut next_job_queue = Vec::new();
         let pb = ProgressBar::new(current_job_queue.len() as u64);
         pb.set_style(sty.clone());
 
-        current_job_queue.iter().enumerate().for_each(|(id, job)| {
-            pb.set_message(format!("cell #{}", id));
-            pb.inc(1);
+        let next_job_queue = current_job_queue
+            .iter()
+            .enumerate()
+            .map(|(id, job)| {
+                pb.set_message(format!("cell #{}", id));
+                pb.inc(1);
 
-            // we use the count of coordinates as an upper bound to the cut size
-            let upper_bound = Arc::new(AtomicI32::new((&job.2).len().try_into().unwrap()));
-            // run inertial flow on all four axes
-            let best_max_flow = (0..4)
-                .into_par_iter()
-                .map(|axis| -> FlowResult {
-                    inertial_flow::sub_step(
-                        axis,
-                        &job.0,
-                        job.1,
-                        &job.2,
-                        args.b_factor,
-                        upper_bound.clone(),
-                    )
-                })
-                .min_by(|a, b| flow_cmp(a, b));
+                // we use the count of coordinates as an upper bound to the cut size
+                let upper_bound = Arc::new(AtomicI32::new((&job.2).len().try_into().unwrap()));
+                // run inertial flow on all four axes
+                let best_max_flow = (0..4)
+                    .into_par_iter()
+                    .map(|axis| -> FlowResult {
+                        inertial_flow::sub_step(
+                            axis,
+                            &job.0,
+                            job.1,
+                            &job.2,
+                            args.b_factor,
+                            upper_bound.clone(),
+                        )
+                    })
+                    .min_by(|a, b| flow_cmp(a, b));
 
-            let result = best_max_flow.unwrap();
-            debug!(
-                "best max-flow: {}, balance: {:.3}",
-                result.flow, result.balance
-            );
+                let result = best_max_flow.unwrap();
+                debug!(
+                    "best max-flow: {}, balance: {:.3}",
+                    result.flow, result.balance
+                );
 
-            debug!("assigning partition ids to all nodes");
-            // assign child ids for nodes by iterating over the proxy vector elements
-            job.2.iter().for_each(|id| {
-                result.assignment[*id]
-                    .and_do(|| partition_ids[*id].make_left_child())
-                    .or_do(|| partition_ids[*id].make_right_child());
-            });
-            // partition edge and node id sets for the next iterationß
-            debug!("generating next level edges");
-            let (left_edges, right_edges): (Vec<_>, Vec<_>) = (&job.0)
-                .iter()
-                .filter(|edge| partition_ids[edge.source()] == partition_ids[edge.target()])
-                .partition(|edge| partition_ids[edge.source()].is_left_child());
-            debug!("generating next level ids");
-            let (left_ids, right_ids): (Vec<_>, Vec<_>) = (&job.2)
-                .iter()
-                .partition(|id| partition_ids[**id].is_left_child());
-            // iterate on both halves
-            next_job_queue.push((left_edges, &coordinates, left_ids));
-            next_job_queue.push((right_edges, &coordinates, right_ids));
-        });
+                debug!("assigning partition ids to all nodes");
+                let mut left_set = vec![PartitionID::root(); coordinates.len()];
+                let (mut left_ids, mut right_ids): (Vec<ProxyId>, Vec<ProxyId>) =
+                    job.2.iter().partition(|id| result.assignment[(id).node_id]);
+
+                (&mut left_ids).into_iter().for_each(|id| {
+                    id.partition_id.make_left_child();
+                    left_set[id.node_id] = id.partition_id;
+                });
+                (&mut right_ids)
+                    .into_iter()
+                    .for_each(|id| id.partition_id.make_right_child());
+
+                // partition edge and node id sets for the next iterationß
+                debug!("generating next level edges");
+                let (left_edges, right_edges): (Vec<_>, Vec<_>) = (&job.0)
+                    .iter()
+                    .filter(|edge| left_set[edge.source()] == left_set[edge.target()])
+                    .partition(|edge| left_set[edge.source()] != PartitionID::root());
+                debug!("generating next level ids");
+                // iterate on both halves
+                return vec![
+                    (left_edges, &coordinates, left_ids),
+                    (right_edges, &coordinates, right_ids),
+                ];
+            })
+            .flatten()
+            .collect();
         current_level += 1;
         pb.finish_with_message(format!("level {current_level} done"));
         current_job_queue = next_job_queue;
     }
 
+    // collect all the partition ids into one vector
+    let mut partition_ids = vec![PartitionID::root(); coordinates.len()];
+    current_job_queue
+        .iter()
+        .map(|job| &job.2)
+        .flatten()
+        .for_each(|proxy| {
+            partition_ids[proxy.node_id] = proxy.partition_id;
+        });
+
     write_results(&args, &partition_ids, &coordinates, &edges);
 
     for id in partition_ids {
-        debug_assert_eq!(id.level(), args.target_level);
+        assert_eq!(id.level(), args.target_level);
     }
     info!("done.");
 }
