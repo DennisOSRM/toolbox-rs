@@ -12,6 +12,7 @@ use crate::{
     edge::InputEdge,
     geometry::primitives::FPCoordinate,
     max_flow::{MaxFlow, ResidualCapacity},
+    partition::PartitionID,
 };
 
 pub struct Coefficients([(i32, i32); 4]);
@@ -34,6 +35,12 @@ impl Index<usize> for Coefficients {
     fn index(&self, i: usize) -> &(i32, i32) {
         &self.0[i % self.0.len()]
     }
+}
+
+#[derive(Copy, Clone)]
+pub struct ProxyId {
+    pub node_id: usize,
+    pub partition_id: PartitionID,
 }
 
 pub struct FlowResult {
@@ -65,7 +72,7 @@ pub fn sub_step(
     axis: usize,
     input_edges: &[InputEdge<ResidualCapacity>],
     coordinates: &[FPCoordinate],
-    node_id_list: &[usize],
+    node_id_list: &[ProxyId],
     balance_factor: f64,
     upper_bound: Arc<AtomicI32>,
 ) -> FlowResult {
@@ -79,7 +86,8 @@ pub fn sub_step(
     // the iteration proxy list to be sorted. The coordinates vector itself is not touched.
     let mut node_id_list = node_id_list.to_vec();
     node_id_list.sort_unstable_by_key(|a| -> i32 {
-        coordinates[*a].lon * current_coefficients.0 + coordinates[*a].lat * current_coefficients.1
+        coordinates[a.node_id].lon * current_coefficients.0
+            + coordinates[a.node_id].lat * current_coefficients.1
     });
 
     let size_of_contraction = max(1, (node_id_list.len() as f64 * balance_factor) as usize);
@@ -95,10 +103,10 @@ pub fn sub_step(
     // the mapping is input id -> dinic id
 
     for s in sources {
-        renumbering_table[*s] = 0;
+        renumbering_table[s.node_id] = 0;
     }
     for t in targets {
-        renumbering_table[*t] = 1;
+        renumbering_table[t.node_id] = 1;
     }
 
     // each thread holds their own copy of the edge set
@@ -169,11 +177,11 @@ pub fn sub_step(
 
     // explode intermediate assigment
     for id in &node_id_list {
-        let index = renumbering_table[*id];
+        let index = renumbering_table[id.node_id];
         if index == usize::MAX {
-            assignment.set(*id, id % 2 == 0);
+            assignment.set(id.node_id, id.node_id % 2 == 0);
         } else {
-            assignment.set(*id, intermediate_assignment[index]);
+            assignment.set(id.node_id, intermediate_assignment[index]);
         }
     }
 
@@ -192,6 +200,8 @@ mod tests {
     use bitvec::prelude::*;
     use itertools::Itertools;
 
+    use crate::inertial_flow::ProxyId;
+    use crate::partition::PartitionID;
     use crate::{
         edge::InputEdge, geometry::primitives::FPCoordinate, inertial_flow::sub_step,
         max_flow::ResidualCapacity,
@@ -237,7 +247,12 @@ mod tests {
             FPCoordinate::new(0, 2),
             FPCoordinate::new(1, 3),
         ];
-        let node_id_list = (0..coordinates.len()).collect_vec();
+        let node_id_list = (0..coordinates.len())
+            .map(|i| ProxyId {
+                node_id: i,
+                partition_id: PartitionID::root(),
+            })
+            .collect_vec();
 
         let result = sub_step(3, &edges, &coordinates, &node_id_list, 0.25, upper_bound);
         assert_eq!(result.flow, 1);
