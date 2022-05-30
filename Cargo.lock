@@ -846,6 +846,7 @@ dependencies = [
  "rand",
  "rayon",
  "serde",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -986,3 +987,9 @@ checksum = "30b31594f29d27036c383b53b59ed3476874d518f0efb151b27a4c275141390e"
 dependencies = [
  "tap",
 ]
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "074914ea4eec286eb8d1fd745768504f420a1f7b7919185682a4a267bed7d2e7"
