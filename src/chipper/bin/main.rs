@@ -7,13 +7,18 @@ use itertools::Itertools;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info};
 use rayon::prelude::*;
-use std::sync::{atomic::AtomicI32, Arc};
+use std::{
+    cell::Cell,
+    sync::{atomic::AtomicI32, Arc},
+};
 use toolbox_rs::{
     dimacs,
     edge::Edge,
-    inertial_flow::{self, flow_cmp, FlowResult, ProxyId},
+    inertial_flow::{self, flow_cmp, FlowResult},
     max_flow::ResidualCapacity,
-    partition::PartitionID,
+    partition::{
+        make_left_child, make_left_most_descendant_on_level_down, make_right_child, PartitionID,
+    },
 };
 use {command_line::Arguments, serialize::write_results};
 
@@ -35,19 +40,9 @@ fn main() {
     let edges = dimacs::read_graph::<ResidualCapacity>(&args.graph, dimacs::WeightType::Unit);
 
     let coordinates = dimacs::read_coordinates(&args.coordinates);
-    info!(
-        "loaded {} nodes and {} edges",
-        coordinates.len(),
-        edges.len()
-    );
 
     // enqueue initial job for root node
-    let proxy_vector = (0..coordinates.len())
-        .map(|i| ProxyId {
-            node_id: i,
-            partition_id: PartitionID::root(),
-        })
-        .collect_vec();
+    let proxy_vector = (0..coordinates.len()).collect_vec();
     let job = (edges.clone(), &coordinates, proxy_vector);
     let mut current_job_queue = vec![job];
 
@@ -56,8 +51,11 @@ fn main() {
         .progress_chars("#>-");
 
     let mut current_level = 0;
-    while !current_job_queue.is_empty() && current_level < args.target_level {
-        // let mut next_job_queue = Vec::new();
+
+    let mut partition_ids = vec![PartitionID::root(); coordinates.len()];
+    let slice_ids = Cell::from_mut(partition_ids.as_mut_slice());
+
+    while !current_job_queue.is_empty() && current_level < args.recursion_depth {
         let pb = ProgressBar::new(current_job_queue.len() as u64);
         pb.set_style(sty.clone());
 
@@ -92,30 +90,48 @@ fn main() {
                 );
 
                 debug!("assigning partition ids to all nodes");
-                let mut left_set = vec![PartitionID::root(); coordinates.len()];
-                let (mut left_ids, mut right_ids): (Vec<ProxyId>, Vec<ProxyId>) =
-                    job.2.iter().partition(|id| result.assignment[(id).node_id]);
+                let (left_ids, right_ids): (Vec<_>, Vec<_>) =
+                    job.2.iter().partition(|id| result.assignment[**id]);
 
-                (&mut left_ids).iter_mut().for_each(|id| {
-                    id.partition_id.make_left_child();
-                    left_set[id.node_id] = id.partition_id;
+                (left_ids).iter().for_each(|id| {
+                    make_left_child(*id, slice_ids);
                 });
-                (&mut right_ids)
-                    .iter_mut()
-                    .for_each(|id| id.partition_id.make_right_child());
+                (right_ids).iter().for_each(|id| {
+                    make_right_child(*id, slice_ids);
+                });
 
-                // partition edge and node id sets for the next iterationß
+                // partition edge and node id sets for the next iteration
                 debug!("generating next level edges");
                 let (left_edges, right_edges): (Vec<_>, Vec<_>) = (&job.0)
                     .iter()
-                    .filter(|edge| left_set[edge.source()] == left_set[edge.target()])
-                    .partition(|edge| left_set[edge.source()] != PartitionID::root());
+                    .filter(|edge| unsafe {
+                        (*(slice_ids.as_ptr()))[edge.source()]
+                            == (*(slice_ids.as_ptr()))[edge.target()]
+                    })
+                    .partition(|edge| unsafe {
+                        (*(slice_ids.as_ptr()))[edge.source()].is_left_child()
+                    });
                 debug!("generating next level ids");
+
                 // iterate on both halves
-                return vec![
-                    (left_edges, &coordinates, left_ids),
-                    (right_edges, &coordinates, right_ids),
-                ];
+                let mut next_jobs = Vec::new();
+                if left_ids.len() > args.minimum_cell_size {
+                    next_jobs.push((left_edges, &coordinates, left_ids));
+                } else {
+                    let level_difference = (args.recursion_depth - current_level - 1) as usize;
+                    for i in &left_ids {
+                        make_left_most_descendant_on_level_down(slice_ids, i, level_difference);
+                    }
+                }
+                if right_ids.len() > args.minimum_cell_size {
+                    next_jobs.push((right_edges, &coordinates, right_ids));
+                } else {
+                    let level_difference = (args.recursion_depth - current_level - 1) as usize;
+                    for i in &right_ids {
+                        make_left_most_descendant_on_level_down(slice_ids, i, level_difference);
+                    }
+                }
+                next_jobs
             })
             .collect();
         current_level += 1;
@@ -123,19 +139,10 @@ fn main() {
         current_job_queue = next_job_queue;
     }
 
-    // collect all the partition ids into one vector
-    let mut partition_ids = vec![PartitionID::root(); coordinates.len()];
-    current_job_queue
-        .iter()
-        .flat_map(|job| &job.2)
-        .for_each(|proxy| {
-            partition_ids[proxy.node_id] = proxy.partition_id;
-        });
-
     write_results(&args, &partition_ids, &coordinates, &edges);
 
     for id in partition_ids {
-        assert_eq!(id.level(), args.target_level);
+        assert_eq!(id.level(), args.recursion_depth);
     }
     info!("done.");
 }

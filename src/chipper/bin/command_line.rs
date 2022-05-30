@@ -2,19 +2,19 @@ use std::{fmt::Display, ops::RangeInclusive};
 
 use clap::Parser;
 
-static LEVEL_RANGE: RangeInclusive<u8> = 1..=31;
+static RECURSION_RANGE: RangeInclusive<u8> = 1..=31;
 static BALANCE_RANGE: RangeInclusive<f64> = 0. ..=0.5;
 
-/// Checks whether the target level is within the expected range of (1, 31].
-pub fn target_level_in_range(s: &str) -> Result<u8, String> {
-    let target_level: u8 = s.parse().map_err(|_| format!("`{}` isn't a number", s))?;
-    if LEVEL_RANGE.contains(&target_level) {
-        Ok(target_level)
+/// Checks whether the recursion range is within the expected range of (1, 31].
+pub fn recursion_depth_in_range(s: &str) -> Result<u8, String> {
+    let recursion_depth: u8 = s.parse().map_err(|_| format!("`{}` isn't a number", s))?;
+    if RECURSION_RANGE.contains(&recursion_depth) {
+        Ok(recursion_depth)
     } else {
         Err(format!(
-            "target level not in range {}-{}",
-            LEVEL_RANGE.start(),
-            LEVEL_RANGE.end()
+            "recursion range not in range {}-{}",
+            RECURSION_RANGE.start(),
+            RECURSION_RANGE.end()
         ))
     }
 }
@@ -56,9 +56,10 @@ pub struct Arguments {
     #[clap(short, long, parse(try_from_str=balance_factor_in_range), default_value_t = 0.25)]
     pub b_factor: f64,
 
-    /// target level of the resulting partition
-    #[clap(short, long, parse(try_from_str=target_level_in_range), default_value_t = 1)]
-    pub target_level: u8,
+    /// depth of recursive partitioning; off by one from the level of a node
+    /// since the root node has level 1, e.g. depths of 1 gives cells on level 2
+    #[clap(short, long, parse(try_from_str=recursion_depth_in_range), default_value_t = 1)]
+    pub recursion_depth: u8,
 
     /// path to the output file with partition ids
     #[clap(short, long, default_value_t = String::new())]
@@ -74,7 +75,8 @@ impl Display for Arguments {
         writeln!(f, "command line arguments:")?;
         writeln!(f, "graph: {}", self.graph)?;
         writeln!(f, "coordinates: {}", self.coordinates)?;
-        writeln!(f, "target level: {}", self.target_level)?;
-        writeln!(f, "balance factor: {}", self.b_factor)
+        writeln!(f, "recursion range: {}", self.recursion_depth)?;
+        writeln!(f, "balance factor: {}", self.b_factor)?;
+        writeln!(f, "minimum_cell_size: {}", self.minimum_cell_size)
     }
 }
