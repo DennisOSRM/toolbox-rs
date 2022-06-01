@@ -27,10 +27,10 @@ impl RotatedComparators {
     pub fn new() -> Self {
         // Comparator functions use the follwoing coefficients: (0, 1), (1, 0), (1, 1), (-1, 1)])
         RotatedComparators([
-            |lat, lon| -> i32 { lon * 0 + lat * 1 },
-            |lat, lon| -> i32 { lon * 1 + lat * 0 },
-            |lat, lon| -> i32 { lon * 1 + lat * 1 },
-            |lat, lon| -> i32 { lon * -1 + lat * 1 },
+            |lat, _lon| -> i32 { lat },
+            |_lat, lon| -> i32 { lon },
+            |lat, lon| -> i32 { lon + lat },
+            |lat, lon| -> i32 { -lon + lat },
         ])
     }
 }
