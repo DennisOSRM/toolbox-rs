@@ -21,4 +21,5 @@ pub mod rdx_sort;
 pub mod static_graph;
 pub mod tarjan;
 pub mod union_find;
+pub mod unsafe_slice;
 pub mod wgs84;
