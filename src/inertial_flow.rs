@@ -14,24 +14,30 @@ use crate::{
     max_flow::{MaxFlow, ResidualCapacity},
 };
 
-pub struct Coefficients([(i32, i32); 4]);
-// coefficients for rotation matrix at 0, 90, 180 and 270 degrees
+pub struct RotatedComparators([fn(i32, i32) -> i32; 4]);
+// comparator equivalent to rotation matrix at 0, 90, 180 and 270 degrees
 
-impl Default for Coefficients {
+impl Default for RotatedComparators {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Coefficients {
+impl RotatedComparators {
     pub fn new() -> Self {
-        Coefficients([(0, 1), (1, 0), (1, 1), (-1, 1)])
+        // Comparator functions use the follwoing coefficients: (0, 1), (1, 0), (1, 1), (-1, 1)])
+        RotatedComparators([
+            |lat, lon| -> i32 { lon * 0 + lat * 1 },
+            |lat, lon| -> i32 { lon * 1 + lat * 0 },
+            |lat, lon| -> i32 { lon * 1 + lat * 1 },
+            |lat, lon| -> i32 { lon * -1 + lat * 1 },
+        ])
     }
 }
 
-impl Index<usize> for Coefficients {
-    type Output = (i32, i32);
-    fn index(&self, i: usize) -> &(i32, i32) {
+impl Index<usize> for RotatedComparators {
+    type Output = fn(i32, i32) -> i32;
+    fn index(&self, i: usize) -> &fn(i32, i32) -> i32 {
         &self.0[i % self.0.len()]
     }
 }
@@ -74,12 +80,12 @@ pub fn sub_step(
     debug_assert!(balance_factor < 0.5);
     debug_assert!(coordinates.len() > 2);
 
-    let current_coefficients = &Coefficients::new()[axis];
-    debug!("[{axis}] sorting cooefficient: {:?}", current_coefficients);
+    let comparator = &RotatedComparators::new()[axis];
+    debug!("[{axis}] sorting cooefficient: {:?}", comparator);
     // the iteration proxy list to be sorted. The coordinates vector itself is not touched.
     let mut node_id_list = node_id_list.to_vec();
     node_id_list.sort_unstable_by_key(|a| -> i32 {
-        coordinates[*a].lon * current_coefficients.0 + coordinates[*a].lat * current_coefficients.1
+        comparator(coordinates[*a].lat, coordinates[*a].lon)
     });
 
     let size_of_contraction = max(1, (node_id_list.len() as f64 * balance_factor) as usize);
@@ -171,6 +177,7 @@ pub fn sub_step(
     for id in &node_id_list {
         let index = renumbering_table[*id];
         if index == usize::MAX {
+            // a disconnected node will be assigned to a semi-random partition
             assignment.set(*id, id % 2 == 0);
         } else {
             assignment.set(*id, intermediate_assignment[index]);
@@ -197,14 +204,14 @@ mod tests {
         max_flow::ResidualCapacity,
     };
 
-    use super::Coefficients;
+    use super::RotatedComparators;
 
     #[test]
     fn iterate_with_wrap() {
-        let coefficients = Coefficients::new();
+        let comparators = RotatedComparators::new();
 
         (0..4).zip(4..8).for_each(|indices| {
-            assert_eq!(coefficients[indices.0], coefficients[indices.1]);
+            assert_eq!(comparators[indices.0], comparators[indices.1]);
         });
     }
 
