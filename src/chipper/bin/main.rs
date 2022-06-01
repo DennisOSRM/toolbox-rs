@@ -37,6 +37,15 @@ fn main() {
     let args = <Arguments as clap::Parser>::parse();
     info!("{args}");
 
+    // set the number of threads if supplied on the command line
+    if let Some(number_of_threads) = args.number_of_threads {
+        info!("setting number of threads to {number_of_threads}");
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(number_of_threads)
+            .build_global()
+            .unwrap();
+    }
+
     let edges = dimacs::read_graph::<ResidualCapacity>(&args.graph, dimacs::WeightType::Unit);
 
     let coordinates = dimacs::read_coordinates(&args.coordinates);
