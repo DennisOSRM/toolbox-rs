@@ -101,7 +101,7 @@ impl Dinic {
         debug!("dedup done");
 
         // at this point the edge set of the residual graph doesn't have any
-        // duplicates anymore. note that this is fine, as we are looking to
+        // duplicates anymore. Note that this is fine, as we are looking to
         // compute a node partition.
         Self {
             residual_graph: StaticGraph::new_from_sorted_list(edge_list),

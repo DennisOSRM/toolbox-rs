@@ -7,18 +7,14 @@ use itertools::Itertools;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info};
 use rayon::prelude::*;
-use std::{
-    cell::Cell,
-    sync::{atomic::AtomicI32, Arc},
-};
+use std::sync::{atomic::AtomicI32, Arc};
+use toolbox_rs::unsafe_slice::UnsafeSlice;
 use toolbox_rs::{
     dimacs,
     edge::Edge,
     inertial_flow::{self, flow_cmp, FlowResult},
     max_flow::ResidualCapacity,
-    partition::{
-        make_left_child, make_left_most_descendant_on_level_down, make_right_child, PartitionID,
-    },
+    partition::PartitionID,
 };
 use {command_line::Arguments, serialize::write_results};
 
@@ -38,7 +34,6 @@ fn main() {
     info!("{args}");
 
     let edges = dimacs::read_graph::<ResidualCapacity>(&args.graph, dimacs::WeightType::Unit);
-
     let coordinates = dimacs::read_coordinates(&args.coordinates);
 
     // enqueue initial job for root node
@@ -51,16 +46,15 @@ fn main() {
         .progress_chars("#>-");
 
     let mut current_level = 0;
-
-    let mut partition_ids = vec![PartitionID::root(); coordinates.len()];
-    let slice_ids = Cell::from_mut(partition_ids.as_mut_slice());
+    let mut partition_ids_vec = vec![PartitionID::root(); coordinates.len()];
+    let partition_ids = UnsafeSlice::new(&mut partition_ids_vec);
 
     while !current_job_queue.is_empty() && current_level < args.recursion_depth {
         let pb = ProgressBar::new(current_job_queue.len() as u64);
         pb.set_style(sty.clone());
 
         let next_job_queue = current_job_queue
-            .iter()
+            .par_iter_mut()
             .enumerate()
             .flat_map(|(id, job)| {
                 pb.set_message(format!("cell #{}", id));
@@ -89,15 +83,15 @@ fn main() {
                     result.flow, result.balance
                 );
 
-                debug!("assigning partition ids to all nodes");
+                debug!("partitioning and assigning ids for all nodes");
                 let (left_ids, right_ids): (Vec<_>, Vec<_>) =
                     job.2.iter().partition(|id| result.assignment[**id]);
 
-                (left_ids).iter().for_each(|id| {
-                    make_left_child(*id, slice_ids);
+                (left_ids).iter().for_each(|id| unsafe {
+                    partition_ids.get(*id).make_left_child();
                 });
-                (right_ids).iter().for_each(|id| {
-                    make_right_child(*id, slice_ids);
+                (right_ids).iter().for_each(|id| unsafe {
+                    partition_ids.get(*id).make_right_child();
                 });
 
                 // partition edge and node id sets for the next iteration
@@ -105,12 +99,9 @@ fn main() {
                 let (left_edges, right_edges): (Vec<_>, Vec<_>) = (&job.0)
                     .iter()
                     .filter(|edge| unsafe {
-                        (*(slice_ids.as_ptr()))[edge.source()]
-                            == (*(slice_ids.as_ptr()))[edge.target()]
+                        partition_ids.get(edge.source()) == partition_ids.get(edge.target())
                     })
-                    .partition(|edge| unsafe {
-                        (*(slice_ids.as_ptr()))[edge.source()].is_left_child()
-                    });
+                    .partition(|edge| unsafe { partition_ids.get(edge.source()).is_left_child() });
                 debug!("generating next level ids");
 
                 // iterate on both halves
@@ -120,7 +111,11 @@ fn main() {
                 } else {
                     let level_difference = (args.recursion_depth - current_level - 1) as usize;
                     for i in &left_ids {
-                        make_left_most_descendant_on_level_down(slice_ids, i, level_difference);
+                        unsafe {
+                            partition_ids
+                                .get(*i)
+                                .make_leftmost_descendant(level_difference);
+                        }
                     }
                 }
                 if right_ids.len() > args.minimum_cell_size {
@@ -128,7 +123,11 @@ fn main() {
                 } else {
                     let level_difference = (args.recursion_depth - current_level - 1) as usize;
                     for i in &right_ids {
-                        make_left_most_descendant_on_level_down(slice_ids, i, level_difference);
+                        unsafe {
+                            partition_ids
+                                .get(*i)
+                                .make_leftmost_descendant(level_difference);
+                        }
                     }
                 }
                 next_jobs
@@ -139,10 +138,10 @@ fn main() {
         current_job_queue = next_job_queue;
     }
 
-    write_results(&args, &partition_ids, &coordinates, &edges);
+    write_results(&args, &partition_ids_vec, &coordinates, &edges);
 
-    for id in partition_ids {
-        assert_eq!(id.level(), args.recursion_depth);
+    for id in &partition_ids_vec {
+        debug_assert_eq!(id.level(), args.recursion_depth);
     }
     info!("done.");
 }

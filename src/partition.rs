@@ -1,6 +1,6 @@
 use core::cmp::max;
 use serde::{Deserialize, Serialize};
-use std::{cell::Cell, fmt::Display};
+use std::fmt::Display;
 
 /// represents the hiearchical partition id scheme. The root id has ID 1 and
 /// children are shifted to the left by one and plus 0/1. The parent child
@@ -86,30 +86,6 @@ impl Display for PartitionID {
     }
 }
 
-// TODO: Make PartitionID vector a struct with inner mutability
-pub fn make_left_child(index: usize, partition_ids: &Cell<[PartitionID]>) {
-    unsafe {
-        (*(partition_ids.as_ptr()))[index].make_left_child();
-    }
-}
-
-pub fn make_right_child(index: usize, partition_ids: &Cell<[PartitionID]>) {
-    unsafe {
-        (*(partition_ids.as_ptr()))[index].make_right_child();
-    }
-}
-
-pub fn make_left_most_descendant_on_level_down(
-    slice_ids: &Cell<[PartitionID]>,
-    i: &usize,
-    level_difference: usize,
-) {
-    unsafe {
-        let mut temp = (*(slice_ids.as_ptr()))[*i];
-        temp.make_leftmost_descendant(level_difference);
-        (*(slice_ids.as_ptr()))[*i] = temp;
-    }
-}
 #[cfg(test)]
 mod tests {
     use crate::partition::PartitionID;
