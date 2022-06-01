@@ -36,6 +36,10 @@ pub fn balance_factor_in_range(s: &str) -> Result<f64, String> {
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 pub struct Arguments {
+    /// Number of threads to use
+    #[clap(short, long)]
+    pub number_of_threads: Option<usize>,
+
     /// path to the input graph
     #[clap(short, long)]
     pub graph: String,
@@ -73,9 +77,12 @@ pub struct Arguments {
 impl Display for Arguments {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "command line arguments:")?;
+        if let Some(number_of_threads) = self.number_of_threads {
+            writeln!(f, "number_of_threads: {}", number_of_threads)?;
+        }
         writeln!(f, "graph: {}", self.graph)?;
         writeln!(f, "coordinates: {}", self.coordinates)?;
-        writeln!(f, "recursion range: {}", self.recursion_depth)?;
+        writeln!(f, "recursion depth: {}", self.recursion_depth)?;
         writeln!(f, "balance factor: {}", self.b_factor)?;
         writeln!(f, "minimum_cell_size: {}", self.minimum_cell_size)
     }
