@@ -4,16 +4,13 @@ use std::{
     fs::File,
     io::{BufWriter, Write},
 };
-use toolbox_rs::{
-    edge::InputEdge, geometry::primitives::FPCoordinate, max_flow::ResidualCapacity,
-    partition::PartitionID,
-};
+use toolbox_rs::{edge::TrivialEdge, geometry::primitives::FPCoordinate, partition::PartitionID};
 
 use crate::command_line::Arguments;
 
 pub fn cut_csv(
     file_path: &str,
-    edges: &[InputEdge<ResidualCapacity>],
+    edges: &[TrivialEdge],
     partition_ids: &[PartitionID],
     coordinates: &[FPCoordinate],
 ) {
@@ -92,7 +89,7 @@ pub fn write_results(
     args: &Arguments,
     partition_ids: &[PartitionID],
     coordinates: &[FPCoordinate],
-    edges: &[InputEdge<ResidualCapacity>],
+    edges: &[TrivialEdge],
 ) {
     if !args.assignment_csv.is_empty() {
         info!("writing partition csv into: {}", args.assignment_csv);
