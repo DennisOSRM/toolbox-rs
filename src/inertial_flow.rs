@@ -84,9 +84,8 @@ pub fn sub_step(
     debug!("[{axis}] sorting cooefficient: {:?}", comparator);
     // the iteration proxy list to be sorted. The coordinates vector itself is not touched.
     let mut node_id_list = node_id_list.to_vec();
-    node_id_list.sort_unstable_by_key(|a| -> i32 {
-        comparator(coordinates[*a].lat, coordinates[*a].lon)
-    });
+    node_id_list
+        .sort_unstable_by_key(|a| -> i32 { comparator(coordinates[*a].lat, coordinates[*a].lon) });
 
     let size_of_contraction = max(1, (node_id_list.len() as f64 * balance_factor) as usize);
     let sources = &node_id_list[0..size_of_contraction as usize];
