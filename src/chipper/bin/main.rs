@@ -11,9 +11,7 @@ use std::sync::{atomic::AtomicI32, Arc};
 use toolbox_rs::unsafe_slice::UnsafeSlice;
 use toolbox_rs::{
     dimacs,
-    edge::Edge,
     inertial_flow::{self, flow_cmp, FlowResult},
-    max_flow::ResidualCapacity,
     partition::PartitionID,
 };
 use {command_line::Arguments, serialize::write_results};
@@ -42,7 +40,7 @@ fn main() {
             .unwrap();
     }
 
-    let edges = dimacs::read_graph::<ResidualCapacity>(&args.graph, dimacs::WeightType::Unit);
+    let edges = dimacs::read_graph_into_trivial_edges(&args.graph);
     let coordinates = dimacs::read_coordinates(&args.coordinates);
 
     // enqueue initial job for root node
@@ -108,9 +106,9 @@ fn main() {
                 let (left_edges, right_edges): (Vec<_>, Vec<_>) = (&job.0)
                     .iter()
                     .filter(|edge| unsafe {
-                        partition_ids.get(edge.source()) == partition_ids.get(edge.target())
+                        partition_ids.get(edge.source) == partition_ids.get(edge.target)
                     })
-                    .partition(|edge| unsafe { partition_ids.get(edge.source()).is_left_child() });
+                    .partition(|edge| unsafe { partition_ids.get(edge.source).is_left_child() });
                 debug!("generating next level ids");
 
                 // iterate on both halves

@@ -5,11 +5,12 @@ use std::{
 };
 
 use bitvec::prelude::BitVec;
+use itertools::Itertools;
 use log::debug;
 
 use crate::{
     dinic::Dinic,
-    edge::InputEdge,
+    edge::{InputEdge, TrivialEdge},
     geometry::primitives::FPCoordinate,
     max_flow::{MaxFlow, ResidualCapacity},
 };
@@ -69,7 +70,7 @@ pub fn flow_cmp(a: &FlowResult, b: &FlowResult) -> std::cmp::Ordering {
 /// * `upper_bound` - a global upperbound to the best inertial flow cut
 pub fn sub_step(
     axis: usize,
-    input_edges: &[InputEdge<ResidualCapacity>],
+    input_edges: &[TrivialEdge],
     coordinates: &[FPCoordinate],
     node_id_list: &[usize],
     balance_factor: f64,
@@ -107,8 +108,16 @@ pub fn sub_step(
     }
 
     // each thread holds their own copy of the edge set
-    let mut edges = Vec::new();
-    edges.extend_from_slice(input_edges);
+    let mut edges = input_edges
+        .iter()
+        .map(|edge| -> InputEdge<ResidualCapacity> {
+            InputEdge::<ResidualCapacity> {
+                source: edge.source,
+                target: edge.target,
+                data: ResidualCapacity::new(1),
+            }
+        })
+        .collect_vec();
     let mut current_id = 2;
 
     for mut e in &mut edges {
@@ -199,8 +208,8 @@ mod tests {
     use itertools::Itertools;
 
     use crate::{
-        edge::InputEdge, geometry::primitives::FPCoordinate, inertial_flow::sub_step,
-        max_flow::ResidualCapacity,
+        geometry::primitives::FPCoordinate,
+        inertial_flow::{sub_step, TrivialEdge},
     };
 
     use super::RotatedComparators;
@@ -217,20 +226,62 @@ mod tests {
     #[test]
     fn inertial_flow() {
         let edges = vec![
-            InputEdge::new(0, 1, ResidualCapacity::new(1)),
-            InputEdge::new(1, 0, ResidualCapacity::new(1)),
-            InputEdge::new(0, 2, ResidualCapacity::new(1)),
-            InputEdge::new(2, 0, ResidualCapacity::new(1)),
-            InputEdge::new(1, 2, ResidualCapacity::new(1)),
-            InputEdge::new(2, 1, ResidualCapacity::new(1)),
-            InputEdge::new(2, 4, ResidualCapacity::new(1)),
-            InputEdge::new(4, 2, ResidualCapacity::new(1)),
-            InputEdge::new(3, 5, ResidualCapacity::new(1)),
-            InputEdge::new(5, 3, ResidualCapacity::new(1)),
-            InputEdge::new(4, 3, ResidualCapacity::new(1)),
-            InputEdge::new(3, 4, ResidualCapacity::new(1)),
-            InputEdge::new(4, 5, ResidualCapacity::new(1)),
-            InputEdge::new(5, 4, ResidualCapacity::new(1)),
+            TrivialEdge {
+                source: 0,
+                target: 1,
+            },
+            TrivialEdge {
+                source: 1,
+                target: 0,
+            },
+            TrivialEdge {
+                source: 0,
+                target: 2,
+            },
+            TrivialEdge {
+                source: 2,
+                target: 0,
+            },
+            TrivialEdge {
+                source: 1,
+                target: 2,
+            },
+            TrivialEdge {
+                source: 2,
+                target: 1,
+            },
+            TrivialEdge {
+                source: 2,
+                target: 4,
+            },
+            TrivialEdge {
+                source: 4,
+                target: 2,
+            },
+            TrivialEdge {
+                source: 3,
+                target: 5,
+            },
+            TrivialEdge {
+                source: 5,
+                target: 3,
+            },
+            TrivialEdge {
+                source: 4,
+                target: 3,
+            },
+            TrivialEdge {
+                source: 3,
+                target: 4,
+            },
+            TrivialEdge {
+                source: 4,
+                target: 5,
+            },
+            TrivialEdge {
+                source: 5,
+                target: 4,
+            },
         ];
 
         let upper_bound = Arc::new(AtomicI32::new(6));

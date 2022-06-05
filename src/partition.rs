@@ -86,6 +86,12 @@ impl Display for PartitionID {
     }
 }
 
+impl From<PartitionID> for usize {
+    fn from(s: PartitionID) -> usize {
+        s.0.try_into().unwrap()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::partition::PartitionID;
