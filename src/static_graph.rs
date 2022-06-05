@@ -46,7 +46,9 @@ impl<T: Ord + Copy> StaticGraph<T> {
         Self::new_from_sorted_list(input)
     }
 
-    pub fn new_from_sorted_list(input: Vec<impl Edge<ID = NodeID> + EdgeData<DATA = T> + Ord>) -> Self {
+    pub fn new_from_sorted_list(
+        input: Vec<impl Edge<ID = NodeID> + EdgeData<DATA = T> + Ord>,
+    ) -> Self {
         // TODO: renumber IDs if necessary
         let number_of_edges = input.len();
         let mut number_of_nodes = 0;
