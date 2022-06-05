@@ -1,5 +1,5 @@
 use crate::{
-    edge::Edge,
+    edge::{Edge, EdgeData},
     graph::{EdgeArrayEntry, EdgeID, Graph, NodeID},
 };
 use core::{cmp::max, ops::Range};
@@ -38,7 +38,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
         }
     }
 
-    pub fn new(mut input: Vec<impl Edge<ID = NodeID, DATA = T> + Ord>) -> Self {
+    pub fn new(mut input: Vec<impl Edge<ID = NodeID> + EdgeData<DATA = T> + Ord>) -> Self {
         // sort input edges by source/target/data
         // TODO(dl): sorting by source suffices to construct adjacency array
         input.sort();
@@ -46,7 +46,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
         Self::new_from_sorted_list(input)
     }
 
-    pub fn new_from_sorted_list(input: Vec<impl Edge<ID = NodeID, DATA = T> + Ord>) -> Self {
+    pub fn new_from_sorted_list(input: Vec<impl Edge<ID = NodeID> + EdgeData<DATA = T> + Ord>) -> Self {
         // TODO: renumber IDs if necessary
         let number_of_edges = input.len();
         let mut number_of_nodes = 0;

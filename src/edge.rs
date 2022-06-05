@@ -3,10 +3,29 @@ use core::mem::swap;
 
 pub trait Edge {
     type ID;
-    type DATA;
     fn source(&self) -> Self::ID;
     fn target(&self) -> Self::ID;
+}
+
+pub trait EdgeData {
+    type DATA;
     fn data(&self) -> &Self::DATA;
+}
+
+#[derive(Clone, Copy)]
+pub struct TrivialEdge {
+    pub source: usize,
+    pub target: usize,
+}
+
+impl Edge for TrivialEdge {
+    type ID = NodeID;
+    fn source(&self) -> Self::ID {
+        self.source
+    }
+    fn target(&self) -> Self::ID {
+        self.target
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialOrd, Ord, PartialEq)]
@@ -18,13 +37,16 @@ pub struct InputEdge<EdgeDataT: Eq> {
 
 impl<EdgeDataT: std::cmp::Eq> Edge for InputEdge<EdgeDataT> {
     type ID = NodeID;
-    type DATA = EdgeDataT;
     fn source(&self) -> Self::ID {
         self.source
     }
     fn target(&self) -> Self::ID {
         self.target
     }
+}
+
+impl<EdgeDataT: std::cmp::Eq> EdgeData for InputEdge<EdgeDataT> {
+    type DATA = EdgeDataT;
     fn data(&self) -> &Self::DATA {
         &self.data
     }
