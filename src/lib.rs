@@ -18,6 +18,7 @@ pub mod max_flow;
 pub mod partition;
 pub mod projection;
 pub mod rdx_sort;
+pub mod renumbering_table;
 pub mod static_graph;
 pub mod tarjan;
 pub mod union_find;

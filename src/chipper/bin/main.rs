@@ -91,18 +91,17 @@ fn main() {
                 );
 
                 debug!("partitioning and assigning ids for all nodes");
-                let (left_ids, right_ids): (Vec<_>, Vec<_>) =
-                    job.2.iter().partition(|id| result.assignment[**id]);
 
-                (left_ids).iter().for_each(|id| unsafe {
+                (result.left_ids).iter().for_each(|id| unsafe {
                     partition_ids.get(*id).make_left_child();
                 });
-                (right_ids).iter().for_each(|id| unsafe {
+                (result.right_ids).iter().for_each(|id| unsafe {
                     partition_ids.get(*id).make_right_child();
                 });
 
                 // partition edge and node id sets for the next iteration
                 debug!("generating next level edges");
+                // TODO: don't copy, but partition in place
                 let (left_edges, right_edges): (Vec<_>, Vec<_>) = (&job.0)
                     .iter()
                     .filter(|edge| unsafe {
@@ -113,11 +112,11 @@ fn main() {
 
                 // iterate on both halves
                 let mut next_jobs = Vec::new();
-                if left_ids.len() > args.minimum_cell_size {
-                    next_jobs.push((left_edges, &coordinates, left_ids));
+                if result.left_ids.len() > args.minimum_cell_size {
+                    next_jobs.push((left_edges, &coordinates, result.left_ids));
                 } else {
                     let level_difference = (args.recursion_depth - current_level - 1) as usize;
-                    for i in &left_ids {
+                    for i in &result.left_ids {
                         unsafe {
                             partition_ids
                                 .get(*i)
@@ -125,11 +124,11 @@ fn main() {
                         }
                     }
                 }
-                if right_ids.len() > args.minimum_cell_size {
-                    next_jobs.push((right_edges, &coordinates, right_ids));
+                if result.right_ids.len() > args.minimum_cell_size {
+                    next_jobs.push((right_edges, &coordinates, result.right_ids));
                 } else {
                     let level_difference = (args.recursion_depth - current_level - 1) as usize;
-                    for i in &right_ids {
+                    for i in &result.right_ids {
                         unsafe {
                             partition_ids
                                 .get(*i)

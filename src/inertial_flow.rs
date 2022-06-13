@@ -4,7 +4,6 @@ use std::{
     sync::{atomic::AtomicI32, Arc},
 };
 
-use bitvec::prelude::BitVec;
 use itertools::Itertools;
 use log::debug;
 
@@ -13,6 +12,7 @@ use crate::{
     edge::{InputEdge, TrivialEdge},
     geometry::primitives::FPCoordinate,
     max_flow::{MaxFlow, ResidualCapacity},
+    renumbering_table::RenumberingTable,
 };
 
 pub struct RotatedComparators([fn(i32, i32) -> i32; 4]);
@@ -46,7 +46,8 @@ impl Index<usize> for RotatedComparators {
 pub struct FlowResult {
     pub flow: i32,
     pub balance: f64,
-    pub assignment: bitvec::vec::BitVec,
+    pub left_ids: Vec<usize>,
+    pub right_ids: Vec<usize>,
 }
 
 pub fn flow_cmp(a: &FlowResult, b: &FlowResult) -> std::cmp::Ordering {
@@ -96,15 +97,17 @@ pub fn sub_step(
     debug_assert!(!targets.is_empty());
 
     debug!("[{axis}] renumbering of inertial flow graph");
-    let mut renumbering_table = vec![usize::MAX; coordinates.len()];
+    // let mut renumbering_table = vec![usize::MAX; coordinates.len()];
+    let mut renumbering_table =
+        RenumberingTable::new_with_size_hint(coordinates.len(), node_id_list.len());
     // nodes in the in the graph have to be numbered consecutively.
     // the mapping is input id -> dinic id
 
     for s in sources {
-        renumbering_table[*s] = 0;
+        renumbering_table.set(*s, 0);
     }
     for t in targets {
-        renumbering_table[*t] = 1;
+        renumbering_table.set(*t, 1);
     }
 
     // each thread holds their own copy of the edge set
@@ -122,16 +125,16 @@ pub fn sub_step(
 
     for mut e in &mut edges {
         // nodes in the in the graph have to be numbered consecutively
-        if renumbering_table[e.source] == usize::MAX {
-            renumbering_table[e.source] = current_id;
+        if !renumbering_table.contains_key(e.source) {
+            renumbering_table.set(e.source, current_id);
             current_id += 1;
         }
-        if renumbering_table[e.target] == usize::MAX {
-            renumbering_table[e.target] = current_id;
+        if !renumbering_table.contains_key(e.target) {
+            renumbering_table.set(e.target, current_id);
             current_id += 1;
         }
-        e.source = renumbering_table[e.source];
-        e.target = renumbering_table[e.target];
+        e.source = renumbering_table.get(e.source);
+        e.target = renumbering_table.get(e.target);
     }
     debug!("[{axis}] instantiating min-cut solver, epsilon 0.25");
 
@@ -156,7 +159,8 @@ pub fn sub_step(
         return FlowResult {
             flow: i32::MAX,
             balance: 0.,
-            assignment: BitVec::new(),
+            left_ids: Vec::new(),
+            right_ids: Vec::new(),
         };
     }
     let flow = max_flow.expect("max flow computation did not run");
@@ -166,46 +170,29 @@ pub fn sub_step(
         .assignment(0)
         .expect("max flow computation did not run");
 
-    let left_size = intermediate_assignment.iter().filter(|b| !**b).count() + sources.len() - 1;
-    let right_size = intermediate_assignment.iter().filter(|b| **b).count() + targets.len() - 1;
-    debug!(
-        "[{axis}] assignment has {} total entries",
-        left_size + right_size
-    );
-    debug!("[{axis}] assignment has {right_size} 1-entries");
-    debug!("[{axis}] assignment has {left_size} 0-entries");
-
-    let balance = std::cmp::min(left_size, right_size) as f64 / (right_size + left_size) as f64;
-    debug!("[{axis}] balance: {balance}");
-
-    let mut assignment = BitVec::with_capacity(coordinates.len());
-    assignment.resize(coordinates.len(), false);
-
-    // explode intermediate assigment
-    for id in &node_id_list {
-        let index = renumbering_table[*id];
-        if index == usize::MAX {
-            // a disconnected node will be assigned to a semi-random partition
-            assignment.set(*id, id % 2 == 0);
-        } else {
-            assignment.set(*id, intermediate_assignment[index]);
+    // TODO: don't copy, but partition in place
+    let (left_ids, right_ids): (Vec<_>, Vec<_>) = node_id_list.into_iter().partition(|id| {
+        if !renumbering_table.contains_key(*id) {
+            return *id % 2 == 0;
         }
-    }
+        intermediate_assignment[renumbering_table.get(*id)]
+    });
+    let balance = std::cmp::min(left_ids.len(), right_ids.len()) as f64
+        / (left_ids.len() + right_ids.len()) as f64;
+    debug!("[{axis}] balance: {balance}");
 
     FlowResult {
         flow,
         balance,
-        assignment,
+        left_ids,
+        right_ids,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{atomic::AtomicI32, Arc};
-
-    use bitvec::bits;
-    use bitvec::prelude::*;
     use itertools::Itertools;
+    use std::sync::{atomic::AtomicI32, Arc};
 
     use crate::{
         geometry::primitives::FPCoordinate,
@@ -299,7 +286,9 @@ mod tests {
         let result = sub_step(3, &edges, &coordinates, &node_id_list, 0.25, upper_bound);
         assert_eq!(result.flow, 1);
         assert_eq!(result.balance, 0.5);
-        assert_eq!(result.assignment.len(), 6);
-        assert_eq!(result.assignment, bits![0, 0, 0, 1, 1, 1]);
+        assert_eq!(result.left_ids.len(), 3);
+        assert_eq!(result.left_ids, vec![4, 5, 3]);
+        assert_eq!(result.right_ids.len(), 3);
+        assert_eq!(result.right_ids, vec![2, 0, 1]);
     }
 }
