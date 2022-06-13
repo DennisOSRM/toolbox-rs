@@ -17,6 +17,7 @@ pub mod kruskal;
 pub mod max_flow;
 pub mod partition;
 pub mod projection;
+pub mod renumbering_table;
 pub mod rdx_sort;
 pub mod static_graph;
 pub mod tarjan;

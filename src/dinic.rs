@@ -299,7 +299,7 @@ impl MaxFlow for Dinic {
         }
 
         // run a reachability analysis
-        let mut reachable = BitVec::with_capacity(self.residual_graph.number_of_nodes());
+        let mut reachable = BitVec::new();
         reachable.resize(self.residual_graph.number_of_nodes(), false);
         let mut stack = vec![source];
         stack.reserve(self.residual_graph.number_of_nodes());
