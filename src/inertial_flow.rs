@@ -175,7 +175,7 @@ pub fn sub_step(
         if !renumbering_table.contains_key(*id) {
             return *id % 2 == 0;
         }
-        return intermediate_assignment[renumbering_table.get(*id)];
+        intermediate_assignment[renumbering_table.get(*id)]
     });
     let balance = std::cmp::min(left_ids.len(), right_ids.len()) as f64
         / (left_ids.len() + right_ids.len()) as f64;
