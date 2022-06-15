@@ -37,40 +37,40 @@ pub fn balance_factor_in_range(s: &str) -> Result<f64, String> {
 #[clap(author, version, about, long_about = None)]
 pub struct Arguments {
     /// Number of threads to use
-    #[clap(short, long)]
+    #[clap(short, long, action)]
     pub number_of_threads: Option<usize>,
 
     /// path to the input graph
-    #[clap(short, long)]
+    #[clap(short, long, action)]
     pub graph: String,
 
     /// path to the input coordinates
-    #[clap(short, long)]
+    #[clap(short, long, action)]
     pub coordinates: String,
 
     /// path to the cut-csv file
-    #[clap(short = 'o', long, default_value_t = String::new())]
+    #[clap(short = 'o', long, default_value_t = String::new(), action)]
     pub cut_csv: String,
 
     /// path to the assignment-csv file
-    #[clap(short, long, default_value_t = String::new())]
+    #[clap(short, long, default_value_t = String::new(), action)]
     pub assignment_csv: String,
 
     /// balance factor to use
-    #[clap(short, long, parse(try_from_str=balance_factor_in_range), default_value_t = 0.25)]
+    #[clap(short, long, value_parser = balance_factor_in_range, default_value_t = 0.25)]
     pub b_factor: f64,
 
     /// depth of recursive partitioning; off by one from the level of a node
     /// since the root node has level 1, e.g. depths of 1 gives cells on level 2
-    #[clap(short, long, parse(try_from_str=recursion_depth_in_range), default_value_t = 1)]
+    #[clap(short, long, value_parser=recursion_depth_in_range, default_value_t = 1)]
     pub recursion_depth: u8,
 
     /// path to the output file with partition ids
-    #[clap(short, long, default_value_t = String::new())]
+    #[clap(short, long, default_value_t = String::new(), action)]
     pub partition_file: String,
 
     /// Minimum size of a cell
-    #[clap(short, long, default_value_t = 50)]
+    #[clap(short, long, default_value_t = 50, action)]
     pub minimum_cell_size: usize,
 }
 
@@ -79,6 +79,15 @@ impl Display for Arguments {
         writeln!(f, "command line arguments:")?;
         if let Some(number_of_threads) = self.number_of_threads {
             writeln!(f, "number_of_threads: {}", number_of_threads)?;
+        }
+        if !self.partition_file.is_empty() {
+            writeln!(f, "output partition file: {}", self.partition_file)?;
+        }
+        if !self.assignment_csv.is_empty() {
+            writeln!(f, "assignment csv: {}", self.assignment_csv)?;
+        }
+        if !self.cut_csv.is_empty() {
+            writeln!(f, "cut csv: {}", self.cut_csv)?;
         }
         writeln!(f, "graph: {}", self.graph)?;
         writeln!(f, "coordinates: {}", self.coordinates)?;
