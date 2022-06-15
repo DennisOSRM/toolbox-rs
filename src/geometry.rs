@@ -12,6 +12,10 @@ pub mod primitives {
         }
     }
 
+    pub fn cross_product(o: &FPCoordinate, a: &FPCoordinate, b: &FPCoordinate) -> i32 {
+        (a.lon - o.lon) * (b.lat - o.lat) - (a.lat - o.lat) * (b.lon - o.lon)
+    }
+
     #[derive(Clone, Copy, Debug, PartialEq)]
     pub struct Point {
         pub x: f64,
@@ -77,6 +81,8 @@ pub mod primitives {
 mod tests {
     use crate::geometry::primitives::{distance_to_segment, Point, Segment};
 
+    use super::primitives::{cross_product, FPCoordinate};
+
     #[test]
     pub fn distance_one() {
         let p = Point { x: 1., y: 2. };
@@ -84,5 +90,29 @@ mod tests {
         let (distance, location) = distance_to_segment(p, s);
         assert_eq!(distance, 1.);
         assert_eq!(location, Point { x: 0., y: 2. });
+    }
+
+    #[test]
+    pub fn cross_product_ex1() {
+        let o = FPCoordinate::new(1, 1);
+        let a = FPCoordinate::new(4, 5);
+        let b = FPCoordinate::new(5, 4);
+        assert_eq!(7, cross_product(&o, &a, &b))
+    }
+
+    #[test]
+    pub fn cross_product_ex2() {
+        let o = FPCoordinate::new(0, 0);
+        let a = FPCoordinate::new(7, 5);
+        let b = FPCoordinate::new(17, 13);
+        assert_eq!(-6, cross_product(&o, &a, &b))
+    }
+
+    #[test]
+    pub fn cross_product_ex3() {
+        let o = FPCoordinate::new(0, 0);
+        let a = FPCoordinate::new(2, 2);
+        let b = FPCoordinate::new(0, -3);
+        assert_eq!(6, cross_product(&o, &a, &b))
     }
 }
