@@ -1,4 +1,5 @@
 pub mod primitives {
+    use std::fmt::Display;
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct FPCoordinate {
@@ -9,6 +10,17 @@ pub mod primitives {
     impl FPCoordinate {
         pub fn new(lat: i32, lon: i32) -> Self {
             Self { lat, lon }
+        }
+    }
+
+    impl Display for FPCoordinate {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "{:.6}, {:.6}",
+                self.lat as f64 / 1000000.,
+                self.lon as f64 / 1000000.
+            )
         }
     }
 
