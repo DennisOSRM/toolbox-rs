@@ -1,11 +1,11 @@
 use core::cmp::max;
 use serde::{Deserialize, Serialize};
-use std::fmt::Display;
+use std::{fmt::Display, hash::Hash};
 
 /// represents the hiearchical partition id scheme. The root id has ID 1 and
 /// children are shifted to the left by one and plus 0/1. The parent child
 /// relationship can thus be queried in constant time.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PartitionID(u32);
 
 impl PartitionID {

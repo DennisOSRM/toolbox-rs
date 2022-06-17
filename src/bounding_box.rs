@@ -7,7 +7,8 @@ pub struct BoundingBox {
 }
 
 impl BoundingBox {
-    pub fn from_coordinates(coordinates: &[FPCoordinate]) -> Self {
+    pub fn from_coordinates(coordinates: &[FPCoordinate]) -> BoundingBox {
+        debug_assert!(!coordinates.is_empty());
         let mut min_coordinate = FPCoordinate::max();
         let mut max_coordinate = FPCoordinate::min();
 
@@ -36,10 +37,14 @@ impl BoundingBox {
             lon: self.min.lon + lon_diff / 2,
         }
     }
+
+    pub fn is_valid(&self) -> bool {
+        self.min.lat <= self.max.lat && self.min.lon <= self.max.lon
+    }
 }
 
-impl From<BoundingBox> for geojson::Bbox {
-    fn from(bbox: BoundingBox) -> geojson::Bbox {
+impl From<&BoundingBox> for geojson::Bbox {
+    fn from(bbox: &BoundingBox) -> geojson::Bbox {
         let result = vec![
             bbox.min.lon as f64 / 1000000.,
             bbox.min.lat as f64 / 1000000.,
@@ -65,37 +70,41 @@ pub mod tests {
             min: FPCoordinate::new(0, 0),
             max: FPCoordinate::new(9, 9),
         };
+        assert!(expected.is_valid());
         let result = BoundingBox::from_coordinates(&coordinates);
         assert_eq!(expected, result);
     }
 
     #[test]
     pub fn center() {
-        let center = BoundingBox {
+        let bbox = BoundingBox {
             min: FPCoordinate::new_from_lat_lon(33.406637, -115.000801),
             max: FPCoordinate::new_from_lat_lon(33.424732, -114.905286),
-        }
-        .center();
+        };
+        assert!(bbox.is_valid());
+        let center = bbox.center();
         assert_eq!(center, FPCoordinate::new(33415684, -114953044));
     }
 
     #[test]
     pub fn center_with_rounding() {
-        let center = BoundingBox {
+        let bbox = BoundingBox {
             min: FPCoordinate::new(0, 0),
             max: FPCoordinate::new(9, 9),
-        }
-        .center();
+        };
+        assert!(bbox.is_valid());
+        let center = bbox.center();
         assert_eq!(center, FPCoordinate::new(4, 4));
     }
 
     #[test]
     pub fn center_without_rounding() {
-        let center = BoundingBox {
+        let bbox = BoundingBox {
             min: FPCoordinate::new(0, 0),
             max: FPCoordinate::new(100, 100),
-        }
-        .center();
+        };
+        assert!(bbox.is_valid());
+        let center = bbox.center();
         assert_eq!(center, FPCoordinate::new(50, 50));
     }
 }
