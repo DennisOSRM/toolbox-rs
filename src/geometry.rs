@@ -11,6 +11,10 @@ pub mod primitives {
         pub fn new(lat: i32, lon: i32) -> Self {
             Self { lat, lon }
         }
+
+        pub fn to_lon_lat_vec(&self) -> Vec<f64> {
+            vec![self.lon as f64 / 1000000., self.lat as f64 / 1000000.]
+        }
     }
 
     impl Display for FPCoordinate {
