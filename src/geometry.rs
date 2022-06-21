@@ -12,6 +12,21 @@ pub mod primitives {
             Self { lat, lon }
         }
 
+        pub fn min() -> Self {
+            Self { lat: i32::MIN, lon: i32::MIN }
+        }
+
+        pub fn max() -> Self {
+            Self { lat: i32::MAX, lon: i32::MAX }
+        }
+
+        pub fn new_from_lat_lon(lat: f64, lon: f64) -> Self {
+            let lat = (lat * 1000000.) as i32;
+            let lon = (lon * 1000000.) as i32;
+
+            Self { lat, lon }
+        }
+
         pub fn to_lon_lat_vec(&self) -> Vec<f64> {
             vec![self.lon as f64 / 1000000., self.lat as f64 / 1000000.]
         }
@@ -28,8 +43,18 @@ pub mod primitives {
         }
     }
 
-    pub fn cross_product(o: &FPCoordinate, a: &FPCoordinate, b: &FPCoordinate) -> i32 {
-        (a.lon - o.lon) * (b.lat - o.lat) - (a.lat - o.lat) * (b.lon - o.lon)
+    pub fn cross_product(o: &FPCoordinate, a: &FPCoordinate, b: &FPCoordinate) -> i64 {
+        // upcasting to i64 to avoid integer overflow
+        let first = (a.lon as i64 - o.lon as i64) * (b.lat as i64 - o.lat as i64);
+        let second = (a.lat as i64 - o.lat as i64) * (b.lon as i64 - o.lon as i64);
+        first - second
+    }
+
+    pub fn is_clock_wise_turn(o: &FPCoordinate, a: &FPCoordinate, b: &FPCoordinate) -> bool {
+        // upcasting to i64 to avoid integer overflow
+        let first = (a.lon as i64 - o.lon as i64) * (b.lat as i64 - o.lat as i64);
+        let second = (a.lat as i64 - o.lat as i64) * (b.lon as i64 - o.lon as i64);
+        first > second
     }
 
     #[derive(Clone, Copy, Debug, PartialEq)]
@@ -95,7 +120,7 @@ pub mod primitives {
 
 #[cfg(test)]
 mod tests {
-    use crate::geometry::primitives::{distance_to_segment, Point, Segment};
+    use crate::geometry::primitives::{distance_to_segment, is_clock_wise_turn, Point, Segment};
 
     use super::primitives::{cross_product, FPCoordinate};
 
@@ -130,5 +155,16 @@ mod tests {
         let a = FPCoordinate::new(2, 2);
         let b = FPCoordinate::new(0, -3);
         assert_eq!(6, cross_product(&o, &a, &b))
+    }
+
+    #[test]
+    pub fn clock_wise_turn() {
+        let o = FPCoordinate::new_from_lat_lon(33.376756, -114.990162);
+        let a = FPCoordinate::new_from_lat_lon(33.359699, -114.945064);
+        let b = FPCoordinate::new_from_lat_lon(33.412820, -114.943641);
+
+        let cp = cross_product(&o, &a, &b);
+        assert!(cp > 0);
+        assert!(is_clock_wise_turn(&o, &a, &b));
     }
 }

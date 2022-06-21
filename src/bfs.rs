@@ -246,7 +246,7 @@ mod tests {
         assert_eq!(path, vec![0, 1, 2, 3]);
 
         let path: Vec<usize> = bfs.path_iter().collect();
-        assert_eq!(path, vec![]);
+        assert!(path.is_empty());
     }
 
     #[test]
@@ -271,6 +271,6 @@ mod tests {
         assert_eq!(path, vec![1, 2, 3]);
 
         let path: Vec<usize> = bfs.path_iter().collect();
-        assert_eq!(path, vec![]);
+        assert!(path.is_empty());
     }
 }
