@@ -1,39 +1,58 @@
 use crate::geometry::primitives::FPCoordinate;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct BoundingBox {
-    pub min: FPCoordinate,
-    pub max: FPCoordinate,
+    min: FPCoordinate,
+    max: FPCoordinate,
 }
 
-pub fn bounding_box(input_coordinates: &[FPCoordinate]) -> BoundingBox {
-    debug_assert!(!input_coordinates.is_empty());
+impl BoundingBox {
+    pub fn from_coordinates(coordinates: &[FPCoordinate]) -> Self {
+        let mut min_coordinate = FPCoordinate::max();
+        let mut max_coordinate = FPCoordinate::min();
 
-    let mut min_lat = i32::MAX;
-    let mut min_lon = i32::MAX;
-    let mut max_lat = i32::MIN;
-    let mut max_lon = i32::MIN;
+        coordinates.iter().for_each(|coordinate| {
+            min_coordinate.lat = min_coordinate.lat.min(coordinate.lat);
+            min_coordinate.lon = min_coordinate.lon.min(coordinate.lon);
+            max_coordinate.lat = max_coordinate.lat.max(coordinate.lat);
+            max_coordinate.lon = max_coordinate.lon.max(coordinate.lon);
+        });
 
-    for c in input_coordinates {
-        min_lat = min_lat.min(c.lat);
-        min_lon = min_lon.min(c.lon);
-
-        max_lat = max_lat.max(c.lat);
-        max_lon = max_lon.max(c.lon);
+        BoundingBox {
+            min: min_coordinate,
+            max: max_coordinate,
+        }
     }
 
-    let min = FPCoordinate::new(min_lat, min_lon);
-    let max = FPCoordinate::new(max_lat, max_lon);
+    pub fn center(&self) -> FPCoordinate {
+        debug_assert!(self.min.lat <= self.max.lat);
+        debug_assert!(self.min.lon <= self.max.lon);
 
-    BoundingBox { min, max }
+        let lat_diff = self.max.lat - self.min.lat;
+        let lon_diff = self.max.lon - self.min.lon;
+
+        FPCoordinate {
+            lat: self.min.lat + lat_diff / 2,
+            lon: self.min.lon + lon_diff / 2,
+        }
+    }
+}
+
+impl From<BoundingBox> for geojson::Bbox {
+    fn from(bbox: BoundingBox) -> geojson::Bbox {
+        let result = vec![
+            bbox.min.lon as f64 / 1000000.,
+            bbox.min.lat as f64 / 1000000.,
+            bbox.max.lon as f64 / 1000000.,
+            bbox.max.lat as f64 / 1000000.,
+        ];
+        result
+    }
 }
 
 #[cfg(test)]
 pub mod tests {
-    use crate::{
-        bounding_box::{bounding_box, BoundingBox},
-        geometry::primitives::FPCoordinate,
-    };
+    use crate::{bounding_box::BoundingBox, geometry::primitives::FPCoordinate};
 
     #[test]
     pub fn grid() {
@@ -46,7 +65,37 @@ pub mod tests {
             min: FPCoordinate::new(0, 0),
             max: FPCoordinate::new(9, 9),
         };
-        let result = bounding_box(&coordinates);
+        let result = BoundingBox::from_coordinates(&coordinates);
         assert_eq!(expected, result);
+    }
+
+    #[test]
+    pub fn center() {
+        let center = BoundingBox {
+            min: FPCoordinate::new_from_lat_lon(33.406637, -115.000801),
+            max: FPCoordinate::new_from_lat_lon(33.424732, -114.905286),
+        }
+        .center();
+        assert_eq!(center, FPCoordinate::new(33415684, -114953044));
+    }
+
+    #[test]
+    pub fn center_with_rounding() {
+        let center = BoundingBox {
+            min: FPCoordinate::new(0, 0),
+            max: FPCoordinate::new(9, 9),
+        }
+        .center();
+        assert_eq!(center, FPCoordinate::new(4, 4));
+    }
+
+    #[test]
+    pub fn center_without_rounding() {
+        let center = BoundingBox {
+            min: FPCoordinate::new(0, 0),
+            max: FPCoordinate::new(100, 100),
+        }
+        .center();
+        assert_eq!(center, FPCoordinate::new(50, 50));
     }
 }

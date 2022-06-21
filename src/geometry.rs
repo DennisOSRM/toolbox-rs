@@ -13,11 +13,17 @@ pub mod primitives {
         }
 
         pub fn min() -> Self {
-            Self { lat: i32::MIN, lon: i32::MIN }
+            Self {
+                lat: i32::MIN,
+                lon: i32::MIN,
+            }
         }
 
         pub fn max() -> Self {
-            Self { lat: i32::MAX, lon: i32::MAX }
+            Self {
+                lat: i32::MAX,
+                lon: i32::MAX,
+            }
         }
 
         pub fn new_from_lat_lon(lat: f64, lon: f64) -> Self {
