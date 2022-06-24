@@ -13,6 +13,10 @@ Usage via cargo:
 
 ```
 $ cargo r --release --bin chipper -- -g /path/to/USA-road-t.USA.gr -c /path/to/USA-road-d.USA.co -o /path/to/result.txt -r30 -m100 -p /path/to/USA-r30-m100.assignment.bin
+```
+
+## Scaffold
+A tool to generate run-time data structures from preprocess graph. At this point it supports visualizing cells by their convex hulls. The result of this is stored in GeoJSON format which can be easily visualized, e.g. on [Kepler.gl](https://kepler.gl/demo).
 
 $ cargo r --release --bin scaffold -- -p /path/to/USA-r20-m100.assignment.bin -c /path/to/USA-road-d.USA.co  --convex-cells-geojson /path/to/bbox.geojson
 ```
