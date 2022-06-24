@@ -12,5 +12,7 @@ A tool to bisect graphs in the DIMACS format using an implementation of the Iner
 Usage via cargo:
 
 ```
-$ cargo r --release --bin chipper -- -g /path/to/USA-road-t.USA.gr -c /path/to/USA-road-d.USA.co -o /path/to/result.txt
+$ cargo r --release --bin chipper -- -g /path/to/USA-road-t.USA.gr -c /path/to/USA-road-d.USA.co -o /path/to/result.txt -r30 -m100 -p /path/to/USA-r30-m20.assignment.bin
+
+$ cargo r --release --bin scaffold -- -p /path/to/USA-r20-m50.assignment.bin -c /path/to/USA-road-d.USA.co  --convex-cells-geojson /path/to/bbox.geojson
 ```
