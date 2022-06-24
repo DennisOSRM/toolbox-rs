@@ -1,37 +1,7 @@
-## Welcome to GitHub Pages
+## The Toolbox 🧰 🦀
 
-You can use the [editor on GitHub](https://github.com/DennisOSRM/toolbox-rs/edit/gh-pages/index.md) to maintain and preview the content for your website in Markdown files.
+### Jun, 24th 2022: Fixing a scalability issue
 
-Whenever you commit to this repository, GitHub Pages will run [Jekyll](https://jekyllrb.com/) to rebuild the pages in your site, from the content in your Markdown files.
+The recursive bi-partitioning exhibited a flaw in the amount of memory it allocated. The following graph shows how the performance regressed for levels greater or equal to 8. The graph shoots up exponentially. The issue was fixed in [#89](https://github.com/DennisOSRM/toolbox-rs/pull/89) by making sure that the per sub-graph memory allocation is independent of the overall graph size but only depends the size of the subgraph. Note that the speedup of the fixed version is super-liner.
 
-### Markdown
-
-Markdown is a lightweight and easy-to-use syntax for styling your writing. It includes conventions for
-
-```markdown
-Syntax highlighted code block
-
-# Header 1
-## Header 2
-### Header 3
-
-- Bulleted
-- List
-
-1. Numbered
-2. List
-
-**Bold** and _Italic_ and `Code` text
-
-[Link](url) and ![Image](src)
-```
-
-For more details see [Basic writing and formatting syntax](https://docs.github.com/en/github/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax).
-
-### Jekyll Themes
-
-Your Pages site will use the layout and styles from the Jekyll theme you have selected in your [repository settings](https://github.com/DennisOSRM/toolbox-rs/settings/pages). The name of this theme is saved in the Jekyll `_config.yml` configuration file.
-
-### Support or Contact
-
-Having trouble with Pages? Check out our [documentation](https://docs.github.com/categories/github-pages-basics/) or [contact support](https://support.github.com/contact) and we’ll help you sort it out.
+![D4D05194-BECC-4F38-9FE5-4D07C396A7DD](https://user-images.githubusercontent.com/1067895/173334384-126b2c98-f318-4892-9b95-57f125dc9313.jpeg)
