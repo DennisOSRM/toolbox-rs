@@ -1,7 +1,7 @@
 ![GitHub last commit](https://img.shields.io/github/last-commit/DennisOSRM/toolbox-rs.svg)
 ![Crates.io](https://img.shields.io/crates/v/toolbox-rs.svg)
 
-![Bild 20 05 22 um 19 53](https://user-images.githubusercontent.com/1067895/169662031-a2a516df-296e-42de-8095-d2a5ff5da3c6.JPG)
+![Cells](https://user-images.githubusercontent.com/1067895/169662031-a2a516df-296e-42de-8095-d2a5ff5da3c6.JPG)
 
 # Toolbox-rs
 A toolbox of basic data structures and algorithms. If you heard of OSRM, please draw your own conclusions. 😁
@@ -12,7 +12,10 @@ A tool to bisect graphs in the DIMACS format using an implementation of the Iner
 Usage via cargo:
 
 ```
-$ cargo r --release --bin chipper -- -g /path/to/USA-road-t.USA.gr -c /path/to/USA-road-d.USA.co -o /path/to/result.txt -r30 -m100 -p /path/to/USA-r30-m20.assignment.bin
+$ cargo r --release --bin chipper -- -g /path/to/USA-road-t.USA.gr -c /path/to/USA-road-d.USA.co -o /path/to/result.txt -r30 -m100 -p /path/to/USA-r30-m100.assignment.bin
 
-$ cargo r --release --bin scaffold -- -p /path/to/USA-r20-m50.assignment.bin -c /path/to/USA-road-d.USA.co  --convex-cells-geojson /path/to/bbox.geojson
+$ cargo r --release --bin scaffold -- -p /path/to/USA-r20-m100.assignment.bin -c /path/to/USA-road-d.USA.co  --convex-cells-geojson /path/to/bbox.geojson
 ```
+
+## Visualizing Convex Hulls
+![Convex Hulls](https://user-images.githubusercontent.com/1067895/175577261-55e38f44-07ae-4ab2-b344-23d15f5d5c89.png)
