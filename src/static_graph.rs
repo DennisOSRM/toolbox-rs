@@ -139,6 +139,9 @@ impl<T: Ord + Copy> Graph<T> for StaticGraph<T> {
     }
 
     fn find_edge(&self, s: NodeID, t: NodeID) -> Option<EdgeID> {
+        if s > self.number_of_nodes() {
+            return None;
+        }
         for edge in self.edge_range(s) {
             if self.target(edge) == t {
                 return Some(edge);
@@ -147,6 +150,9 @@ impl<T: Ord + Copy> Graph<T> for StaticGraph<T> {
         None
     }
     fn find_edge_unchecked(&self, s: NodeID, t: NodeID) -> EdgeID {
+        if s > self.number_of_nodes() {
+            return EdgeID::MAX;
+        }
         for edge in self.edge_range(s) {
             if self.target(edge) == t {
                 return edge;
@@ -160,6 +166,7 @@ impl<T: Ord + Copy> Graph<T> for StaticGraph<T> {
 mod tests {
     use crate::edge::InputEdge;
 
+    use crate::graph::EdgeID;
     use crate::{graph::Graph, static_graph::StaticGraph};
 
     #[test]
@@ -200,5 +207,48 @@ mod tests {
             sum += graph.out_degree(i);
         }
         assert_eq!(sum, graph.number_of_edges());
+    }
+
+    #[test]
+    fn find_edge() {
+        type Graph = StaticGraph<i32>;
+        let edges = vec![
+            InputEdge::new(0, 1, 3),
+            InputEdge::new(1, 2, 3),
+            InputEdge::new(4, 2, 1),
+            InputEdge::new(2, 3, 6),
+            InputEdge::new(0, 4, 2),
+            InputEdge::new(4, 5, 2),
+            InputEdge::new(5, 3, 7),
+            InputEdge::new(1, 5, 2),
+        ];
+
+        let graph = Graph::new(edges);
+
+        // existing edges
+        assert!(graph.find_edge_unchecked(0, 1) != EdgeID::MAX);
+        assert!(graph.find_edge_unchecked(1, 2) != EdgeID::MAX);
+        assert!(graph.find_edge_unchecked(4, 2) != EdgeID::MAX);
+        assert!(graph.find_edge_unchecked(2, 3) != EdgeID::MAX);
+        assert!(graph.find_edge_unchecked(0, 4) != EdgeID::MAX);
+        assert!(graph.find_edge_unchecked(4, 5) != EdgeID::MAX);
+        assert!(graph.find_edge_unchecked(5, 3) != EdgeID::MAX);
+        assert!(graph.find_edge_unchecked(1, 5) != EdgeID::MAX);
+        assert!(graph.find_edge(0, 1).is_some());
+        assert!(graph.find_edge(1, 2).is_some());
+        assert!(graph.find_edge(4, 2).is_some());
+        assert!(graph.find_edge(2, 3).is_some());
+        assert!(graph.find_edge(0, 4).is_some());
+        assert!(graph.find_edge(4, 5).is_some());
+        assert!(graph.find_edge(5, 3).is_some());
+        assert!(graph.find_edge(1, 5).is_some());
+
+        // non-existing edge within ranges
+        assert_eq!(graph.find_edge_unchecked(0, 0), EdgeID::MAX);
+        assert!(graph.find_edge(0, 0).is_none());
+
+        // non-existing edge out of range
+        assert_eq!(graph.find_edge_unchecked(16, 17), EdgeID::MAX);
+        assert!(graph.find_edge(16, 17).is_none());
     }
 }
