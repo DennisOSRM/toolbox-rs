@@ -125,4 +125,21 @@ mod tests {
         let convex_hull = monotone_chain(&coordinates);
         assert_eq!(expected, convex_hull);
     }
+
+    #[test]
+    pub fn tiny_instance() {
+        let coordinates = vec![
+            FPCoordinate::new_from_lat_lon(33.424732, -114.905286),
+            FPCoordinate::new_from_lat_lon(33.412828, -114.981799),
+            FPCoordinate::new_from_lat_lon(33.440700, -114.920131),
+        ];
+
+        let expected = vec![
+            FPCoordinate::new(33424732, -114905286),
+            FPCoordinate::new(33412827, -114981799),
+            FPCoordinate::new(33440700, -114920131),
+        ];
+        let convex_hull = monotone_chain(&coordinates);
+        assert_eq!(expected, convex_hull);
+    }
 }
