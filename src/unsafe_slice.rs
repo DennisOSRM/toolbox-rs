@@ -30,3 +30,22 @@ impl<'a, T> UnsafeSlice<'a, T> {
         &mut *self.slice[index].get()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::UnsafeSlice;
+
+    #[test]
+    fn instantiate() {
+        let mut data = vec![0, 1, 23, 83, 38, 3, 8947, 2762];
+        let slice = UnsafeSlice::new(&mut data);
+        assert_eq!(unsafe { *slice.get(0) }, 0);
+        assert_eq!(unsafe { *slice.get(1) }, 1);
+        assert_eq!(unsafe { *slice.get(2) }, 23);
+        assert_eq!(unsafe { *slice.get(3) }, 83);
+        assert_eq!(unsafe { *slice.get(4) }, 38);
+        assert_eq!(unsafe { *slice.get(5) }, 3);
+        assert_eq!(unsafe { *slice.get(6) }, 8947);
+        assert_eq!(unsafe { *slice.get(7) }, 2762);
+    }
+}
