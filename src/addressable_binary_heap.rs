@@ -58,7 +58,7 @@ impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Da
 {
     pub fn new() -> AddressableHeap<NodeID, Weight, Data> {
         AddressableHeap {
-            heap: vec![HeapElement::default()].to_vec(),
+            heap: vec![HeapElement::default()],
             inserted_nodes: Vec::new(),
             node_index: HashMap::new(),
         }
@@ -99,22 +99,31 @@ impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Da
         &mut self.inserted_nodes.get_mut(*index).unwrap().data
     }
 
-    pub fn key(&self, node: NodeID) -> Weight {
-        let index = self.node_index.get(&node).unwrap();
-        self.inserted_nodes.get(*index).unwrap().weight
+    pub fn weight(&self, node: NodeID) -> Weight {
+        let index = self.node_index.get(&node);
+        match index {
+            Some(index) => self.inserted_nodes.get(*index).unwrap().weight,
+            None => Weight::max_value(),
+        }
     }
 
     pub fn removed(&self, node: NodeID) -> bool {
-        let index = self.node_index.get(&node).unwrap();
-        self.inserted_nodes.get(*index).unwrap().key == 0
+        let index = self.node_index.get(&node);
+        match index {
+            Some(index) => self.inserted_nodes.get(*index).unwrap().key == 0,
+            None => false,
+        }
     }
 
     pub fn inserted(&self, node: NodeID) -> bool {
-        let index = *self.node_index.get(&node).unwrap();
-        if index >= self.inserted_nodes.len() {
-            return false;
+        let index = self.node_index.get(&node);
+        match index {
+            Some(index) => {
+                debug_assert!(index < &self.inserted_nodes.len());
+                self.inserted_nodes.get(*index).unwrap().node == node
+            }
+            None => false,
         }
-        self.inserted_nodes.get(index).unwrap().node == node
     }
 
     pub fn min(&self) -> NodeID {
@@ -136,11 +145,11 @@ impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Da
     }
 
     pub fn flush(&mut self) {
-        for i in (self.heap.len() - 1)..1 {
+        (1..(self.heap.len() - 1)).rev().for_each(|i| {
             let element = &self.heap[i];
             self.inserted_nodes[element.index].key = 0;
-        }
-        self.heap.resize(1, HeapElement::default());
+        });
+        self.heap.truncate(1);
         self.heap[0].weight = Weight::max_value();
     }
 
@@ -333,5 +342,131 @@ mod tests {
             let new_value = 2 * i;
             assert_eq!(&new_value, heap.data(*i));
         }
+    }
+
+    #[test]
+    fn flush() {
+        let mut heap = Heap::default();
+        let input = vec![4, 1, 6, 7, 5];
+
+        for i in &input {
+            heap.insert(*i, *i, *i);
+        }
+        assert_eq!(1, heap.min());
+        assert!(!heap.is_empty());
+        assert_eq!(5, heap.len());
+
+        heap.flush();
+        assert!(heap.is_empty());
+        assert_eq!(0, heap.len());
+    }
+
+    #[test]
+    fn removed() {
+        let mut heap = Heap::default();
+        let input = vec![4, 1, 6, 7, 5];
+
+        for i in &input {
+            heap.insert(*i, *i, *i);
+        }
+        assert_eq!(1, heap.min());
+        assert!(!heap.is_empty());
+        assert_eq!(5, heap.len());
+
+        assert!(!heap.removed(1));
+        assert!(!heap.removed(2));
+        assert!(!heap.removed(3));
+        assert!(!heap.removed(4));
+        assert!(!heap.removed(5));
+        assert!(!heap.removed(6));
+        assert!(!heap.removed(7));
+
+        while !heap.is_empty() {
+            heap.delete_min();
+        }
+
+        assert!(heap.removed(1));
+        assert!(!heap.removed(2));
+        assert!(!heap.removed(3));
+        assert!(heap.removed(4));
+        assert!(heap.removed(5));
+        assert!(heap.removed(6));
+        assert!(heap.removed(7));
+    }
+
+    #[test]
+    fn inserted() {
+        let mut heap = Heap::default();
+        let input = vec![4, 1, 6, 7, 5];
+
+        for i in &input {
+            heap.insert(*i, *i, *i);
+        }
+        assert_eq!(1, heap.min());
+        assert!(!heap.is_empty());
+        assert_eq!(5, heap.len());
+
+        while !heap.is_empty() {
+            heap.delete_min();
+        }
+
+        assert!(heap.inserted(1));
+        assert!(!heap.inserted(2));
+        assert!(!heap.inserted(3));
+        assert!(heap.inserted(4));
+        assert!(heap.inserted(5));
+        assert!(heap.inserted(6));
+        assert!(heap.inserted(7));
+    }
+
+    #[test]
+    fn weight() {
+        let mut heap = Heap::default();
+        let input = vec![4, 1, 6, 7, 5];
+
+        for i in &input {
+            heap.insert(*i, 2 + *i, *i);
+        }
+        assert_eq!(1, heap.min());
+        assert!(!heap.is_empty());
+        assert_eq!(5, heap.len());
+
+        while !heap.is_empty() {
+            let node = heap.delete_min();
+            assert_eq!(heap.weight(node), 2 + node);
+        }
+
+        assert_eq!(heap.weight(1), 2 + 1);
+        assert_eq!(heap.weight(2), i32::MAX);
+        assert_eq!(heap.weight(3), i32::MAX);
+        assert_eq!(heap.weight(4), 2 + 4);
+        assert_eq!(heap.weight(5), 2 + 5);
+        assert_eq!(heap.weight(6), 2 + 6);
+        assert_eq!(heap.weight(7), 2 + 7);
+    }
+
+    #[test]
+    fn decrease_key() {
+        let mut heap = Heap::default();
+        let input = vec![4, 1, 6, 7, 5];
+
+        for i in &input {
+            heap.insert(*i, 2 + *i, *i);
+        }
+        assert_eq!(1, heap.min());
+        assert!(!heap.is_empty());
+        assert_eq!(5, heap.len());
+
+        for i in &input {
+            heap.decrease_key(*i, *i);
+        }
+
+        assert_eq!(heap.weight(1), 1);
+        assert_eq!(heap.weight(2), i32::MAX);
+        assert_eq!(heap.weight(3), i32::MAX);
+        assert_eq!(heap.weight(4), 4);
+        assert_eq!(heap.weight(5), 5);
+        assert_eq!(heap.weight(6), 6);
+        assert_eq!(heap.weight(7), 7);
     }
 }
