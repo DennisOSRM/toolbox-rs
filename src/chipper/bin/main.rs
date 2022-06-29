@@ -93,10 +93,10 @@ fn main() {
                 debug!("partitioning and assigning ids for all nodes");
 
                 (result.left_ids).iter().for_each(|id| unsafe {
-                    partition_ids.get(*id).make_left_child();
+                    partition_ids.get(*id).inplace_left_child();
                 });
                 (result.right_ids).iter().for_each(|id| unsafe {
-                    partition_ids.get(*id).make_right_child();
+                    partition_ids.get(*id).inplace_right_child();
                 });
 
                 // partition edge and node id sets for the next iteration
@@ -120,7 +120,7 @@ fn main() {
                         unsafe {
                             partition_ids
                                 .get(*i)
-                                .make_leftmost_descendant(level_difference);
+                                .inplace_leftmost_descendant(level_difference);
                         }
                     }
                 }
@@ -132,7 +132,7 @@ fn main() {
                         unsafe {
                             partition_ids
                                 .get(*i)
-                                .make_leftmost_descendant(level_difference);
+                                .inplace_leftmost_descendant(level_difference);
                         }
                     }
                 }

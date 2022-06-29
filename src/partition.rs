@@ -40,18 +40,18 @@ impl PartitionID {
     }
 
     /// Transform the ID into its left child
-    pub fn make_left_child(&mut self) {
+    pub fn inplace_left_child(&mut self) {
         self.0 <<= 1;
         self.0 += 0;
     }
 
     /// Transform ID to its left-most descendant k levels down
-    pub fn make_leftmost_descendant(&mut self, k: usize) {
+    pub fn inplace_leftmost_descendant(&mut self, k: usize) {
         self.0 <<= k;
     }
 
     /// Transform the ID into its right child
-    pub fn make_right_child(&mut self) {
+    pub fn inplace_right_child(&mut self) {
         self.0 <<= 1;
         self.0 += 1;
     }
@@ -94,6 +94,8 @@ impl From<PartitionID> for usize {
 
 #[cfg(test)]
 mod tests {
+    use std::hash::Hash;
+
     use crate::partition::PartitionID;
 
     #[test]
@@ -150,5 +152,60 @@ mod tests {
         assert_eq!(right_child, id.right_child());
         assert!(left_child.is_left_child());
         assert!(right_child.is_right_child());
+    }
+
+    #[test]
+    fn inplace_left_child() {
+        let mut id = PartitionID(12345);
+        let (left_child, _) = id.children();
+        id.inplace_left_child();
+        assert_eq!(left_child, id);
+    }
+
+    #[test]
+    fn inplace_right_child() {
+        let mut id = PartitionID(12345);
+        let (_, right_child) = id.children();
+        id.inplace_right_child();
+        assert_eq!(right_child, id);
+    }
+
+    #[test]
+    fn into_usize() {
+        let id = PartitionID(12345);
+        let id_usize = usize::from(id);
+        assert_eq!(12345, id_usize);
+    }
+
+    #[test]
+    fn inplace_leftmost_descendant() {
+        let id = PartitionID(1);
+        let mut current = id;
+        for i in 1..30 {
+            let mut id = id.clone();
+            id.inplace_leftmost_descendant(i);
+            assert_eq!(current.left_child(), id);
+            current = current.left_child();
+        }
+    }
+
+    #[test]
+    fn display() {
+        for i in 0..100 {
+            let id = PartitionID(i);
+            let string = format!("{}", id);
+            let recast_id = PartitionID(string.parse::<u32>().unwrap());
+            assert_eq!(id, recast_id);
+        }
+    }
+
+    #[test]
+    fn partial_eq() {
+        for i in 0..100 {
+            let id = PartitionID(i);
+            let string = format!("{}", id);
+            let recast_id = PartitionID(string.parse::<u32>().unwrap());
+            assert_eq!(id, recast_id);
+        }
     }
 }
