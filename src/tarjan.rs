@@ -30,12 +30,6 @@ pub struct Tarjan {
     tarjan_stack: Vec<NodeID>,
 }
 
-impl Default for Tarjan {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Tarjan {
     pub fn new() -> Self {
         Self {
