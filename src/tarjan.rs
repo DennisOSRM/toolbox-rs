@@ -25,6 +25,7 @@ impl DFSNode {
 }
 
 // TODO: consider making this a function
+#[derive(Default)]
 pub struct Tarjan {
     dfs_state: Vec<DFSNode>,
     tarjan_stack: Vec<NodeID>,
