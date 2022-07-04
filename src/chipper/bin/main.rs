@@ -68,7 +68,7 @@ fn main() {
                 pb.inc(1);
 
                 // we use the count of coordinates as an upper bound to the cut size
-                let upper_bound = Arc::new(AtomicI32::new((&job.2).len().try_into().unwrap()));
+                let upper_bound = Arc::new(AtomicI32::new(job.2.len().try_into().unwrap()));
                 // run inertial flow on all four axes
                 let best_max_flow = (0..4)
                     .into_par_iter()
@@ -102,7 +102,8 @@ fn main() {
                 // partition edge and node id sets for the next iteration
                 debug!("generating next level edges");
                 // TODO: don't copy, but partition in place
-                let (left_edges, right_edges): (Vec<_>, Vec<_>) = (&job.0)
+                let (left_edges, right_edges): (Vec<_>, Vec<_>) = job
+                    .0
                     .iter()
                     .filter(|edge| unsafe {
                         partition_ids.get(edge.source) == partition_ids.get(edge.target)
