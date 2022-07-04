@@ -94,7 +94,6 @@ impl From<PartitionID> for usize {
 
 #[cfg(test)]
 mod tests {
-    use std::hash::Hash;
 
     use crate::partition::PartitionID;
 
