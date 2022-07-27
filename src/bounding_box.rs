@@ -25,6 +25,21 @@ impl BoundingBox {
         }
     }
 
+    pub fn invalid() -> BoundingBox {
+        BoundingBox {
+            min: FPCoordinate::max(),
+            max: FPCoordinate::min(),
+        }
+    }
+
+    pub fn extend_with(&mut self, other: &BoundingBox) {
+        self.min.lat = self.min.lat.min(other.min.lat);
+        self.min.lon = self.min.lon.min(other.min.lon);
+
+        self.max.lat = self.max.lat.max(other.max.lat);
+        self.max.lon = self.max.lat.max(other.max.lon);
+    }
+
     pub fn center(&self) -> FPCoordinate {
         debug_assert!(self.min.lat <= self.max.lat);
         debug_assert!(self.min.lon <= self.max.lon);
@@ -106,5 +121,24 @@ pub mod tests {
         assert!(bbox.is_valid());
         let center = bbox.center();
         assert_eq!(center, FPCoordinate::new(50, 50));
+    }
+
+    #[test]
+    pub fn invalid() {
+        let bbox = BoundingBox::invalid();
+        assert!(bbox.min.lat > bbox.max.lat);
+        assert!(bbox.min.lon > bbox.max.lon);
+    }
+
+    #[test]
+    pub fn extend_with_extend_invalid() {
+        let mut c1 = BoundingBox::invalid();
+        let c2 =
+            BoundingBox::from_coordinates(&[FPCoordinate::new(11, 50), FPCoordinate::new(50, 37)]);
+        c1.extend_with(&c2);
+        assert!(c1.is_valid());
+
+        assert_eq!(c2.min, FPCoordinate::new(11, 37));
+        assert_eq!(c2.max, FPCoordinate::new(50, 50));
     }
 }
