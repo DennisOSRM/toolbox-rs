@@ -1,17 +1,7 @@
-use std::{
-    fs::File,
-    io::{self, BufRead},
-    path::Path,
-};
-
 use itertools::Itertools;
 use log::info;
 
-use crate::{
-    edge::InputEdge,
-    geometry::primitives::FPCoordinate,
-    graph::NodeID,
-};
+use crate::{edge::InputEdge, geometry::primitives::FPCoordinate, graph::NodeID, io::read_lines};
 
 pub enum WeightType {
     Unit,
@@ -37,16 +27,6 @@ impl TryFrom<i32> for Direction {
             _ => Err(()),
         }
     }
-}
-
-// The output is wrapped in a Result to allow matching on errors
-// Returns an Iterator to the Reader of the lines of the file.
-fn read_lines<P>(filename: P) -> io::Result<io::Lines<io::BufReader<File>>>
-where
-    P: AsRef<Path>,
-{
-    let file = File::open(filename)?;
-    Ok(io::BufReader::new(file).lines())
 }
 
 pub fn read_graph<T: std::cmp::Eq + From<i32>>(
