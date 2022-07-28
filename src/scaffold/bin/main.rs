@@ -13,7 +13,7 @@ use geojson::{feature::Id, Feature, FeatureCollection, GeoJson, Geometry, Value}
 use itertools::Itertools;
 use log::info;
 use toolbox_rs::{
-    bounding_box::BoundingBox, convex_hull::monotone_chain, dimacs, partition::PartitionID,
+    bounding_box::BoundingBox, convex_hull::monotone_chain, io, partition::PartitionID,
     space_filling_curve::zorder_cmp,
 };
 
@@ -38,7 +38,7 @@ pub fn main() {
     let partition_ids = binary_partition_file(&args.partition_file);
     info!("loaded {} partitions", partition_ids.len());
 
-    let coordinates = dimacs::read_coordinates(&args.coordinates_file);
+    let coordinates = io::read_coordinates(&args.coordinates_file);
     info!("loaded {} coordinates", coordinates.len());
 
     info!("creating and sorting proxy vector");
