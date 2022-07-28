@@ -7,6 +7,7 @@ use clap::Parser;
 pub enum InputFormat {
     DIMACS,
     DDSG,
+    METIS,
 }
 
 #[derive(Parser, Debug)]

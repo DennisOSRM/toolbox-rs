@@ -19,6 +19,7 @@ pub mod inertial_flow;
 pub mod io;
 pub mod kruskal;
 pub mod max_flow;
+pub mod metis;
 pub mod partition;
 pub mod projection;
 pub mod rdx_sort;
