@@ -5,13 +5,9 @@ use std::{
 };
 
 use itertools::Itertools;
-use log::{debug, info};
+use log::info;
 
-use crate::{
-    edge::{InputEdge, TrivialEdge},
-    geometry::primitives::FPCoordinate,
-    graph::NodeID,
-};
+use crate::{edge::InputEdge, geometry::primitives::FPCoordinate, graph::NodeID};
 
 pub enum WeightType {
     Unit,
@@ -63,73 +59,28 @@ pub fn read_graph<T: std::cmp::Eq + From<i32>>(
         .unwrap_or("")
         .split_ascii_whitespace()
         .collect_vec();
-    info!("expecting {} nodes and {} edges", sizes[0], sizes[1]);
-
-    let mut current_source: NodeID = 0;
+    let number_of_nodes = sizes[0].parse::<NodeID>().unwrap();
+    info!("expecting {} nodes and {} edges", number_of_nodes, sizes[1]);
 
     // load unweighted metis graph and coordinates
-    for line in lines {
+    for (source, line) in lines.enumerate() {
         let line = line.unwrap();
         let tokens = line.get(..).unwrap_or("").split_whitespace().collect_vec();
 
+        assert!(source < number_of_nodes);
+
         for token in tokens {
+            let target = token.parse::<NodeID>().unwrap() - 1;
+            assert!(target < number_of_nodes);
+
             edges.push(InputEdge {
-                source: current_source,
-                target: token.parse::<NodeID>().unwrap() - 1,
+                source,
+                target,
                 data: T::from(1),
             });
         }
-        current_source += 1;
     }
     info!("loaded {} directed edges", edges.len());
-    edges
-}
-
-pub fn read_graph_into_trivial_edges(filename: &str) -> Vec<TrivialEdge> {
-    let mut comment_count = 0;
-    let mut problem_count = 0;
-    let mut edges = Vec::new();
-
-    // load dimacs graph and coordinates
-    for line in read_lines(filename).expect("could not load graph file") {
-        let line = line.unwrap();
-        match line.chars().next().unwrap() {
-            'c' => {
-                comment_count += 1;
-                debug!("{}", line.get(2..).unwrap_or(""));
-            }
-            'p' => {
-                problem_count += 1;
-                let sizes = line
-                    .get(5..)
-                    .unwrap_or("")
-                    .split_ascii_whitespace()
-                    .collect_vec();
-                info!("expecting {} nodes and {} edges", sizes[0], sizes[1]);
-                edges.reserve(sizes[0].parse::<usize>().unwrap());
-            }
-            'a' => {
-                let tokens = line.get(2..).unwrap_or("").split_whitespace().collect_vec();
-                if tokens.len() != 3 {
-                    continue;
-                }
-                let source = tokens[0].parse::<NodeID>().unwrap();
-                let target = tokens[1].parse::<NodeID>().unwrap();
-                edges.push(TrivialEdge { source, target });
-            }
-            _ => {}
-        }
-    }
-    debug!("graph file comment count: {comment_count}");
-    debug!("graph file problem count: {problem_count}");
-
-    info!("renumbering source and target in edge list");
-    for mut edge in &mut edges {
-        // the DIMACS format defines numbering to be consecutive and starting at 1.
-        edge.source -= 1;
-        edge.target -= 1;
-    }
-
     edges
 }
 

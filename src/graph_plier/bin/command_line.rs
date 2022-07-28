@@ -5,9 +5,9 @@ use clap::Parser;
 
 #[derive(ArgEnum, Clone, Debug)]
 pub enum InputFormat {
-    DIMACS,
-    DDSG,
-    METIS,
+    Dimacs,
+    Ddsg,
+    Metis,
 }
 
 #[derive(Parser, Debug)]

@@ -23,15 +23,15 @@ fn main() {
     info!("{args}");
 
     let edges: Vec<InputEdge<i32>> = match args.input_format {
-        InputFormat::DDSG => ddsg::read_graph(&args.graph, ddsg::WeightType::Original),
-        InputFormat::DIMACS => dimacs::read_graph(&args.graph, dimacs::WeightType::Original),
-        InputFormat::METIS => metis::read_graph(&args.graph, metis::WeightType::Original),
+        InputFormat::Ddsg => ddsg::read_graph(&args.graph, ddsg::WeightType::Original),
+        InputFormat::Dimacs => dimacs::read_graph(&args.graph, dimacs::WeightType::Original),
+        InputFormat::Metis => metis::read_graph(&args.graph, metis::WeightType::Original),
     };
 
     let coordinates = match args.input_format {
-        InputFormat::DDSG => ddsg::read_coordinates(&args.coordinates),
-        InputFormat::DIMACS => dimacs::read_coordinates(&args.coordinates),
-        InputFormat::METIS => metis::read_coordinates(&args.coordinates),
+        InputFormat::Ddsg => ddsg::read_coordinates(&args.coordinates),
+        InputFormat::Dimacs => dimacs::read_coordinates(&args.coordinates),
+        InputFormat::Metis => metis::read_coordinates(&args.coordinates),
     };
 
     info!("writing edges into intermediate format");
