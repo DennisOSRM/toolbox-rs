@@ -19,6 +19,10 @@ path = "src/chipper/bin/main.rs"
 name = "scaffold"
 path = "src/scaffold/bin/main.rs"
 
+[[bin]]
+name = "graph_plier"
+path = "src/graph_plier/bin/main.rs"
+
 [dependencies]
 bincode = "1.3.3"
 bitvec = "1.0.0"

@@ -8,9 +8,9 @@ use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info};
 use rayon::prelude::*;
 use std::sync::{atomic::AtomicI32, Arc};
+use toolbox_rs::io;
 use toolbox_rs::unsafe_slice::UnsafeSlice;
 use toolbox_rs::{
-    dimacs,
     inertial_flow::{self, flow_cmp, FlowResult},
     partition::PartitionID,
 };
@@ -40,10 +40,15 @@ fn main() {
             .unwrap();
     }
 
-    let edges = dimacs::read_graph_into_trivial_edges(&args.graph);
-    let coordinates = dimacs::read_coordinates(&args.coordinates);
+    let edges = io::read_graph_into_trivial_edges(&args.graph);
+    let coordinates = io::read_coordinates(&args.coordinates);
+    info!(
+        "loaded {} edges and {} coordinates",
+        edges.len(),
+        coordinates.len()
+    );
 
-    // enqueue initial job for root node
+    // enqueue initial job for partitioning of the root node into job queue
     let proxy_vector = (0..coordinates.len()).collect_vec();
     let job = (edges.clone(), &coordinates, proxy_vector);
     let mut current_job_queue = vec![job];

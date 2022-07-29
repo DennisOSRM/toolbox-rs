@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::graph::NodeID;
 use core::mem::swap;
 
@@ -28,7 +30,7 @@ impl Edge for TrivialEdge {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialOrd, Ord, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialOrd, Ord, PartialEq, Serialize)]
 pub struct InputEdge<EdgeDataT: Eq> {
     pub source: NodeID,
     pub target: NodeID,
