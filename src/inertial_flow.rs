@@ -171,12 +171,14 @@ pub fn sub_step(
         .expect("max flow computation did not run");
 
     // TODO: don't copy, but partition in place
-    let (left_ids, right_ids): (Vec<_>, Vec<_>) = node_id_list.into_iter().partition(|id| {
-        if !renumbering_table.contains_key(*id) {
-            return *id % 2 == 0;
-        }
-        intermediate_assignment[renumbering_table.get(*id)]
-    });
+    let (left_ids, right_ids): (Vec<_>, Vec<_>) = node_id_list
+        .into_iter()
+        .filter(|id| renumbering_table.contains_key(*id))
+        .partition(|id| intermediate_assignment[renumbering_table.get(*id)]);
+
+    debug_assert!(!left_ids.is_empty());
+    debug_assert!(!right_ids.is_empty());
+
     let balance = std::cmp::min(left_ids.len(), right_ids.len()) as f64
         / (left_ids.len() + right_ids.len()) as f64;
     debug!("[{axis}] balance: {balance}");
