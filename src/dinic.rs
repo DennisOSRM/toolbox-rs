@@ -46,6 +46,7 @@ impl Dinic {
         source: NodeID,
         target: NodeID,
     ) -> Self {
+        debug_assert!(!input_edges.is_empty());
         debug!("instantiating max-flow solver");
         let edge_list: Vec<InputEdge<ResidualCapacity>> = input_edges
             .iter()
@@ -65,6 +66,7 @@ impl Dinic {
         source: usize,
         target: usize,
     ) -> Self {
+        debug_assert!(!edge_list.is_empty());
         let number_of_edges = edge_list.len();
 
         debug!("extending {} edges", edge_list.len());
