@@ -41,6 +41,10 @@ pub fn read_graph<T: std::cmp::Eq + From<i32>>(
                 }
                 let source = tokens[0].parse::<NodeID>().unwrap();
                 let target = tokens[1].parse::<NodeID>().unwrap();
+                // avoid eigenloops
+                if source == target {
+                    continue;
+                }
                 let data = tokens[2].parse::<i32>().unwrap();
 
                 edges.push(InputEdge::<T> {

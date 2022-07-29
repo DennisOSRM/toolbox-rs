@@ -56,6 +56,10 @@ pub fn read_graph<T: std::cmp::Eq + From<i32>>(
         for token in tokens {
             let target = token.parse::<NodeID>().unwrap() - 1;
             assert!(target < number_of_nodes);
+            // avoid eigenloops
+            if source == target {
+                continue;
+            }
 
             edges.push(InputEdge {
                 source,
