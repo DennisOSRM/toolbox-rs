@@ -55,6 +55,7 @@ fn main() {
 
     let sty = ProgressStyle::default_spinner()
         .template("{spinner:.green} [{elapsed_precise}] {wide_bar:.green/yellow} {msg}")
+        .unwrap()
         .progress_chars("#>-");
 
     let mut current_level = 0;
