@@ -124,15 +124,23 @@ pub fn read_graph<T: std::cmp::Eq + From<i32>>(
 }
 
 pub fn read_coordinates(filename: &str) -> Vec<FPCoordinate> {
-    let mut coordinates = Vec::new();
-    for line in read_lines(filename).expect("could not load coordinates file") {
+    let mut lines = read_lines(filename).expect("could not load coordinates file");
+    let first_line = lines.next().unwrap().unwrap();
+    let coordinate_count = first_line.parse::<usize>().unwrap();
+    info!("expecting {coordinate_count} coordinates");
+    let mut coordinates = Vec::with_capacity(coordinate_count);
+    for line in lines {
         let line = line.unwrap();
         let tokens = line.get(..).unwrap_or("").split_whitespace().collect_vec();
-        let lon = tokens[0].parse::<f64>().unwrap() / 100_000.;
-        let lat = tokens[1].parse::<f64>().unwrap() / 100_000.;
-        // let _z = tokens[2].parse::<f64>().unwrap();
+        let count = tokens[0].parse::<usize>().unwrap();
+        assert_eq!(count, coordinates.len());
+
+        let lon = tokens[1].parse::<f64>().unwrap() / 100_000.;
+        let lat = tokens[2].parse::<f64>().unwrap() / 100_000.;
         coordinates.push(FPCoordinate::new_from_lat_lon(lat, lon));
     }
+    assert_eq!(coordinate_count, coordinates.len());
+    info!("loaded {coordinate_count} coordinates");
 
     coordinates
 }
