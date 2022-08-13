@@ -40,4 +40,4 @@ $ cargo r --release --bin scaffold -- -c /path/to/USA-road-d.USA.co.toolbox -p /
 
 ## Convex Hull Visualization
 ![Convex Hulls USA](https://user-images.githubusercontent.com/1067895/175577261-55e38f44-07ae-4ab2-b344-23d15f5d5c89.png)
-![Convex Hulls EUR](https://user-images.githubusercontent.com/1067895/181495539-c9a42513-9bb2-4b21-bd63-775f13fe3ab4.png)
+![Convex Hulls EUR](https://user-images.githubusercontent.com/1067895/184511222-3992c158-ba12-4f83-b8f3-64845e95a8bf.png)
