@@ -39,21 +39,25 @@ impl PartitionID {
         PartitionID(temp + 1)
     }
 
-    /// Transform the ID into its left child
-    pub fn inplace_left_child(&mut self) {
-        self.0 <<= 1;
-        self.0 += 0;
-    }
-
     /// Transform ID to its left-most descendant k levels down
     pub fn inplace_leftmost_descendant(&mut self, k: usize) {
         self.0 <<= k;
     }
 
+    /// Transform ID to its right-most descendant k levels down
+    pub fn inplace_rightmost_descendant(&mut self, k: usize) {
+        self.inplace_leftmost_descendant(k);
+        self.0 += (1 << k) - 1;
+    }
+
+    /// Transform the ID into its left child
+    pub fn inplace_left_child(&mut self) {
+        self.inplace_leftmost_descendant(1);
+    }
+
     /// Transform the ID into its right child
     pub fn inplace_right_child(&mut self) {
-        self.0 <<= 1;
-        self.0 += 1;
+        self.inplace_rightmost_descendant(1);
     }
 
     /// Returns a new PartitionID from an u32
@@ -185,6 +189,18 @@ mod tests {
             id.inplace_leftmost_descendant(i);
             assert_eq!(current.left_child(), id);
             current = current.left_child();
+        }
+    }
+
+    #[test]
+    fn inplace_rightmost_descendant() {
+        let id = PartitionID(1);
+        let mut current = id;
+        for i in 1..30 {
+            let mut id = id.clone();
+            id.inplace_rightmost_descendant(i);
+            assert_eq!(current.right_child(), id);
+            current = current.right_child();
         }
     }
 
