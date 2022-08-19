@@ -13,7 +13,7 @@ impl NodeArrayEntry {
         NodeArrayEntry { first_edge: e }
     }
 }
-pub struct StaticGraph<T: Ord> {
+pub struct StaticGraph<T: Ord + Clone> {
     node_array: Vec<NodeArrayEntry>,
     edge_array: Vec<EdgeArrayEntry<T>>,
 }

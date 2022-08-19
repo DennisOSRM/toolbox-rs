@@ -9,6 +9,7 @@ pub mod ddsg;
 pub mod dfs;
 pub mod dimacs;
 pub mod dinic;
+pub mod dynamic_graph;
 pub mod edge;
 pub mod edmonds_karp;
 pub mod ford_fulkerson;

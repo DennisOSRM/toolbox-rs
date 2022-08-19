@@ -19,8 +19,8 @@ pub trait Graph<T> {
     fn find_edge(&self, s: NodeID, t: NodeID) -> Option<EdgeID>;
     fn find_edge_unchecked(&self, s: NodeID, t: NodeID) -> EdgeID;
 }
-
-pub struct EdgeArrayEntry<EdgeDataT> {
+#[derive(Clone, Copy)]
+pub struct EdgeArrayEntry<EdgeDataT: Clone> {
     pub target: NodeID,
     pub data: EdgeDataT,
 }
