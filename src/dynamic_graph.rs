@@ -2,7 +2,6 @@
 /// adjacency arrays. Nodes record their degree and edge slices are moved to
 /// the end of the edge array if there is insufficient space  when adding an
 /// edge.
-
 use crate::{
     edge::{Edge, EdgeData},
     graph::{EdgeArrayEntry, EdgeID, Graph, NodeID, INVALID_EDGE_ID, INVALID_NODE_ID},
@@ -21,7 +20,9 @@ impl NodeArrayEntry {
             edge_count: 0,
         }
     }
-    pub fn get_last_edge(&self) -> EdgeID {
+
+    /// Get index past the end of the edge slice
+    pub fn slice_end(&self) -> EdgeID {
         self.edge_count + self.first_edge
     }
 }
@@ -37,9 +38,11 @@ pub struct DynamicGraph<T: Clone> {
 }
 
 impl<T: Clone + Copy> DynamicGraph<T> {
-    // In time O(V+E) check that the following invariants hold:
-    // a) the target node of each non=spare edge is smaller than the number of nodes
-    // b) index values for nodes first_edges are strictly increasing
+    /// In time O(V+E) check that the following invariants hold:
+    /// a) the target node of each non-spare edge is smaller than the number of nodes, and
+    /// b) the number of non-spare edges add up to the number of edges, and
+    /// c) the first_edge id at each node is valid
+    /// d) the number of nodes is consistent with the node array size
     pub fn check_integrity(&self) -> bool {
         self.edge_array
             .iter()
@@ -74,7 +77,6 @@ impl<T: Clone + Copy> DynamicGraph<T> {
         // sort input edges by source/target/data
         // TODO(dl): sorting by source suffices to construct adjacency array
         input.sort();
-
         Self::new_from_sorted_list(node_count, &input)
     }
 
@@ -124,13 +126,20 @@ impl<T: Clone + Copy> DynamicGraph<T> {
         graph
     }
 
+    /// Inserts a node with an empty edge slice into the node array.
     pub fn insert_node(&mut self) {
         self.node_array.push(NodeArrayEntry::new(INVALID_EDGE_ID));
         self.number_of_nodes += 1;
     }
 
+    /// Inserts an edge into the graph by making sure that there's room one
+    /// index past the current edge slice. It does so by doing the following:
+    /// If one past the slice is a spare edge, use it
+    /// Else, if one before the slice is a spare, move the last element over
+    /// Else, resize the edge array sufficiently and relocate the slice at
+    /// the beginning of the newly added extension of the edge array.
     pub fn insert_edge(&mut self, source: NodeID, target: NodeID, data: T) {
-        println!("Inserting edge ({source},{target})");
+        // if the source of target nodes don't exist yet, then add them.
         while self.number_of_nodes < source {
             self.insert_node();
         }
@@ -144,56 +153,51 @@ impl<T: Clone + Copy> DynamicGraph<T> {
             edge_count,
         } = *&self.node_array[source as usize];
 
-        let potential_edge_id = first_edge + edge_count;
-        if potential_edge_id == self.edge_array.len() || !self.is_spare_edge(potential_edge_id) {
-            // can we write before this nodes edges?
+        let right_potential_edge_id = first_edge + edge_count;
+        if right_potential_edge_id == self.edge_array.len() || !self.is_spare_edge(right_potential_edge_id) {
+            // is there free space left of edge slice?
             if first_edge != 0 && self.is_spare_edge(first_edge - 1) {
+                // move the right-most element of the slice one past the left end
                 self.node_array[source as usize].first_edge -= 1;
-                self.edge_array[first_edge] = self.edge_array[first_edge + edge_count];
-                panic!();
+                self.edge_array.swap(first_edge - 1, right_potential_edge_id - 1);
             } else {
-                // TODO: check if we can write in front without reallocating
-
-                // do we need to resize the array?
                 let new_first_edge = self.edge_array.len();
-                let sub_array_len = (edge_count as f64 * GROWTH_FACTOR) as usize + 1;
-                let new_capacity = new_first_edge + sub_array_len;
-                if self.edge_array.capacity() < new_capacity {
+                let new_slice_len = (edge_count as f64 * GROWTH_FACTOR) as usize + 1;
+                // do we need to resize the array?
+                if self.edge_array.capacity() < (new_first_edge + new_slice_len) {
                     // reserve additional capacity to move data to the end
-                    self.edge_array.reserve(new_capacity);
+                    self.edge_array.reserve_exact(new_slice_len);
                 }
                 self.edge_array.resize(
-                    new_first_edge + sub_array_len,
+                    new_first_edge + new_slice_len,
                     EdgeArrayEntry {
                         target: INVALID_NODE_ID,
-                        data,
+                        data, // TODO: this is dummy data, should it be T::Default()?
                     },
                 );
                 // move the edges over and invalidate the old ones
-                for i in 0..edge_count {
-                    self.edge_array[new_first_edge + i] = self.edge_array[first_edge + i];
-                    self.make_spare_edge(first_edge + i);
-                    println!("Nulling edge {}", first_edge + i);
-                }
-                // invalidate until the end of edge_list
-                for i in edge_count + 1..sub_array_len {
-                    self.make_spare_edge(new_first_edge + i);
-                    println!("Nulling edge {}", first_edge + i);
-                }
+                (0..edge_count).for_each(|i| {
+                    self.edge_array.swap(new_first_edge + i, first_edge + i);
+                });
                 self.node_array[source as usize].first_edge = new_first_edge;
             }
         }
-        let node_entry = &self.node_array[source as usize];
-        let edge = node_entry.first_edge + node_entry.edge_count;
+
+        // At this stage, the entry past the edge slice is guaranteed to be a
+        // spare edge. The following lines write the edge array entry there and
+        // do the necessary book keeping to keep the graph integrity.
+        let edge_id = *&self.node_array[source as usize].slice_end();
+        self.edge_array[edge_id] = EdgeArrayEntry { target, data };
         self.node_array[source as usize].edge_count += 1;
-        self.edge_array[edge] = EdgeArrayEntry { target, data };
         self.number_of_edges += 1;
     }
 
+    /// Check whether the edge is unused.
     fn is_spare_edge(&self, edge: EdgeID) -> bool {
         self.edge_array[edge].target == usize::MAX
     }
 
+    /// Make the edge unused.
     fn make_spare_edge(&mut self, edge: EdgeID) {
         self.edge_array[edge].target = usize::MAX
     }
@@ -203,7 +207,7 @@ impl<T: Clone + Copy> DynamicGraph<T> {
     pub fn remove_edge(&mut self, source: NodeID, edge_to_delete: EdgeID) {
         self.number_of_edges -= 1;
         self.node_array[source as usize].edge_count -= 1;
-        
+
         let NodeArrayEntry {
             first_edge,
             edge_count,
@@ -390,9 +394,12 @@ mod tests {
         assert_eq!(6, graph.number_of_nodes());
         assert_eq!(8, graph.number_of_edges());
 
+        // the node exists, but it's degree is 0, it will be created at the end
+        assert_eq!(0, graph.out_degree(3));
         graph.insert_edge(3, 5, 123);
 
         // check that graph was expanded and edge exists
+        assert_eq!(1, graph.out_degree(3));
         assert_eq!(6, graph.number_of_nodes());
         assert_eq!(9, graph.number_of_edges());
         assert!(graph.find_edge(3, 5).is_some());
@@ -406,13 +413,44 @@ mod tests {
             assert_eq!(edge.data, data);
         }
 
-        // // insert another edge that is inserted before the current slice of
-        // // edges with reallocating
-        // graph.insert_edge(4, 1, 7);
-        // // check that edge exists
-        // assert_eq!(6, graph.number_of_nodes());
-        // assert_eq!(10, graph.number_of_edges());
-        // assert!(graph.find_edge(4, 1).is_some());
-        // assert!(graph.check_integrity());
+        // insert edge that forces moving edge slice to end of array
+        graph.insert_edge(4, 1, 7);
+        // check that edge exists
+        assert_eq!(6, graph.number_of_nodes());
+        assert_eq!(10, graph.number_of_edges());
+        assert!(graph.find_edge(4, 1).is_some());
+        assert!(graph.check_integrity());
+
+        // insert edge that finds a free slot left of its slice
+        graph.insert_edge(5, 1, 1234);
+        // check that edge exists
+        assert_eq!(6, graph.number_of_nodes());
+        assert_eq!(11, graph.number_of_edges());
+        assert!(graph.find_edge(5, 1).is_some());
+        assert!(graph.check_integrity());
+
+        // insert edge that finds a free slot left of right slice
+        assert!(graph.find_edge(2, 5).is_none());
+        graph.insert_edge(2, 5, 1234);
+        // check that edge exists
+        assert_eq!(6, graph.number_of_nodes());
+        assert_eq!(12, graph.number_of_edges());
+        assert!(graph.find_edge(2, 5).is_some());
+        assert!(graph.check_integrity());
+
+        // check that all other edges exist as well
+        for edge in &EDGES {
+            let result = graph.find_edge(edge.source, edge.target);
+            assert!(result.is_some());
+            let edge_id = result.unwrap();
+            let data = *graph.data(edge_id);
+            assert_eq!(edge.data, data);
+        }
+
+        assert!(graph.find_edge(3, 5).is_some());
+        assert!(graph.find_edge(4, 1).is_some());
+        assert!(graph.find_edge(5, 1).is_some());
+        assert!(graph.find_edge(2, 5).is_some());
+
     }
 }
