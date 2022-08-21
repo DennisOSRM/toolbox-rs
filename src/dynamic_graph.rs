@@ -100,7 +100,7 @@ impl<T: Clone + Copy> DynamicGraph<T> {
         graph.node_array.push(NodeArrayEntry::new(0));
         let mut offset = 0;
         let mut prev_offset = 0;
-        for i in (0)..(number_of_nodes) {
+        for i in 0..number_of_nodes {
             while offset != input.len() && input[offset].source() == i {
                 offset += 1;
             }
@@ -151,15 +151,18 @@ impl<T: Clone + Copy> DynamicGraph<T> {
         let NodeArrayEntry {
             first_edge,
             edge_count,
-        } = *&self.node_array[source as usize];
+        } = self.node_array[source as usize];
 
         let right_potential_edge_id = first_edge + edge_count;
-        if right_potential_edge_id == self.edge_array.len() || !self.is_spare_edge(right_potential_edge_id) {
+        if right_potential_edge_id == self.edge_array.len()
+            || !self.is_spare_edge(right_potential_edge_id)
+        {
             // is there free space left of edge slice?
             if first_edge != 0 && self.is_spare_edge(first_edge - 1) {
                 // move the right-most element of the slice one past the left end
                 self.node_array[source as usize].first_edge -= 1;
-                self.edge_array.swap(first_edge - 1, right_potential_edge_id - 1);
+                self.edge_array
+                    .swap(first_edge - 1, right_potential_edge_id - 1);
             } else {
                 let new_first_edge = self.edge_array.len();
                 let new_slice_len = (edge_count as f64 * GROWTH_FACTOR) as usize + 1;
@@ -186,7 +189,7 @@ impl<T: Clone + Copy> DynamicGraph<T> {
         // At this stage, the entry past the edge slice is guaranteed to be a
         // spare edge. The following lines write the edge array entry there and
         // do the necessary book keeping to keep the graph integrity.
-        let edge_id = *&self.node_array[source as usize].slice_end();
+        let edge_id = self.node_array[source as usize].slice_end();
         self.edge_array[edge_id] = EdgeArrayEntry { target, data };
         self.node_array[source as usize].edge_count += 1;
         self.number_of_edges += 1;
@@ -211,7 +214,7 @@ impl<T: Clone + Copy> DynamicGraph<T> {
         let NodeArrayEntry {
             first_edge,
             edge_count,
-        } = *&self.node_array[source as usize];
+        } = self.node_array[source as usize];
         let last_edge_at_node = first_edge + edge_count;
         self.edge_array.swap(last_edge_at_node, edge_to_delete);
         self.make_spare_edge(last_edge_at_node);
@@ -451,6 +454,5 @@ mod tests {
         assert!(graph.find_edge(4, 1).is_some());
         assert!(graph.find_edge(5, 1).is_some());
         assert!(graph.find_edge(2, 5).is_some());
-
     }
 }
