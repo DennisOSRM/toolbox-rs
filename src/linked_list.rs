@@ -24,8 +24,8 @@ pub struct LinkedList<T> {
     len: usize,
     _ghost: PhantomData<T>,
 }
-pub type ListNode<T> = NonNull<Node<T>>;
-type Link<T> = Option<ListNode<T>>;
+pub type ListCursor<T> = NonNull<Node<T>>;
+type Link<T> = Option<ListCursor<T>>;
 
 pub struct Node<T> {
     next: Link<T>,
@@ -43,7 +43,7 @@ impl<T> LinkedList<T> {
         }
     }
 
-    pub fn push_front(&mut self, elem: T) -> ListNode<T> {
+    pub fn push_front(&mut self, elem: T) -> ListCursor<T> {
         // SAFETY: it's a linked-list, what do you want?
         unsafe {
             let new = NonNull::new_unchecked(Box::into_raw(Box::new(Node {
@@ -68,7 +68,7 @@ impl<T> LinkedList<T> {
         }
     }
 
-    pub fn move_to_front(&mut self, b: &ListNode<T>) {
+    pub fn move_to_front(&mut self, b: &ListCursor<T>) {
         if self.is_empty() {
             return;
         }
@@ -91,7 +91,7 @@ impl<T> LinkedList<T> {
 
             // if the last element is moved to front, then update it with the next element in row
             if self.back.unwrap() == *b {
-                debug_assert!((*b.as_ptr()).prev == None);
+                debug_assert!((*b.as_ptr()).prev.is_none());
                 self.back = a;
             }
         }
@@ -145,6 +145,11 @@ impl<T> LinkedList<T> {
     pub fn clear(&mut self) {
         // Oh look it's drop again
         while self.pop_back().is_some() {}
+    }
+
+    pub fn get_front(&self) -> &T {
+        // TODO: decide whether this returns a reference or a copy
+        unsafe { &self.front.unwrap().as_ref().elem }
     }
 }
 
