@@ -70,10 +70,10 @@ pub fn flow_cmp(a: &FlowResult, b: &FlowResult) -> std::cmp::Ordering {
 /// * `balance_factor` - balance factor, i.e. how many nodes get contracted
 /// * `upper_bound` - a global upperbound to the best inertial flow cut
 pub fn sub_step(
-    axis: usize,
     input_edges: &[TrivialEdge],
-    coordinates: &[FPCoordinate],
     node_id_list: &[usize],
+    coordinates: &[FPCoordinate],
+    axis: usize,
     balance_factor: f64,
     upper_bound: Arc<AtomicI32>,
 ) -> FlowResult {
@@ -285,7 +285,7 @@ mod tests {
         ];
         let node_id_list = (0..coordinates.len()).collect_vec();
 
-        let result = sub_step(3, &edges, &coordinates, &node_id_list, 0.25, upper_bound);
+        let result = sub_step(&edges, &node_id_list, &coordinates, 3, 0.25, upper_bound);
         assert_eq!(result.flow, 1);
         assert_eq!(result.balance, 0.5);
         assert_eq!(result.left_ids.len(), 3);

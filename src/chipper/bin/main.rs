@@ -49,8 +49,8 @@ fn main() {
     );
 
     // enqueue initial job for partitioning of the root node into job queue
-    let proxy_vector = (0..coordinates.len()).collect_vec();
-    let job = (edges.clone(), &coordinates, proxy_vector);
+    let id_vector = (0..coordinates.len()).collect_vec();
+    let job = (edges.clone(), id_vector);
     let mut current_job_queue = vec![job];
 
     let sty = ProgressStyle::default_spinner()
@@ -74,16 +74,16 @@ fn main() {
                 pb.inc(1);
 
                 // we use the count of coordinates as an upper bound to the cut size
-                let upper_bound = Arc::new(AtomicI32::new(job.2.len().try_into().unwrap()));
+                let upper_bound = Arc::new(AtomicI32::new(job.1.len().try_into().unwrap()));
                 // run inertial flow on all four axes
                 let best_max_flow = (0..4)
                     .into_par_iter()
                     .map(|axis| -> FlowResult {
                         inertial_flow::sub_step(
-                            axis,
                             &job.0,
-                            job.1,
-                            &job.2,
+                            &job.1,
+                            &coordinates,
+                            axis,
                             args.b_factor,
                             upper_bound.clone(),
                         )
@@ -120,7 +120,7 @@ fn main() {
                 // iterate on both halves
                 let mut next_jobs = Vec::new();
                 if result.left_ids.len() > args.minimum_cell_size {
-                    next_jobs.push((left_edges, &coordinates, result.left_ids));
+                    next_jobs.push((left_edges, result.left_ids));
                 } else {
                     let level_difference = (args.recursion_depth - current_level - 1) as usize;
                     for i in &result.left_ids {
@@ -132,7 +132,7 @@ fn main() {
                     }
                 }
                 if result.right_ids.len() > args.minimum_cell_size {
-                    next_jobs.push((right_edges, &coordinates, result.right_ids));
+                    next_jobs.push((right_edges, result.right_ids));
                 } else {
                     let level_difference = (args.recursion_depth - current_level - 1) as usize;
                     for i in &result.right_ids {
