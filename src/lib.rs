@@ -19,6 +19,8 @@ pub mod great_circle;
 pub mod inertial_flow;
 pub mod io;
 pub mod kruskal;
+pub mod linked_list;
+pub mod lru;
 pub mod max_flow;
 pub mod metis;
 pub mod partition;
