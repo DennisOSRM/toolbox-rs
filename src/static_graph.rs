@@ -9,8 +9,8 @@ pub struct NodeArrayEntry {
 }
 
 impl NodeArrayEntry {
-    pub fn new(e: EdgeID) -> NodeArrayEntry {
-        NodeArrayEntry { first_edge: e }
+    pub fn new(first_edge: EdgeID) -> NodeArrayEntry {
+        NodeArrayEntry { first_edge }
     }
 }
 pub struct StaticGraph<T: Ord + Clone> {

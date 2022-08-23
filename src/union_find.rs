@@ -1,6 +1,5 @@
 use std::cmp::Ordering;
 
-#[derive(Debug)]
 pub struct UnionFind {
     parent: Vec<usize>,
     rank: Vec<usize>,

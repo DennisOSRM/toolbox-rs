@@ -14,9 +14,9 @@ pub struct NodeArrayEntry {
 }
 
 impl NodeArrayEntry {
-    pub fn new(e: EdgeID) -> NodeArrayEntry {
+    pub fn new(first_edge: EdgeID) -> NodeArrayEntry {
         NodeArrayEntry {
-            first_edge: e,
+            first_edge,
             edge_count: 0,
         }
     }
