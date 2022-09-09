@@ -4,12 +4,12 @@ mod deserialize;
 use std::{
     collections::{HashMap, HashSet},
     fs::File,
-    io::{BufWriter, Write},
+    io::BufWriter,
 };
 
 use command_line::Arguments;
 use env_logger::{Builder, Env};
-use geojson::{feature::Id, Feature, FeatureCollection, GeoJson, Geometry, Value};
+use geojson::{feature::Id, Feature, FeatureWriter, Geometry, Value};
 use itertools::Itertools;
 use log::info;
 use toolbox_rs::{
@@ -96,38 +96,33 @@ fn serialize_convex_cell_hull_geojson(
     )],
     filename: &str,
 ) {
-    let features = hulls
-        .iter()
-        .map(|(convex_hull, bbox, id)| {
-            // map n + 1 points of the closed polygon into a format that is geojson compliant
-            let convex_hull = convex_hull
-                .iter()
-                .cycle()
-                .take(convex_hull.len() + 1)
-                .map(|c| {
-                    // TODO: should this be implemented via the Into<> trait?
-                    c.to_lon_lat_vec()
-                })
-                .collect_vec();
+    let file = BufWriter::new(File::create(&filename).expect("output file cannot be opened"));
+    let mut writer = FeatureWriter::from_writer(file);
+    for (convex_hull, bbox, id) in hulls {
+        // map n + 1 points of the closed polygon into a format that is geojson compliant
+        let convex_hull = convex_hull
+            .iter()
+            .cycle()
+            .take(convex_hull.len() + 1)
+            .map(|c| {
+                // TODO: should this be implemented via the Into<> trait?
+                c.to_lon_lat_vec()
+            })
+            .collect_vec();
 
-            // serialize convex hull polygons as geojson
-            let geometry = Geometry::new(Value::Polygon(vec![convex_hull]));
-            Feature {
+        // serialize convex hull polygons as geojson
+        let geometry = Geometry::new(Value::Polygon(vec![convex_hull]));
+
+        writer
+            .write_feature(&Feature {
                 bbox: Some(bbox.into()),
                 geometry: Some(geometry),
                 id: Some(Id::String(id.to_string())),
                 // Features tbd
                 properties: None,
                 foreign_members: None,
-            }
-        })
-        .collect_vec();
-    let geojson = GeoJson::FeatureCollection(FeatureCollection {
-        bbox: None,
-        features,
-        foreign_members: None,
-    });
-    let mut file = BufWriter::new(File::create(&filename).expect("output file cannot be opened"));
-    file.write_all(geojson.to_string().as_bytes())
-        .expect("error writing file");
+            })
+            .expect(&format!("error writing feature: {}", id));
+    }
+    writer.finish().expect("error writing file");
 }
