@@ -96,7 +96,7 @@ fn serialize_convex_cell_hull_geojson(
     )],
     filename: &str,
 ) {
-    let file = BufWriter::new(File::create(&filename).expect("output file cannot be opened"));
+    let file = BufWriter::new(File::create(filename).expect("output file cannot be opened"));
     let mut writer = FeatureWriter::from_writer(file);
     for (convex_hull, bbox, id) in hulls {
         // map n + 1 points of the closed polygon into a format that is geojson compliant
@@ -122,7 +122,7 @@ fn serialize_convex_cell_hull_geojson(
                 properties: None,
                 foreign_members: None,
             })
-            .expect(&format!("error writing feature: {}", id));
+            .unwrap_or_else(|_| panic!("error writing feature: {}", id));
     }
     writer.finish().expect("error writing file");
 }
