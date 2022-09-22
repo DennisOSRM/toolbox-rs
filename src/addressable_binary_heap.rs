@@ -68,6 +68,7 @@ impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Da
         self.heap.clear();
         self.inserted_nodes.clear();
         self.heap.push(HeapElement::default());
+        self.node_index.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -76,6 +77,13 @@ impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Da
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// return the number of inserted elements since the last time queue was
+    /// cleared. Note that this is not the number of elements currently in
+    /// the heap, nor the number of removed elements.
+    pub fn inserted_len(&self) -> usize {
+        self.inserted_nodes.len()
     }
 
     pub fn insert(&mut self, node: NodeID, weight: Weight, data: Data) {
@@ -159,6 +167,11 @@ impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Da
 
         self.inserted_nodes[index].weight = weight;
         self.up_heap(key);
+    }
+
+    pub fn decrease_key_and_update_data(&mut self, node: NodeID, weight: Weight, data: Data) {
+        self.decrease_key(node, weight);
+        (*self.data_mut(node)) = data;
     }
 
     fn down_heap(&mut self, mut key: usize) {
@@ -468,5 +481,36 @@ mod tests {
         assert_eq!(heap.weight(5), 5);
         assert_eq!(heap.weight(6), 6);
         assert_eq!(heap.weight(7), 7);
+    }
+
+    #[test]
+    fn decrease_key_with_new_data() {
+        let mut heap = Heap::default();
+        let input = vec![4, 1, 6, 7, 5];
+
+        for i in &input {
+            heap.insert(*i, 2 + *i, *i);
+        }
+        assert_eq!(heap.inserted_len(), input.len());
+        assert_eq!(1, heap.min());
+        assert!(!heap.is_empty());
+        assert_eq!(5, heap.len());
+
+        for i in &input {
+            heap.decrease_key_and_update_data(*i, *i, i + 10);
+        }
+
+        assert_eq!(heap.weight(1), 1);
+        assert_eq!(*heap.data(1), 11);
+        assert_eq!(heap.weight(2), i32::MAX);
+        assert_eq!(heap.weight(3), i32::MAX);
+        assert_eq!(heap.weight(4), 4);
+        assert_eq!(*heap.data(4), 14);
+        assert_eq!(heap.weight(5), 5);
+        assert_eq!(*heap.data(5), 15);
+        assert_eq!(heap.weight(6), 6);
+        assert_eq!(*heap.data(6), 16);
+        assert_eq!(heap.weight(7), 7);
+        assert_eq!(*heap.data(7), 17);
     }
 }
