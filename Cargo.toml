@@ -37,7 +37,7 @@ num = "0.4.0"
 rand = "0.8.4"
 rayon = "1.5.2"
 serde = { version = "1.0.143", features = ["derive"] }
-xxhash-rust = {version = "0.8.5", features = ["xxh3"] }
+xxhash-rust = {version = "0.8.6", features = ["xxh3"] }
 
 [profile.release]
 debug = true
