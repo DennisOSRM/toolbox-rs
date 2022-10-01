@@ -1,9 +1,8 @@
 use std::fmt::Display;
 
-use clap::ArgEnum;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 
-#[derive(ArgEnum, Clone, Debug)]
+#[derive(ValueEnum, Clone, Debug)]
 pub enum InputFormat {
     Dimacs,
     Ddsg,
