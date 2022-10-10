@@ -10,18 +10,18 @@ pub mod primitives {
     }
 
     impl FPCoordinate {
-        pub fn new(lat: i32, lon: i32) -> Self {
+        pub const fn new(lat: i32, lon: i32) -> Self {
             Self { lat, lon }
         }
 
-        pub fn min() -> Self {
+        pub const fn min() -> Self {
             Self {
                 lat: i32::MIN,
                 lon: i32::MIN,
             }
         }
 
-        pub fn max() -> Self {
+        pub const fn max() -> Self {
             Self {
                 lat: i32::MAX,
                 lon: i32::MAX,
@@ -51,14 +51,14 @@ pub mod primitives {
         }
     }
 
-    pub fn cross_product(o: &FPCoordinate, a: &FPCoordinate, b: &FPCoordinate) -> i64 {
+    pub const fn cross_product(o: &FPCoordinate, a: &FPCoordinate, b: &FPCoordinate) -> i64 {
         // upcasting to i64 to avoid integer overflow
         let first = (a.lon as i64 - o.lon as i64) * (b.lat as i64 - o.lat as i64);
         let second = (a.lat as i64 - o.lat as i64) * (b.lon as i64 - o.lon as i64);
         first - second
     }
 
-    pub fn is_clock_wise_turn(o: &FPCoordinate, a: &FPCoordinate, b: &FPCoordinate) -> bool {
+    pub const fn is_clock_wise_turn(o: &FPCoordinate, a: &FPCoordinate, b: &FPCoordinate) -> bool {
         // upcasting to i64 to avoid integer overflow
         let first = (a.lon as i64 - o.lon as i64) * (b.lat as i64 - o.lat as i64);
         let second = (a.lat as i64 - o.lat as i64) * (b.lon as i64 - o.lon as i64);
