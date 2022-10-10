@@ -23,6 +23,7 @@ pub mod linked_list;
 pub mod lru;
 pub mod max_flow;
 pub mod metis;
+pub mod one_iterator;
 pub mod partition;
 pub mod projection;
 pub mod rdx_sort;
