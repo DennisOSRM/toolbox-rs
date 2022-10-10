@@ -31,6 +31,7 @@ pub mod renumbering_table;
 pub mod space_filling_curve;
 pub mod static_graph;
 pub mod tarjan;
+pub mod tiny_table;
 pub mod unidirectional_dijkstra;
 pub mod union_find;
 pub mod unsafe_slice;
