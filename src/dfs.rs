@@ -28,7 +28,7 @@ impl DFS {
         // initialize bit vector storing which nodes are targets
         temp.target_set.resize(number_of_nodes, false);
         for i in target_list {
-            temp.target_set.set(*i as usize, true);
+            temp.target_set.set(*i, true);
         }
 
         temp.populate_sources(number_of_nodes);

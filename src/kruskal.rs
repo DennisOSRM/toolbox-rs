@@ -16,7 +16,7 @@ pub fn kruskal(input_edges: &[SimpleEdge]) -> (u32, Vec<SimpleEdge>) {
     let mut uf = UnionFind::new(number_of_nodes + 1);
     let mut mst_cost = 0;
 
-    while mst.len() < number_of_nodes as usize {
+    while mst.len() < number_of_nodes {
         let (_, idx) = heap.pop().unwrap();
         let edge = input_edges[idx];
         let x = uf.find(edge.source);

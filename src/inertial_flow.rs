@@ -90,8 +90,8 @@ pub fn sub_step(
         .sort_unstable_by_key(|a| -> i32 { comparator(coordinates[*a].lat, coordinates[*a].lon) });
 
     let size_of_contraction = max(1, (node_id_list.len() as f64 * balance_factor) as usize);
-    let sources = &node_id_list[0..size_of_contraction as usize];
-    let targets = &node_id_list[node_id_list.len() - (size_of_contraction as usize)..];
+    let sources = &node_id_list[0..size_of_contraction];
+    let targets = &node_id_list[node_id_list.len() - size_of_contraction..];
 
     debug_assert!(!sources.is_empty());
     debug_assert!(!targets.is_empty());

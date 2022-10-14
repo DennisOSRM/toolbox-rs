@@ -18,6 +18,15 @@ pub struct StaticGraph<T: Ord + Clone> {
     edge_array: Vec<EdgeArrayEntry<T>>,
 }
 
+impl<T: Ord + Clone> Default for StaticGraph<T> {
+    fn default() -> Self {
+        Self {
+            node_array: Vec::new(),
+            edge_array: Vec::new(),
+        }
+    }
+}
+
 impl<T: Ord + Copy> StaticGraph<T> {
     // In time O(V+E) check that the following invariants hold:
     // a) the target node of each edge is smaller than the number of nodes
@@ -30,12 +39,6 @@ impl<T: Ord + Copy> StaticGraph<T> {
                 .node_array
                 .windows(2)
                 .all(|pair| pair[0].first_edge <= pair[1].first_edge)
-    }
-    pub fn default() -> Self {
-        Self {
-            node_array: Vec::new(),
-            edge_array: Vec::new(),
-        }
     }
 
     pub fn new(mut input: Vec<impl Edge<ID = NodeID> + EdgeData<DATA = T> + Ord>) -> Self {

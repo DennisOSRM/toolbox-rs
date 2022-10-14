@@ -309,7 +309,7 @@ impl MaxFlow for Dinic {
         while let Some(node) = stack.pop() {
             for edge in self.residual_graph.edge_range(node) {
                 let target = self.residual_graph.target(edge);
-                let reached = reachable.get(target as usize).unwrap();
+                let reached = reachable.get(target).unwrap();
                 if !reached && self.residual_graph.data(edge).capacity > 0 {
                     stack.push(target);
                     reachable.set(target, true);
