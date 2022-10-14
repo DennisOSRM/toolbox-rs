@@ -37,6 +37,18 @@ pub struct DynamicGraph<T: Clone> {
     number_of_edges: usize,
 }
 
+impl<T: Clone + Copy> Default for DynamicGraph<T> {
+    fn default() -> Self {
+        Self {
+            node_array: Vec::new(),
+            edge_array: Vec::new(),
+
+            number_of_nodes: 0,
+            number_of_edges: 0,
+        }
+    }
+}
+
 impl<T: Clone + Copy> DynamicGraph<T> {
     /// In time O(V+E) check that the following invariants hold:
     /// a) the target node of each non-spare edge is smaller than the number of nodes, and
@@ -60,15 +72,6 @@ impl<T: Clone + Copy> DynamicGraph<T> {
                 .all(|entry| entry.first_edge < self.number_of_edges)
             && 2 + self.number_of_nodes == self.node_array.len()
     }
-    pub fn default() -> Self {
-        Self {
-            node_array: Vec::new(),
-            edge_array: Vec::new(),
-
-            number_of_nodes: 0,
-            number_of_edges: 0,
-        }
-    }
 
     pub fn new(
         node_count: usize,
@@ -87,9 +90,11 @@ impl<T: Clone + Copy> DynamicGraph<T> {
         // TODO: renumber IDs if necessary
         let number_of_edges = input.len();
 
-        let mut graph = Self::default();
-        graph.number_of_nodes = number_of_nodes;
-        graph.number_of_edges = number_of_edges;
+        let mut graph = DynamicGraph::<T> {
+            number_of_nodes,
+            number_of_edges,
+            ..Default::default()
+        };
         // +1 as we are going to add one sentinel node at the end
         graph.node_array.reserve(number_of_nodes + 1);
         graph
@@ -151,7 +156,7 @@ impl<T: Clone + Copy> DynamicGraph<T> {
         let NodeArrayEntry {
             first_edge,
             edge_count,
-        } = self.node_array[source as usize];
+        } = self.node_array[source];
 
         let right_potential_edge_id = first_edge + edge_count;
         if right_potential_edge_id == self.edge_array.len()
@@ -160,7 +165,7 @@ impl<T: Clone + Copy> DynamicGraph<T> {
             // is there free space left of edge slice?
             if first_edge != 0 && self.is_spare_edge(first_edge - 1) {
                 // move the right-most element of the slice one past the left end
-                self.node_array[source as usize].first_edge -= 1;
+                self.node_array[source].first_edge -= 1;
                 self.edge_array
                     .swap(first_edge - 1, right_potential_edge_id - 1);
             } else {
@@ -182,16 +187,16 @@ impl<T: Clone + Copy> DynamicGraph<T> {
                 (0..edge_count).for_each(|i| {
                     self.edge_array.swap(new_first_edge + i, first_edge + i);
                 });
-                self.node_array[source as usize].first_edge = new_first_edge;
+                self.node_array[source].first_edge = new_first_edge;
             }
         }
 
         // At this stage, the entry past the edge slice is guaranteed to be a
         // spare edge. The following lines write the edge array entry there and
         // do the necessary book keeping to keep the graph integrity.
-        let edge_id = self.node_array[source as usize].slice_end();
+        let edge_id = self.node_array[source].slice_end();
         self.edge_array[edge_id] = EdgeArrayEntry { target, data };
-        self.node_array[source as usize].edge_count += 1;
+        self.node_array[source].edge_count += 1;
         self.number_of_edges += 1;
     }
 
@@ -209,12 +214,12 @@ impl<T: Clone + Copy> DynamicGraph<T> {
     /// end of the edge slice and making it a spare edge
     pub fn remove_edge(&mut self, source: NodeID, edge_to_delete: EdgeID) {
         self.number_of_edges -= 1;
-        self.node_array[source as usize].edge_count -= 1;
+        self.node_array[source].edge_count -= 1;
 
         let NodeArrayEntry {
             first_edge,
             edge_count,
-        } = self.node_array[source as usize];
+        } = self.node_array[source];
         let last_edge_at_node = first_edge + edge_count;
         self.edge_array.swap(last_edge_at_node, edge_to_delete);
         self.make_spare_edge(last_edge_at_node);
@@ -253,7 +258,7 @@ impl<T: Copy> Graph<T> for DynamicGraph<T> {
     }
 
     fn out_degree(&self, n: NodeID) -> usize {
-        self.node_array[n as usize].edge_count
+        self.node_array[n].edge_count
     }
 
     fn target(&self, e: EdgeID) -> NodeID {

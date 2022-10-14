@@ -14,20 +14,20 @@ pub fn cycle_check<T>(graph: &(impl Graph<T> + 'static)) -> bool {
     let mut stack = Vec::new();
 
     for root in graph.node_range() {
-        if node_colors[root as usize] != Colors::White {
+        if node_colors[root] != Colors::White {
             continue;
         }
 
         stack.push(root);
         while let Some(&node) = stack.last() {
             // pre-order traversal
-            if node_colors[node as usize] != Colors::Grey {
-                node_colors[node as usize] = Colors::Grey;
+            if node_colors[node] != Colors::Grey {
+                node_colors[node] = Colors::Grey;
 
                 for edge in graph.edge_range(node) {
                     // push unvisited children to stack
                     let target = graph.target(edge);
-                    match node_colors[target as usize] {
+                    match node_colors[target] {
                         Colors::White => {
                             stack.push(target);
                         }
@@ -37,10 +37,10 @@ pub fn cycle_check<T>(graph: &(impl Graph<T> + 'static)) -> bool {
                         _ => {}
                     };
                 }
-            } else if node_colors[node as usize] == Colors::Grey {
+            } else if node_colors[node] == Colors::Grey {
                 // post-order traversal
                 stack.pop();
-                node_colors[node as usize] = Colors::Black;
+                node_colors[node] = Colors::Black;
             }
         }
     }

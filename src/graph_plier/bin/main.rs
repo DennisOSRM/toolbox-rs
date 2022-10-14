@@ -17,7 +17,7 @@ fn main() {
     println!(r#"   _|_|_   _|_|_   _|_|_   \___|   _|_|_  "#);
     println!(r#" _| """ |_|"""""|_|"""""|_|"""""|_|"""""| "#);
     println!(r#" "`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-' "#);
-    println!("build from revision: {}", env!("GIT_HASH"));
+    println!("build: {}", env!("GIT_HASH"));
 
     // parse and print command line parameters
     let args = <Arguments as clap::Parser>::parse();
