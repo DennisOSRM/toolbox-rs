@@ -71,7 +71,7 @@ fn main() {
             .par_iter_mut()
             .enumerate()
             .flat_map(|(id, job)| {
-                pb.set_message(format!("cell #{}", id));
+                pb.set_message(format!("cell #{id}"));
                 pb.inc(1);
 
                 // we use the count of coordinates as an upper bound to the cut size
