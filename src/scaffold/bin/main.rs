@@ -122,7 +122,7 @@ fn serialize_convex_cell_hull_geojson(
                 properties: None,
                 foreign_members: None,
             })
-            .unwrap_or_else(|_| panic!("error writing feature: {}", id));
+            .unwrap_or_else(|_| panic!("error writing feature: {id}"));
     }
     writer.finish().expect("error writing file");
 }

@@ -7,7 +7,7 @@ static BALANCE_RANGE: RangeInclusive<f64> = 0. ..=0.5;
 
 /// Checks whether the recursion range is within the expected range of (1, 31].
 pub fn recursion_depth_in_range(s: &str) -> Result<u8, String> {
-    let recursion_depth: u8 = s.parse().map_err(|_| format!("`{}` isn't a number", s))?;
+    let recursion_depth: u8 = s.parse().map_err(|_| format!("`{s}` isn't a number"))?;
     if RECURSION_RANGE.contains(&recursion_depth) {
         Ok(recursion_depth)
     } else {
@@ -21,7 +21,7 @@ pub fn recursion_depth_in_range(s: &str) -> Result<u8, String> {
 
 /// Checks whether the balance factor is within the expected range of (0.,0.5]
 pub fn balance_factor_in_range(s: &str) -> Result<f64, String> {
-    let factor: f64 = s.parse().map_err(|_| format!("`{}` isn't a number", s))?;
+    let factor: f64 = s.parse().map_err(|_| format!("`{s}` isn't a number"))?;
     if BALANCE_RANGE.contains(&factor) {
         Ok(factor)
     } else {
@@ -78,7 +78,7 @@ impl Display for Arguments {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "command line arguments:")?;
         if let Some(number_of_threads) = self.number_of_threads {
-            writeln!(f, "number_of_threads: {}", number_of_threads)?;
+            writeln!(f, "number_of_threads: {number_of_threads}")?;
         }
         if !self.partition_file.is_empty() {
             writeln!(f, "output partition file: {}", self.partition_file)?;
