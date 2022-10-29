@@ -54,7 +54,7 @@ impl UnidirectionalDijkstra {
 
         // prime queue
         self.queue.insert(s, 0, s);
-        debug!("[push] {s} at distance {}", self.queue.data(s));
+        debug!("[push] {s} at distance {}", self.queue.weight(s));
 
         // iteratively search the graph
         while !self.queue.is_empty() && self.upper_bound == usize::MAX {
@@ -81,7 +81,7 @@ impl UnidirectionalDijkstra {
                     debug!("[push] node: {v}, weight: {new_distance}, parent: {u}");
                     // if target not enqued before, do now
                     self.queue.insert(v, new_distance, u);
-                } else if *self.queue.data(v) > new_distance {
+                } else if self.queue.weight(v) > new_distance {
                     debug!("[decrease] node: {v}, new weight: {new_distance}, new parent: {u}");
                     // if lower distance found, update distance and its parent
                     self.queue.decrease_key_and_update_data(v, new_distance, v);
@@ -188,5 +188,24 @@ mod tests {
         let expected_path = vec![0, 4, 2, 3];
 
         assert_eq!(computed_path, expected_path);
+    }
+
+    #[test]
+    fn decrease_key_in_search() {
+        let edges = vec![
+            InputEdge::new(0, 1, 7),
+            InputEdge::new(0, 2, 3),
+            InputEdge::new(1, 2, 1),
+            InputEdge::new(1, 3, 6),
+            InputEdge::new(2, 4, 8),
+            InputEdge::new(3, 5, 2),
+            InputEdge::new(4, 3, 2),
+            InputEdge::new(4, 5, 8),
+        ];
+        let graph = StaticGraph::new(edges);
+
+        let mut dijkstra = UnidirectionalDijkstra::new();
+        let distance = dijkstra.run(&graph, 0, 5);
+        assert_eq!(distance, 15);
     }
 }
