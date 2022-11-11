@@ -21,6 +21,11 @@ impl PartitionID {
         PartitionID::new(new_id)
     }
 
+    pub fn parent_at_level(&self, level: u32) -> PartitionID {
+        let parent = self.0 & (0xffff_ffff ^ ((1 << level) - 1));
+        PartitionID::new(parent)
+    }
+
     /// Returns a left-right ordered tuple of children for a given ID
     pub fn children(&self) -> (PartitionID, PartitionID) {
         let temp = self.0 << 1;
@@ -93,6 +98,13 @@ impl Display for PartitionID {
 impl From<PartitionID> for usize {
     fn from(s: PartitionID) -> usize {
         s.0.try_into().unwrap()
+    }
+}
+
+impl core::fmt::Binary for PartitionID {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let val = self.0;
+        core::fmt::Binary::fmt(&val, f) // delegate to u32's implementation
     }
 }
 
@@ -222,5 +234,43 @@ mod tests {
             let recast_id = PartitionID(string.parse::<u32>().unwrap());
             assert_eq!(id, recast_id);
         }
+    }
+
+    #[test]
+    fn parent_at_level() {
+        let id = PartitionID::new(0xffff_ffff);
+        let levels = vec![0, 3, 9, 15, 20];
+        let results = vec![
+            PartitionID::new(0b11111111111111111111111111111111),
+            PartitionID::new(0b11111111111111111111111111111000),
+            PartitionID::new(0b11111111111111111111111000000000),
+            PartitionID::new(0b11111111111111111000000000000000),
+            PartitionID::new(0b11111111111100000000000000000000),
+        ];
+        levels
+            .iter()
+            .zip(results.iter())
+            .for_each(|(level, expected)| {
+                assert_eq!(id.parent_at_level(*level), *expected);
+            });
+    }
+
+    #[test]
+    fn binary_trait() {
+        let id = PartitionID::new(0xffff_ffff);
+        let levels = vec![0, 3, 9, 15, 20];
+        let results = vec![
+            "0b11111111111111111111111111111111",
+            "0b11111111111111111111111111111000",
+            "0b11111111111111111111111000000000",
+            "0b11111111111111111000000000000000",
+            "0b11111111111100000000000000000000",
+        ];
+        levels
+            .iter()
+            .zip(results.iter())
+            .for_each(|(level, expected)| {
+                assert_eq!(format!("{:#032b}", id.parent_at_level(*level)), *expected);
+            });
     }
 }
