@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use fxhash::FxHashMap;
 
 enum Implementation {
     Vec(Vec<usize>),
-    Map(HashMap<usize, usize>),
+    Map(FxHashMap<usize, usize>),
 }
 
 pub struct RenumberingTable {
@@ -17,7 +17,7 @@ impl RenumberingTable {
         if factor > 8 {
             // the table will filled with at most 12.5% of the number of elements
             return Self {
-                table: Implementation::Map(HashMap::new()),
+                table: Implementation::Map(FxHashMap::default()),
             };
         }
 
