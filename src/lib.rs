@@ -19,6 +19,7 @@ pub mod great_circle;
 pub mod inertial_flow;
 pub mod io;
 pub mod kruskal;
+pub mod level_directory;
 pub mod linked_list;
 pub mod lru;
 pub mod max_flow;
