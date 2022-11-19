@@ -97,10 +97,10 @@ impl PartitionID {
         let right_level = right.level();
 
         if left_level > right_level {
-            left.0 = left.0 >> (left_level - right_level);
+            left.0 >>= left_level - right_level;
         }
         if right_level > left_level {
-            right.0 = right.0 >> (right_level - left_level);
+            right.0 >>= right_level - left_level;
         }
 
         while left != right {
