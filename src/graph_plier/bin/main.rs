@@ -23,7 +23,7 @@ fn main() {
     let args = <Arguments as clap::Parser>::parse();
     info!("{args}");
 
-    let edges: Vec<InputEdge<i32>> = match args.input_format {
+    let edges: Vec<InputEdge<usize>> = match args.input_format {
         InputFormat::Ddsg => ddsg::read_graph(&args.graph, ddsg::WeightType::Original),
         InputFormat::Dimacs => dimacs::read_graph(&args.graph, dimacs::WeightType::Original),
         InputFormat::Metis => metis::read_graph(&args.graph, metis::WeightType::Original),

@@ -4,6 +4,7 @@ pub type NodeID = usize;
 pub type EdgeID = usize;
 pub const INVALID_NODE_ID: NodeID = NodeID::MAX;
 pub const INVALID_EDGE_ID: EdgeID = EdgeID::MAX;
+pub const UNREACHABLE: usize = usize::MAX;
 
 pub trait Graph<T> {
     fn node_range(&self) -> Range<NodeID>;

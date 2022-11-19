@@ -7,10 +7,7 @@ use std::{
 use bincode::deserialize_from;
 use itertools::Itertools;
 
-use crate::{
-    edge::{InputEdge, TrivialEdge},
-    geometry::primitives::FPCoordinate,
-};
+use crate::edge::{InputEdge, TrivialEdge};
 
 // The output is wrapped in a Result to allow matching on errors
 // Returns an Iterator to the Reader of the lines of the file.
@@ -25,7 +22,7 @@ where
 pub fn read_graph_into_trivial_edges(filename: &str) -> Vec<TrivialEdge> {
     let reader = BufReader::new(File::open(filename).unwrap());
 
-    let input_edges: Vec<InputEdge<i32>> = deserialize_from(reader).unwrap();
+    let input_edges: Vec<InputEdge<usize>> = deserialize_from(reader).unwrap();
     let edges = input_edges
         .iter()
         .map(|edge| TrivialEdge {
@@ -37,7 +34,7 @@ pub fn read_graph_into_trivial_edges(filename: &str) -> Vec<TrivialEdge> {
     edges
 }
 
-pub fn read_coordinates(filename: &str) -> Vec<FPCoordinate> {
+pub fn read_vec_from_file<T: serde::de::DeserializeOwned>(filename: &str) -> Vec<T> {
     let reader = BufReader::new(File::open(filename).unwrap());
     deserialize_from(reader).unwrap()
 }

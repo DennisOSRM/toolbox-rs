@@ -68,7 +68,7 @@ impl PartitionID {
     /// Returns a new PartitionID from an u32
     pub fn new(id: u32) -> Self {
         // the id scheme is designed in a way that the number of leading zeros is always odd
-        assert!(id != 0);
+        debug_assert!(id != 0);
         PartitionID(id)
     }
 

@@ -29,7 +29,7 @@ impl TryFrom<i32> for Direction {
     }
 }
 
-pub fn read_graph<T: std::cmp::Eq + From<i32>>(
+pub fn read_graph<T: std::cmp::Eq + From<usize>>(
     filename: &str,
     weight_type: WeightType,
 ) -> Vec<InputEdge<T>> {
@@ -68,7 +68,7 @@ pub fn read_graph<T: std::cmp::Eq + From<i32>>(
             continue;
         }
 
-        let data = tokens[2].parse::<i32>().unwrap();
+        let data = tokens[2].parse::<usize>().unwrap();
         let direction = Direction::try_from(tokens[3].parse::<i32>().unwrap()).unwrap();
         input_edge_counter += 1;
 

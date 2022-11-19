@@ -13,8 +13,8 @@ use geojson::{feature::Id, Feature, FeatureWriter, Geometry, Value};
 use itertools::Itertools;
 use log::info;
 use toolbox_rs::{
-    bounding_box::BoundingBox, convex_hull::monotone_chain, io, partition::PartitionID,
-    space_filling_curve::zorder_cmp,
+    bounding_box::BoundingBox, convex_hull::monotone_chain, geometry::primitives::FPCoordinate, io,
+    partition::PartitionID, space_filling_curve::zorder_cmp,
 };
 
 use crate::deserialize::binary_partition_file;
@@ -38,7 +38,7 @@ pub fn main() {
     let partition_ids = binary_partition_file(&args.partition_file);
     info!("loaded {} partitions", partition_ids.len());
 
-    let coordinates = io::read_coordinates(&args.coordinates_file);
+    let coordinates = io::read_vec_from_file::<FPCoordinate>(&args.coordinates_file);
     info!("loaded {} coordinates", coordinates.len());
 
     info!("creating and sorting proxy vector");

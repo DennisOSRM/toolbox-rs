@@ -8,6 +8,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info};
 use rayon::prelude::*;
 use std::sync::{atomic::AtomicI32, Arc};
+use toolbox_rs::geometry::primitives::FPCoordinate;
 use toolbox_rs::io;
 use toolbox_rs::unsafe_slice::UnsafeSlice;
 use toolbox_rs::{
@@ -42,7 +43,7 @@ fn main() {
     }
 
     let edges = io::read_graph_into_trivial_edges(&args.graph);
-    let coordinates = io::read_coordinates(&args.coordinates);
+    let coordinates = io::read_vec_from_file::<FPCoordinate>(&args.coordinates);
     info!(
         "loaded {} edges and {} coordinates",
         edges.len(),
