@@ -1,5 +1,4 @@
 mod command_line;
-mod deserialize;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -17,8 +16,6 @@ use toolbox_rs::{
     partition::PartitionID, space_filling_curve::zorder_cmp,
 };
 
-use crate::deserialize::binary_partition_file;
-
 // TODO: tool that generate all the runtime data
 
 pub fn main() {
@@ -30,13 +27,14 @@ pub fn main() {
     println!(r#"  |___/   \__|_  \__,_|   _|_|_   _|_|_   \___/   _|_|_  \__,_|"#);
     println!(r#"_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|"#);
     println!(r#""`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"#);
-
+    println!("build: {}", env!("GIT_HASH"));
+    
     // parse and print command line parameters
     let args = <Arguments as clap::Parser>::parse();
     info!("{args}");
 
-    let partition_ids = binary_partition_file(&args.partition_file);
-    info!("loaded {} partitions", partition_ids.len());
+    let partition_ids = io::read_vec_from_file::<PartitionID>(&args.partition_file);
+    info!("loaded {} partition ids", partition_ids.len());
 
     let coordinates = io::read_vec_from_file::<FPCoordinate>(&args.coordinates_file);
     info!("loaded {} coordinates", coordinates.len());
