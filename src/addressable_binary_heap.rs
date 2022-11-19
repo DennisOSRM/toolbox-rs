@@ -1,6 +1,7 @@
 use core::hash::Hash;
+use fxhash::FxHashMap;
 use num::{Bounded, Integer};
-use std::{collections::HashMap, fmt::Debug, usize};
+use std::{fmt::Debug, usize};
 
 struct HeapNode<NodeID: Copy + Integer, Weight: Bounded + Copy + Integer + Debug, Data> {
     node: NodeID,
@@ -42,7 +43,7 @@ impl<Weight: Bounded + Copy + Integer + Debug> HeapElement<Weight> {
 pub struct AddressableHeap<NodeID: Copy + Integer, Weight: Bounded + Copy + Integer + Debug, Data> {
     heap: Vec<HeapElement<Weight>>,
     inserted_nodes: Vec<HeapNode<NodeID, Weight, Data>>,
-    node_index: HashMap<NodeID, usize>,
+    node_index: FxHashMap<NodeID, usize>,
 }
 
 impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Data> Default
@@ -60,7 +61,7 @@ impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Da
         AddressableHeap {
             heap: vec![HeapElement::default()],
             inserted_nodes: Vec::new(),
-            node_index: HashMap::new(),
+            node_index: FxHashMap::default(),
         }
     }
 
@@ -109,28 +110,38 @@ impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Da
 
     pub fn weight(&self, node: NodeID) -> Weight {
         let index = self.node_index.get(&node);
-        match index {
-            Some(index) => self.inserted_nodes.get(*index).unwrap().weight,
-            None => Weight::max_value(),
+        if let Some(index) = index {
+            self.inserted_nodes.get(*index).unwrap().weight
+        } else {
+            Weight::max_value()
         }
     }
 
     pub fn removed(&self, node: NodeID) -> bool {
         let index = self.node_index.get(&node);
-        match index {
-            Some(index) => self.inserted_nodes.get(*index).unwrap().key == 0,
-            None => false,
+        if let Some(index) = index {
+            self.inserted_nodes.get(*index).unwrap().key == 0
+        } else {
+            false
+        }
+    }
+
+    pub fn contains(&self, node: NodeID) -> bool {
+        let index = self.node_index.get(&node);
+        if let Some(index) = index {
+            self.inserted_nodes.get(*index).unwrap().key != 0
+        } else {
+            false
         }
     }
 
     pub fn inserted(&self, node: NodeID) -> bool {
         let index = self.node_index.get(&node);
-        match index {
-            Some(index) => {
-                debug_assert!(index < &self.inserted_nodes.len());
-                self.inserted_nodes.get(*index).unwrap().node == node
-            }
-            None => false,
+        if let Some(index) = index {
+            debug_assert!(index < &self.inserted_nodes.len());
+            self.inserted_nodes.get(*index).unwrap().node == node
+        } else {
+            false
         }
     }
 
@@ -512,5 +523,28 @@ mod tests {
         assert_eq!(*heap.data(6), 16);
         assert_eq!(heap.weight(7), 7);
         assert_eq!(*heap.data(7), 17);
+    }
+
+    #[test]
+    fn contains() {
+        let mut heap = Heap::default();
+        let input = vec![4, 1, 6, 7, 5];
+
+        for i in &input {
+            heap.insert(*i, *i, *i);
+        }
+
+        // rebind list of input values as mutable
+        let mut input = input;
+        input.sort();
+        // rebind list as unmutable again (for good measure)
+        let input = input;
+
+        for i in &input {
+            assert!(heap.contains(*i));
+            let removed = heap.delete_min();
+            assert_eq!(removed, *i);
+            assert!(!heap.contains(*i));
+        }
     }
 }
