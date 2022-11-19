@@ -87,6 +87,28 @@ impl PartitionID {
     pub fn is_right_child(&self) -> bool {
         self.0 % 2 == 1
     }
+
+    // Returns the lowest common ancestor of this and the other ID
+    pub fn lowest_common_ancestor(&self, other: &PartitionID) -> PartitionID {
+        let mut left = *self;
+        let mut right = *other;
+
+        let left_level = left.level();
+        let right_level = right.level();
+
+        if left_level > right_level {
+            left.0 = left.0 >> (left_level - right_level);
+        }
+        if right_level > left_level {
+            right.0 = right.0 >> (right_level - left_level);
+        }
+
+        while left != right {
+            left = left.parent();
+            right = right.parent();
+        }
+        left
+    }
 }
 
 impl Display for PartitionID {
@@ -272,5 +294,21 @@ mod tests {
             .for_each(|(level, expected)| {
                 assert_eq!(format!("{:#032b}", id.parent_at_level(*level)), *expected);
             });
+    }
+
+    #[test]
+    fn lowest_common_ancestor() {
+        let a = PartitionID(0b1000);
+        let b = PartitionID(0b1001);
+        assert_eq!(a.lowest_common_ancestor(&b), b.lowest_common_ancestor(&a));
+
+        let expected = PartitionID(0b100);
+        assert_eq!(a.lowest_common_ancestor(&b), expected);
+
+        let a = PartitionID(0b1001);
+        let b = PartitionID(0b1111);
+        assert_eq!(a.lowest_common_ancestor(&b), b.lowest_common_ancestor(&a));
+
+        assert_eq!(a.lowest_common_ancestor(&b), PartitionID::root());
     }
 }
