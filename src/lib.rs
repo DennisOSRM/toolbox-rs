@@ -3,6 +3,7 @@ pub mod bfs;
 pub mod bin_pack;
 pub mod bloom_filter;
 pub mod bounding_box;
+pub mod cell;
 pub mod convex_hull;
 pub mod cycle_check;
 pub mod ddsg;
