@@ -8,7 +8,7 @@ pub enum WeightType {
     Original,
 }
 
-pub fn read_graph<T: std::cmp::Eq + From<i32>>(
+pub fn read_graph<T: std::cmp::Eq + From<usize>>(
     filename: &str,
     weight_type: WeightType,
 ) -> Vec<InputEdge<T>> {
@@ -45,7 +45,7 @@ pub fn read_graph<T: std::cmp::Eq + From<i32>>(
                 if source == target {
                     continue;
                 }
-                let data = tokens[2].parse::<i32>().unwrap();
+                let data = tokens[2].parse::<usize>().unwrap();
 
                 edges.push(InputEdge::<T> {
                     source,
