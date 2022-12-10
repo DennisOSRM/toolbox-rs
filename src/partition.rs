@@ -109,6 +109,11 @@ impl PartitionID {
         }
         left
     }
+
+    pub fn extract_bit(&self, index: usize) -> bool {
+        let mask = 1 << index;
+        mask & self.0 > 0
+    }
 }
 
 impl Display for PartitionID {
@@ -127,6 +132,22 @@ impl core::fmt::Binary for PartitionID {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let val = self.0;
         core::fmt::Binary::fmt(&val, f) // delegate to u32's implementation
+    }
+}
+
+impl BitAnd for PartitionID {
+    type Output = Self;
+
+    fn bitand(self, rhs: Self) -> Self::Output {
+        Self(self.0 & rhs.0)
+    }
+}
+
+impl BitOr for PartitionID {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
     }
 }
 
@@ -310,5 +331,37 @@ mod tests {
         assert_eq!(a.lowest_common_ancestor(&b), b.lowest_common_ancestor(&a));
 
         assert_eq!(a.lowest_common_ancestor(&b), PartitionID::root());
+    }
+
+    #[test]
+    fn bitand() {
+        let a = PartitionID(0b1000);
+        let b = PartitionID(0b1001);
+        assert_eq!(PartitionID(0b1000), a & b);
+    }
+
+    #[test]
+    fn bitor() {
+        let a = PartitionID(0b1000);
+        let b = PartitionID(0b1001);
+        assert_eq!(PartitionID(0b1001), a | b);
+    }
+
+    #[test]
+    fn extract_bit() {
+        let a = PartitionID(0b1001);
+        assert!(a.extract_bit(0));
+        assert!(!a.extract_bit(1));
+        assert!(!a.extract_bit(2));
+        assert!(a.extract_bit(3));
+        assert!(!a.extract_bit(4));
+
+        let a = PartitionID(0b100000000100000001000);
+        // [0, 3, 7, 11, 15]
+        assert!(!a.extract_bit(0));
+        assert!(a.extract_bit(3));
+        assert!(!a.extract_bit(7));
+        assert!(a.extract_bit(11));
+        assert!(!a.extract_bit(15));
     }
 }
