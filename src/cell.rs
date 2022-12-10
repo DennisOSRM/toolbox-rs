@@ -198,7 +198,7 @@ mod tests {
         let base_cell = BaseCell {
             incoming_nodes: incoming_nodes.clone(),
             outgoing_nodes: outgoing_nodes.clone(),
-            edges: edges.clone(),
+            edges,
         };
         let matrix_cell = base_cell.process();
 
@@ -249,7 +249,7 @@ mod tests {
         let base_cell = BaseCell {
             incoming_nodes: incoming_nodes.clone(),
             outgoing_nodes: outgoing_nodes.clone(),
-            edges: edges.clone(),
+            edges,
         };
         let matrix_cell = base_cell.process();
 
@@ -280,9 +280,9 @@ mod tests {
         let outgoing_nodes = vec![3, 5];
 
         let base_cell = BaseCell {
-            incoming_nodes: incoming_nodes.clone(),
-            outgoing_nodes: outgoing_nodes.clone(),
-            edges: edges.clone(),
+            incoming_nodes,
+            outgoing_nodes,
+            edges,
         };
         let matrix_cell = base_cell.process();
         matrix_cell.get_distance_row(1);

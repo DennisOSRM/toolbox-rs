@@ -123,8 +123,8 @@ mod tests {
         let mut filter = BloomFilter::new_from_size_and_probabilty(1, 0.001);
         // assert!(filter.size > 10);
         filter.add(&sentence1);
-        assert_eq!(filter.contains(&sentence1.as_bytes()), BloomResult::YesWhp);
-        assert_eq!(filter.contains(&sentence2.as_bytes()), BloomResult::No);
+        assert_eq!(filter.contains(sentence1.as_bytes()), BloomResult::YesWhp);
+        assert_eq!(filter.contains(sentence2.as_bytes()), BloomResult::No);
     }
 
     #[test]
@@ -138,8 +138,8 @@ mod tests {
         let mut filter = BloomFilter::new_from_list(&list, 0.001);
         // assert!(filter.size > 10);
         filter.add(&sentence1);
-        assert_eq!(filter.contains(&sentence1.as_bytes()), BloomResult::YesWhp);
-        assert_eq!(filter.contains(&sentence2.as_bytes()), BloomResult::YesWhp);
-        assert_eq!(filter.contains(&sentence3.as_bytes()), BloomResult::No);
+        assert_eq!(filter.contains(sentence1.as_bytes()), BloomResult::YesWhp);
+        assert_eq!(filter.contains(sentence2.as_bytes()), BloomResult::YesWhp);
+        assert_eq!(filter.contains(sentence3.as_bytes()), BloomResult::No);
     }
 }

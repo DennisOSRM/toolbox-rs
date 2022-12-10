@@ -34,7 +34,7 @@ mod tests {
         // Roundtrip calculation of the projection with expected tiny errors
 
         // longitude in [180. to -180.]
-        for i in -180_00..180_01 {
+        for i in -18_000..18_001 {
             // off-by-one to be inclusive of 180.
             let lon = f64::from(i) * 0.01;
             let result = x2lon(lon2x(lon));

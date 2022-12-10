@@ -99,7 +99,7 @@ mod tests {
         assert_eq!(10, lru.capacity());
 
         // access 1, make 2 the oldest element now
-        let handle = &*lru.get(&1).unwrap();
+        let handle = lru.get(&1).unwrap();
         assert_eq!(1, handle.0);
         // add 11, evict 2
         lru.push(&11, SomeTestStruct(11));
