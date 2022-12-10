@@ -42,6 +42,7 @@ xxhash-rust = {version = "0.8.5", features = ["xxh3"] }
 
 [profile.release]
 debug = true
+lto = true
 
 [[bench]]
 name = "bench_main"
