@@ -57,7 +57,7 @@ pub(crate) fn boundary_geometry_geojson(coordinates: &[FPCoordinate], filename: 
                 properties: None,
                 foreign_members: None,
             })
-            .unwrap_or_else(|_| panic!("error writing feature: {}", coordinate));
+            .unwrap_or_else(|_| panic!("error writing feature: {coordinate}"));
     }
     writer.finish().expect("error writing file");
 }

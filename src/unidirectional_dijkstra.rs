@@ -171,12 +171,13 @@ mod tests {
         ];
 
         let mut dijkstra = UnidirectionalDijkstra::new();
-        for i in 0..6 {
-            for j in 0..6 {
+        for (i, &table) in results_table.iter().enumerate() {
+            for (j, result) in table.iter().enumerate() {
                 let distance = dijkstra.run(&graph, i, j);
-                assert_eq!(results_table[i][j], distance);
+                assert_eq!(*result, distance);
             }
         }
+
     }
 
     #[test]

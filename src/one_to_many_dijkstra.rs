@@ -176,11 +176,11 @@ mod tests {
         ];
 
         let mut dijkstra = OneToManyDijkstra::new();
-        for i in 0..6 {
+        for (i, &table) in results_table.iter().enumerate() {
             let success = dijkstra.run(&graph, i, &[0, 1, 2, 3, 4, 5]);
             assert_eq!(success, !results_table[i].iter().any(|x| { *x == no })); // find any
-            for j in 0..6 {
-                assert_eq!(results_table[i][j], dijkstra.distance(j));
+            for (j, result) in table.iter().enumerate() {
+                assert_eq!(*result, dijkstra.distance(j));
             }
         }
     }

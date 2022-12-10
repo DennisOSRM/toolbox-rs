@@ -1,6 +1,10 @@
 use core::cmp::max;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Display, hash::Hash};
+use std::{
+    fmt::Display,
+    hash::Hash,
+    ops::{BitAnd, BitOr},
+};
 
 /// represents the hiearchical partition id scheme. The root id has ID 1 and
 /// children are shifted to the left by one and plus 0/1. The parent child
@@ -219,7 +223,7 @@ mod tests {
         let id = PartitionID(1);
         let mut current = id;
         for i in 1..30 {
-            let mut id = id.clone();
+            let mut id = id;
             id.inplace_leftmost_descendant(i);
             assert_eq!(current.left_child(), id);
             current = current.left_child();
@@ -231,7 +235,7 @@ mod tests {
         let id = PartitionID(1);
         let mut current = id;
         for i in 1..30 {
-            let mut id = id.clone();
+            let mut id = id;
             id.inplace_rightmost_descendant(i);
             assert_eq!(current.right_child(), id);
             current = current.right_child();
@@ -242,7 +246,7 @@ mod tests {
     fn display() {
         for i in 0..100 {
             let id = PartitionID(i);
-            let string = format!("{}", id);
+            let string = format!("{id}");
             let recast_id = PartitionID(string.parse::<u32>().unwrap());
             assert_eq!(id, recast_id);
         }
@@ -252,7 +256,7 @@ mod tests {
     fn partial_eq() {
         for i in 0..100 {
             let id = PartitionID(i);
-            let string = format!("{}", id);
+            let string = format!("{id}");
             let recast_id = PartitionID(string.parse::<u32>().unwrap());
             assert_eq!(id, recast_id);
         }
