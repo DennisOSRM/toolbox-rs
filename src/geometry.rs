@@ -3,6 +3,8 @@ pub mod primitives {
 
     use serde::{Deserialize, Serialize};
 
+    use crate::great_circle::distance::haversine;
+
     #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
     pub struct FPCoordinate {
         pub lat: i32,
@@ -35,8 +37,13 @@ pub mod primitives {
             Self { lat, lon }
         }
 
+        pub fn to_lon_lat_pair(&self) -> (f64, f64) {
+            (self.lon as f64 / 1000000., self.lat as f64 / 1000000.)
+        }
+
         pub fn to_lon_lat_vec(&self) -> Vec<f64> {
-            vec![self.lon as f64 / 1000000., self.lat as f64 / 1000000.]
+            let (lon, lat) = self.to_lon_lat_pair();
+            vec![lon, lat]
         }
     }
 
@@ -63,6 +70,12 @@ pub mod primitives {
         let first = (a.lon as i64 - o.lon as i64) * (b.lat as i64 - o.lat as i64);
         let second = (a.lat as i64 - o.lat as i64) * (b.lon as i64 - o.lon as i64);
         first > second
+    }
+
+    pub fn distance(first: &FPCoordinate, b: &FPCoordinate) -> f64 {
+        let (lata, lona) = first.to_lon_lat_pair();
+        let (latb, lonb) = b.to_lon_lat_pair();
+        haversine(lata, lona, latb, lonb)
     }
 
     #[derive(Clone, Copy, Debug, PartialEq)]
