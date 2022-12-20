@@ -40,6 +40,11 @@ pub mod primitives {
         pub fn to_lon_lat_pair(&self) -> (f64, f64) {
             (self.lon as f64 / 1000000., self.lat as f64 / 1000000.)
         }
+
+        pub fn to_lon_lat_vec(&self) -> Vec<f64> {
+            let (lon, lat) = self.to_lon_lat_pair();
+            vec![lon, lat]
+        }
     }
 
     impl Display for FPCoordinate {
