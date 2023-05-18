@@ -30,7 +30,7 @@ clap = { version = "4.1.11", features = ["derive"] }
 criterion = "0.4.0"
 env_logger = "0.10.0"
 fxhash = "0.2.1"
-geojson = "0.24.0"
+geojson = "0.24.1"
 indicatif = "0.17.3"
 itertools = "0.10.4"
 log = "0.4.16"
