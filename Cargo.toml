@@ -34,7 +34,7 @@ geojson = "0.24.1"
 indicatif = "0.17.5"
 itertools = "0.11.0"
 log = "0.4.19"
-num = "0.4.0"
+num = "0.4.1"
 rand = "0.8.4"
 rayon = "1.7.0"
 serde = { version = "1.0.167", features = ["derive"] }
