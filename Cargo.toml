@@ -37,7 +37,7 @@ log = "0.4.20"
 num = "0.4.1"
 rand = "0.8.4"
 rayon = "1.8.0"
-serde = { version = "1.0.190", features = ["derive"] }
+serde = { version = "1.0.191", features = ["derive"] }
 xxhash-rust = {version = "0.8.7", features = ["xxh3"] }
 
 [profile.release]
