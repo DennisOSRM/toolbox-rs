@@ -34,7 +34,7 @@ $ cargo r --release --bin chipper -- -g /path/to/USA-road-d.USA.gr.toolbox -c /p
 
 Generate GeoJSON file visualizing the cells:
 ```
-$ cargo r --release --bin scaffold -- -c /path/to/USA-road-d.USA.co.toolbox -p /path/to/USA-r30-m100.assignment.bin --convex-cells-geojson /path/to/bbox.geojson
+$ cargo r --release --bin scaffold -- -c /path/to/USA-road-d.USA.co.toolbox -g /path/to/USA-road-d.USA.gr.toolbox -p /path/to/USA-r30-m100.assignment.bin --convex-cells-geojson /path/to/bbox.geojson
 ```
 
 
