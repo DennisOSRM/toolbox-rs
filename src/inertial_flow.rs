@@ -123,7 +123,7 @@ pub fn sub_step(
         .collect_vec();
     let mut current_id = 2;
 
-    for mut e in &mut edges {
+    for e in &mut edges {
         // nodes in the in the graph have to be numbered consecutively
         if !renumbering_table.contains_key(e.source) {
             renumbering_table.set(e.source, current_id);

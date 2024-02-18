@@ -120,7 +120,7 @@ impl<T: Ord + Copy> Graph<T> for StaticGraph<T> {
     }
 
     fn end_edges(&self, n: NodeID) -> EdgeID {
-        self.node_array[(n + 1)].first_edge
+        self.node_array[n + 1].first_edge
     }
 
     fn out_degree(&self, n: NodeID) -> usize {

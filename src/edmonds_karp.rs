@@ -65,7 +65,7 @@ impl EdmondsKarp {
         // below takes the second argument as mut. When deduping equivalent values
         // a and b, then a is accumulated onto b.
         edge_list.sort_unstable();
-        edge_list.dedup_by(|a, mut b| {
+        edge_list.dedup_by(|a, b| {
             // edges a and b are assumed to be equivalent in the residual graph if
             // (and only if) they are parallel. In other words, this removes parallel
             // edges in the residual graph and accumulates capacities on the remaining
