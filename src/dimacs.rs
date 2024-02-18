@@ -63,7 +63,7 @@ pub fn read_graph<T: std::cmp::Eq + From<usize>>(
     debug!("graph file problem count: {problem_count}");
 
     info!("renumbering source and target in edge list");
-    for mut edge in &mut edges {
+    for edge in &mut edges {
         // the DIMACS format defines numbering to be consecutive and starting at 1.
         edge.source -= 1;
         edge.target -= 1;

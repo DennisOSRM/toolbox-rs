@@ -78,7 +78,6 @@ impl BaseCell {
         let source_range = 0..self.incoming_nodes.len();
         let target_range = (self.incoming_nodes.len()
             ..self.incoming_nodes.len() + self.outgoing_nodes.len())
-            .into_iter()
             .collect_vec();
         // println!("3, graph: ({},{})", graph.number_of_nodes(), graph.number_of_edges());
         if !self.edges.is_empty() {
@@ -130,8 +129,7 @@ impl MatrixCell {
     }
 
     pub fn overlay_edges(&self) -> Vec<InputEdge<usize>> {
-        let mut result = Vec::new();
-        result.reserve(self.incoming_nodes.len() * self.outgoing_nodes.len());
+        let mut result = Vec::with_capacity(self.incoming_nodes.len() * self.outgoing_nodes.len());
 
         // walk matrix to derive list of edges for the next level of processing
         for i in 0..self.incoming_nodes.len() {

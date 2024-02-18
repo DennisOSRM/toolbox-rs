@@ -88,7 +88,7 @@ impl Dinic {
             (a.source, a.target)
         });
         debug!("start dedup");
-        edge_list.dedup_by(|a, mut b| {
+        edge_list.dedup_by(|a, b| {
             // edges a and b are assumed to be equivalent in the residual graph if
             // (and only if) they are parallel. In other words, this removes parallel
             // edges in the residual graph and accumulates capacities on the remaining
