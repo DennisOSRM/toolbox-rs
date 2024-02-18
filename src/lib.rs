@@ -1,6 +1,7 @@
 pub mod addressable_binary_heap;
 pub mod bfs;
 pub mod bin_pack;
+pub mod bitstream_reader;
 pub mod bloom_filter;
 pub mod bounding_box;
 pub mod cell;
