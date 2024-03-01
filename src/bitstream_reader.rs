@@ -9,7 +9,7 @@ impl<'a> TryFrom<&'a [u8]> for BitStreamReader<'a> {
     type Error = &'static str;
 
     fn try_from(data: &'a [u8]) -> Result<Self, Self::Error> {
-        let current = match data.get(0) {
+        let current = match data.first() {
             None => return Err("Could not be converted"),
             Some(value) => value,
         };
@@ -37,7 +37,7 @@ impl<'a> Iterator for BitStreamReader<'a> {
         }
 
         let bit_set = self.current & self.offset_bit;
-        self.offset_bit = self.offset_bit << 1;
+        self.offset_bit <<= 1;
 
         Some(bit_set.min(1))
     }
