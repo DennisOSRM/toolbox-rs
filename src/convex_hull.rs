@@ -8,8 +8,6 @@
 
 use crate::geometry::primitives::{is_clock_wise_turn, FPCoordinate};
 
-pub struct HullString(Vec<FPCoordinate>);
-
 pub fn monotone_chain(input_coordinates: &[FPCoordinate]) -> Vec<FPCoordinate> {
     let n = input_coordinates.len();
     if n <= 3 {
