@@ -30,6 +30,7 @@ pub mod one_iterator;
 pub mod one_to_many_dijkstra;
 pub mod partition;
 pub mod projection;
+pub mod range_coder;
 pub mod rdx_sort;
 pub mod renumbering_table;
 pub mod space_filling_curve;
