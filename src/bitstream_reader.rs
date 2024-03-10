@@ -23,49 +23,41 @@ impl<'a> TryFrom<&'a [u8]> for BitStreamReader<'a> {
     }
 }
 
-impl<'a> Iterator for BitStreamReader<'a> {
+pub struct BitStreamIterator<'a> {
+    reader: &'a mut BitStreamReader<'a>,
+}
+
+impl<'a> Iterator for BitStreamIterator<'a> {
     type Item = u8;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.offset_bit == 0x00 {
-            self.offset_byte += 1;
-            self.offset_bit = 0x01;
-            self.current = match self.data.get(self.offset_byte) {
+        if self.reader.offset_bit == 0x00 {
+            self.reader.offset_byte += 1;
+            self.reader.offset_bit = 0x01;
+            self.reader.current = match self.reader.data.get(self.reader.offset_byte) {
                 None => return None,
                 Some(value) => *value,
             };
         }
 
-        let bit_set = self.current & self.offset_bit;
-        self.offset_bit <<= 1;
+        let bit_set = self.reader.current & self.reader.offset_bit;
+        self.reader.offset_bit <<= 1;
 
         Some(bit_set.min(1))
     }
 }
 
 impl<'a> BitStreamReader<'a> {
-    pub fn take_n(&mut self, _count: usize) -> u8 {
-        unimplemented!();
-    }
-
-    pub fn peek_byte(&self) -> u8 {
-        unimplemented!()
-    }
-
-    pub fn skip_byte(&mut self) {
-        unimplemented!()
-    }
-
-    pub fn skip_n(&mut self) {
-        unimplemented!()
+    pub fn iter(&'a mut self) -> BitStreamIterator {
+        BitStreamIterator { reader: self }
     }
 }
 
-#[cfg(test)]
-mod tests {
+// #[cfg(test)]
+// mod tests {
 
-    #[test]
-    fn first_test() {
-        unimplemented!()
-    }
-}
+//     #[test]
+//     fn first_test() {
+//         unimplemented!()
+//     }
+// }
