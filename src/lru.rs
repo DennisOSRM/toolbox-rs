@@ -73,7 +73,7 @@ mod tests {
     struct SomeTestStruct(i32);
 
     #[test]
-    pub fn construct() {
+    fn construct() {
         let mut lru = LRU::new_with_capacity(10);
         assert_eq!(0, lru.len());
         lru.push(&1, SomeTestStruct(1));

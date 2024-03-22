@@ -57,7 +57,7 @@ mod tests {
     use super::RenumberingTable;
 
     #[test]
-    pub fn full_universe() {
+    fn full_universe() {
         let mut table = RenumberingTable::new_with_size_hint(10, 10);
         for i in 0..10 {
             table.set(i, 10 - i);
@@ -68,7 +68,7 @@ mod tests {
     }
 
     #[test]
-    pub fn sparse_universe() {
+    fn sparse_universe() {
         let mut table = RenumberingTable::new_with_size_hint(10000, 10);
         for i in 0..10 {
             table.set(1234 + i, i);
