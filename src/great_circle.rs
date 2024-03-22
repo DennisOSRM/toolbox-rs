@@ -50,7 +50,7 @@ mod tests {
     use super::distance::{haversine, vincenty};
 
     #[test]
-    pub fn haversine_sf_nyc() {
+    fn haversine_sf_nyc() {
         assert_eq!(
             (haversine(-122.416389, 37.7775, -74.006111, 40.712778) * 1000.) as u32,
             5387354
@@ -58,7 +58,7 @@ mod tests {
     }
 
     #[test]
-    pub fn vincenty_sf_nyc() {
+    fn vincenty_sf_nyc() {
         assert_eq!(
             (vincenty(-122.416389, 37.7775, -74.006111, 40.712778) * 1000.) as u32,
             5387354

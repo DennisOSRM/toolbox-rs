@@ -75,7 +75,7 @@ pub mod tests {
     use crate::{bounding_box::BoundingBox, geometry::primitives::FPCoordinate};
 
     #[test]
-    pub fn grid() {
+    fn grid() {
         let mut coordinates: Vec<FPCoordinate> = Vec::new();
         for i in 0..100 {
             coordinates.push(FPCoordinate::new(i / 10, i % 10));
@@ -91,7 +91,7 @@ pub mod tests {
     }
 
     #[test]
-    pub fn center() {
+    fn center() {
         let bbox = BoundingBox {
             min: FPCoordinate::new_from_lat_lon(33.406637, -115.000801),
             max: FPCoordinate::new_from_lat_lon(33.424732, -114.905286),
@@ -102,7 +102,7 @@ pub mod tests {
     }
 
     #[test]
-    pub fn center_with_rounding() {
+    fn center_with_rounding() {
         let bbox = BoundingBox {
             min: FPCoordinate::new(0, 0),
             max: FPCoordinate::new(9, 9),
@@ -113,7 +113,7 @@ pub mod tests {
     }
 
     #[test]
-    pub fn center_without_rounding() {
+    fn center_without_rounding() {
         let bbox = BoundingBox {
             min: FPCoordinate::new(0, 0),
             max: FPCoordinate::new(100, 100),
@@ -124,14 +124,14 @@ pub mod tests {
     }
 
     #[test]
-    pub fn invalid() {
+    fn invalid() {
         let bbox = BoundingBox::invalid();
         assert!(bbox.min.lat > bbox.max.lat);
         assert!(bbox.min.lon > bbox.max.lon);
     }
 
     #[test]
-    pub fn extend_with_extend_invalid() {
+    fn extend_with_extend_invalid() {
         let mut c1 = BoundingBox::invalid();
         let c2 =
             BoundingBox::from_coordinates(&[FPCoordinate::new(11, 50), FPCoordinate::new(50, 37)]);
@@ -140,5 +140,18 @@ pub mod tests {
 
         assert_eq!(c2.min, FPCoordinate::new(11, 37));
         assert_eq!(c2.max, FPCoordinate::new(50, 50));
+    }
+
+    #[test]
+    fn geojson_conversion() {
+        let b1 =
+            BoundingBox::from_coordinates(&[FPCoordinate::new(11, 50), FPCoordinate::new(50, 37)]);
+        let g1 = geojson::Bbox::from(&b1);
+        assert_eq!(4, g1.len());
+
+        assert_eq!(b1.min.lon as f64 / 1000000., g1[0]);
+        assert_eq!(b1.min.lat as f64 / 1000000., g1[1]);
+        assert_eq!(b1.max.lon as f64 / 1000000., g1[2]);
+        assert_eq!(b1.max.lat as f64 / 1000000., g1[3]);
     }
 }
