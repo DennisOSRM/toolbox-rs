@@ -14,6 +14,7 @@ pub mod dinic;
 pub mod dynamic_graph;
 pub mod edge;
 pub mod edmonds_karp;
+pub mod fenwick_tree;
 pub mod ford_fulkerson;
 pub mod geometry;
 pub mod graph;
