@@ -30,7 +30,7 @@ mod tests {
     // Note that this is way below a centimeter of error
 
     #[test]
-    pub fn lon_conversion_roundtrip() {
+    fn lon_conversion_roundtrip() {
         // Roundtrip calculation of the projection with expected tiny errors
 
         // longitude in [180. to -180.]
@@ -43,7 +43,7 @@ mod tests {
     }
 
     #[test]
-    pub fn lat_conversion_roundtrip() {
+    fn lat_conversion_roundtrip() {
         // Roundtrip calculation of the projection with expected tiny errors
 
         // latitude in [90. to -90.]

@@ -146,7 +146,7 @@ mod tests {
     use super::primitives::{cross_product, FPCoordinate};
 
     #[test]
-    pub fn distance_one() {
+    fn distance_one() {
         let p = Point { x: 1., y: 2. };
         let s = Segment(Point { x: 0., y: 0. }, Point { x: 0., y: 10. });
         let (distance, location) = distance_to_segment(p, s);
@@ -155,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    pub fn cross_product_ex1() {
+    fn cross_product_ex1() {
         let o = FPCoordinate::new(1, 1);
         let a = FPCoordinate::new(4, 5);
         let b = FPCoordinate::new(5, 4);
@@ -163,7 +163,7 @@ mod tests {
     }
 
     #[test]
-    pub fn cross_product_ex2() {
+    fn cross_product_ex2() {
         let o = FPCoordinate::new(0, 0);
         let a = FPCoordinate::new(7, 5);
         let b = FPCoordinate::new(17, 13);
@@ -171,7 +171,7 @@ mod tests {
     }
 
     #[test]
-    pub fn cross_product_ex3() {
+    fn cross_product_ex3() {
         let o = FPCoordinate::new(0, 0);
         let a = FPCoordinate::new(2, 2);
         let b = FPCoordinate::new(0, -3);
@@ -179,7 +179,7 @@ mod tests {
     }
 
     #[test]
-    pub fn clock_wise_turn() {
+    fn clock_wise_turn() {
         let o = FPCoordinate::new_from_lat_lon(33.376756, -114.990162);
         let a = FPCoordinate::new_from_lat_lon(33.359699, -114.945064);
         let b = FPCoordinate::new_from_lat_lon(33.412820, -114.943641);

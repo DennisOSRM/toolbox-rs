@@ -53,7 +53,7 @@ mod tests {
     use crate::{convex_hull::monotone_chain, geometry::primitives::FPCoordinate};
 
     #[test]
-    pub fn grid() {
+    fn grid() {
         let mut coordinates: Vec<FPCoordinate> = Vec::new();
         for i in 0..100 {
             coordinates.push(FPCoordinate::new(i / 10, i % 10));
@@ -70,7 +70,7 @@ mod tests {
     }
 
     #[test]
-    pub fn handle_overflow() {
+    fn handle_overflow() {
         let coordinates = vec![
             FPCoordinate::new_from_lat_lon(33.424732, -114.905286),
             FPCoordinate::new_from_lat_lon(33.412828, -114.981799),
@@ -125,7 +125,7 @@ mod tests {
     }
 
     #[test]
-    pub fn tiny_instance() {
+    fn tiny_instance() {
         let coordinates = vec![
             FPCoordinate::new_from_lat_lon(33.424732, -114.905286),
             FPCoordinate::new_from_lat_lon(33.412828, -114.981799),
