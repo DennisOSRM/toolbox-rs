@@ -141,4 +141,17 @@ pub mod tests {
         assert_eq!(c2.min, FPCoordinate::new(11, 37));
         assert_eq!(c2.max, FPCoordinate::new(50, 50));
     }
+
+    #[test]
+    fn geojson_conversion() {
+        let b1 =
+            BoundingBox::from_coordinates(&[FPCoordinate::new(11, 50), FPCoordinate::new(50, 37)]);
+        let g1 = geojson::Bbox::from(&b1);
+        assert_eq!(4, g1.len());
+
+        assert_eq!(b1.min.lon as f64 / 1000000., g1[0]);
+        assert_eq!(b1.min.lat as f64 / 1000000., g1[1]);
+        assert_eq!(b1.max.lon as f64 / 1000000., g1[2]);
+        assert_eq!(b1.max.lat as f64 / 1000000., g1[3]);
+    }
 }
