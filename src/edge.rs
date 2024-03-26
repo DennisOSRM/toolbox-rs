@@ -74,7 +74,7 @@ impl<EdgeDataT: Eq> InputEdge<EdgeDataT> {
 pub type SimpleEdge = InputEdge<u32>;
 
 #[test]
-fn edges_parallel() {
+fn simple_edge_parallel() {
     let edge1 = SimpleEdge::new(1, 2, 3);
     let edge2 = SimpleEdge::new(1, 2, 6);
 
@@ -82,4 +82,15 @@ fn edges_parallel() {
     assert!(edge1.is_parallel_to(&edge2));
     assert!(edge2.is_parallel_to(&edge1));
     assert!(edge2.is_parallel_to(&edge2));
+}
+
+#[test]
+fn trivial_edge_accessor() {
+    let edge = TrivialEdge {
+        source: 1,
+        target: 2,
+    };
+
+    assert_eq!(edge.source(), 1);
+    assert_eq!(edge.target(), 2);
 }
