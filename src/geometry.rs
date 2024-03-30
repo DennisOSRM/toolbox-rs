@@ -73,8 +73,8 @@ pub mod primitives {
     }
 
     pub fn distance(first: &FPCoordinate, b: &FPCoordinate) -> f64 {
-        let (lata, lona) = first.to_lon_lat_pair();
-        let (latb, lonb) = b.to_lon_lat_pair();
+        let (lona, lata) = first.to_lon_lat_pair();
+        let (lonb, latb) = b.to_lon_lat_pair();
         haversine(lata, lona, latb, lonb)
     }
 
@@ -141,9 +141,8 @@ pub mod primitives {
 
 #[cfg(test)]
 mod tests {
+    use super::primitives::{cross_product, distance, FPCoordinate};
     use crate::geometry::primitives::{distance_to_segment, is_clock_wise_turn, Point, Segment};
-
-    use super::primitives::{cross_product, FPCoordinate};
 
     #[test]
     fn distance_one() {
@@ -152,6 +151,15 @@ mod tests {
         let (distance, location) = distance_to_segment(p, s);
         assert_eq!(distance, 1.);
         assert_eq!(location, Point { x: 0., y: 2. });
+    }
+
+    #[test]
+    fn distance_on_line() {
+        let p = Point { x: 1., y: 2. };
+        let s = Segment(Point { x: 0., y: 0. }, Point { x: 0., y: 0. });
+        let (distance, location) = distance_to_segment(p, s);
+        assert_eq!(distance, 2.23606797749979);
+        assert_eq!(location, Point { x: 0., y: 0. });
     }
 
     #[test]
@@ -187,5 +195,45 @@ mod tests {
         let cp = cross_product(&o, &a, &b);
         assert!(cp > 0);
         assert!(is_clock_wise_turn(&o, &a, &b));
+    }
+
+    #[test]
+    fn println() {
+        let input = FPCoordinate::new_from_lat_lon(33.359699, -114.945064);
+        let output = format!("{input}");
+        assert_eq!(output, "33.359699, -114.945064");
+    }
+
+    #[test]
+    fn println_truncated() {
+        let input = FPCoordinate::new_from_lat_lon(33.359699123456789, -114.945064127454);
+        let output = format!("{input}");
+        assert_eq!(output, "33.359699, -114.945064");
+    }
+
+    #[test]
+    fn to_lon_lat_pair_vec_equivalent() {
+        let input = FPCoordinate::new_from_lat_lon(33.359699123456789, -114.945064127454);
+        let output1 = input.to_lon_lat_pair();
+        let output2 = input.to_lon_lat_vec();
+
+        assert_eq!(output1.0, output2[0]);
+        assert_eq!(output1.1, output2[1]);
+    }
+
+    #[test]
+    fn trivial_distance_equivalent() {
+        let ny = FPCoordinate::new_from_lat_lon(40.730610, -73.935242);
+        let sf = FPCoordinate::new_from_lat_lon(37.773972, -122.431297);
+        let distance = distance(&ny, &sf);
+
+        assert_eq!(distance, 4140.175105689902)
+    }
+
+    #[test]
+    fn point_self_new_equivalent() {
+        let p1 = Point::default();
+        let p2 = Point::new();
+        assert_eq!(p1, p2);
     }
 }
