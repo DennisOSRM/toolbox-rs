@@ -25,8 +25,8 @@ impl<K: Clone + Copy + PartialEq, V: Clone + Copy> TinyTable<K, V> {
         false
     }
 
-    pub fn find_mut(&self, k: &K) -> Option<&(K, V)> {
-        self.data.iter().find(|x| x.0 == *k)
+    pub fn find_mut(&mut self, k: &K) -> Option<&mut (K, V)> {
+        self.data.iter_mut().find(|x| x.0 == *k)
     }
 
     pub fn insert(&mut self, k: &K, v: &V) -> bool {
@@ -117,7 +117,7 @@ mod tests {
         assert!(table.contains(&1));
         assert!(!table.contains(&2));
 
-        table.remove(&1);
+        assert!(table.remove(&1));
         assert_eq!(table.len(), 1);
         assert!(table.find(&1).is_none());
         assert!(table.find(&0).is_some());
@@ -137,5 +137,27 @@ mod tests {
 
         table.clear();
         assert!(table.is_empty());
+    }
+
+    #[test]
+    fn insert_find_mut() {
+        let mut table = TinyTable::<i32, i32>::default();
+        assert!(table.is_empty());
+
+        table.insert(&1, &1);
+        table.insert(&0, &2);
+
+        assert_eq!(table.find(&0), Some(&2));
+        if let Some(entry) = table.find_mut(&0) {
+            entry.1 = 0;
+        }
+        assert_eq!(table.find(&0).unwrap(), &0);
+
+        assert_eq!(table.find(&2), None);
+        if let Some(entry) = table.find_mut(&1) {
+            entry.0 = 2;
+            entry.1 = 2;
+        }
+        assert_eq!(table.find(&2).unwrap(), &2);
     }
 }
