@@ -116,4 +116,15 @@ mod tests {
             assert!(lru.contains(&key));
         });
     }
+
+    #[test]
+    fn clear_is_empty() {
+        let mut lru = LRU::new_with_capacity(10);
+        for i in [0, 1, 2, 3] {
+            lru.push(&i, 2 * i);
+        }
+        assert!(!lru.is_empty());
+        lru.clear();
+        assert!(lru.is_empty());
+    }
 }
