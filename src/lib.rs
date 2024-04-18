@@ -41,3 +41,10 @@ pub mod unidirectional_dijkstra;
 pub mod union_find;
 pub mod unsafe_slice;
 pub mod wgs84;
+
+#[macro_export]
+macro_rules! invoke_macro_for_types {
+    ($macro:ident, $($args:ident),*) => {
+        $( $macro!($args); )*
+    }
+}
