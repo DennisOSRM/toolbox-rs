@@ -1,6 +1,8 @@
 pub mod radix {
     use core::mem;
 
+    use crate::invoke_macro_for_types;
+
     pub trait RadixType: Clone + Copy + Default {
         // RadixTypes are sortable by rdx_sort(.)
         const IS_SIGNED: bool;
@@ -56,19 +58,9 @@ pub mod radix {
     }
 
     // define built-in number types (integers, floats, bool) as RadixType
-    radix_type!(u8);
-    radix_type!(u16);
-    radix_type!(u32);
-    radix_type!(u64);
-    radix_type!(u128);
-    radix_type!(usize);
-
-    radix_type!(i8);
-    radix_type!(i16);
-    radix_type!(i32);
-    radix_type!(i64);
-    radix_type!(i128);
-    radix_type!(isize);
+    invoke_macro_for_types!(
+        radix_type, u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize
+    );
 
     radix_type!(bool, u8);
 

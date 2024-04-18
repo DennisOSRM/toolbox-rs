@@ -1,9 +1,11 @@
+use crate::invoke_macro_for_types;
+
 pub trait ComparisonValue {
     type Integral: Default;
     fn value(&self) -> Self::Integral;
 }
 
-macro_rules! comparison_value {
+macro_rules! cv {
     // short-hand to add a default ComparisonValue implementation for the
     // given input type. Works with built-in types like integers.
     ($a:ident) => {
@@ -17,20 +19,7 @@ macro_rules! comparison_value {
     };
 }
 
-// define built-in number types (integers, floats, bool)
-comparison_value!(u8);
-comparison_value!(u16);
-comparison_value!(u32);
-comparison_value!(u64);
-comparison_value!(u128);
-comparison_value!(usize);
-
-comparison_value!(i8);
-comparison_value!(i16);
-comparison_value!(i32);
-comparison_value!(i64);
-comparison_value!(i128);
-comparison_value!(isize);
+invoke_macro_for_types!(cv, u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
 
 pub fn top_k<T: ComparisonValue + Copy + std::cmp::Ord>(
     input: impl IntoIterator<Item = T>,
