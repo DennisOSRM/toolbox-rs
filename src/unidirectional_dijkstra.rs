@@ -6,7 +6,7 @@
 /// be unpacked.
 use crate::{
     addressable_binary_heap::AddressableHeap,
-    graph::{Graph, NodeID},
+    graph::{Graph, NodeID}, search_space::SearchSpace,
 };
 
 use log::debug;
@@ -117,6 +117,10 @@ impl UnidirectionalDijkstra {
             path.push(parent);
             node = parent;
         }
+    }
+
+    pub fn search_space(&self) -> SearchSpace {
+        SearchSpace::new(&self.queue)
     }
 }
 
