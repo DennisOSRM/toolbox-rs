@@ -6,7 +6,8 @@
 /// be unpacked.
 use crate::{
     addressable_binary_heap::AddressableHeap,
-    graph::{Graph, NodeID}, search_space::SearchSpace,
+    graph::{Graph, NodeID},
+    search_space::SearchSpace,
 };
 
 use log::debug;

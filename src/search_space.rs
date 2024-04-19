@@ -77,7 +77,11 @@ mod tests {
 
         // construct DAG
         let graph = StaticGraph::new(edges);
-        println!("nodes: {}, edges: {}", graph.number_of_nodes(), graph.number_of_edges());
+        println!(
+            "nodes: {}, edges: {}",
+            graph.number_of_nodes(),
+            graph.number_of_edges()
+        );
 
         // walk DAG in a DFS
         let mut visited = vec![false; graph.number_of_nodes()];
@@ -86,9 +90,7 @@ mod tests {
         visited[source] = true;
         while let Some((_current, pre_traversal)) = stack.pop() {
             if pre_traversal {
-
             } else {
-
             }
         }
     }
