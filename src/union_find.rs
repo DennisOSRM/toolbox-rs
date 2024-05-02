@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 
 pub struct UnionFind {
+    number_of_sets: usize,
     parent: Vec<usize>,
     rank: Vec<usize>,
 }
@@ -8,6 +9,7 @@ pub struct UnionFind {
 impl UnionFind {
     pub fn new(max: usize) -> Self {
         Self {
+            number_of_sets: max,
             parent: (0..max).collect(),
             rank: vec![0; max],
         }
@@ -43,6 +45,8 @@ impl UnionFind {
                 self.rank[x_set] += 1;
             }
         }
+
+        self.number_of_sets -= 1;
     }
 
     // find the representative of the set that x is an element of
@@ -54,6 +58,10 @@ impl UnionFind {
             p = self.parent[p];
         }
         p
+    }
+
+    pub fn number_of_sets(&self) -> usize {
+        self.number_of_sets
     }
 }
 
@@ -67,10 +75,11 @@ mod tests {
         let mut uf = UnionFind::new(10);
         assert!(!uf.is_empty());
         assert_eq!(10, uf.len());
-
+        assert_eq!(10, uf.number_of_sets);
         for i in 0..10_usize {
             assert_eq!(i, uf.find(i));
         }
+        assert_eq!(10, uf.number_of_sets);
     }
 
     #[test]
@@ -78,6 +87,7 @@ mod tests {
         let mut uf = UnionFind::new(10);
         assert!(!uf.is_empty());
         assert_eq!(10, uf.len());
+        assert_eq!(10, uf.number_of_sets);
 
         for i in 0..10_usize {
             uf.union(3, i);
@@ -93,5 +103,8 @@ mod tests {
 
         // check that all ranks are 0 except for item '3' it's 1
         assert_eq!(uf.rank, vec![0, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
+
+        // check that all sets have been merged into a single one
+        assert_eq!(1, uf.number_of_sets);
     }
 }
