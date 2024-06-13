@@ -32,6 +32,7 @@ pub mod partition;
 pub mod projection;
 pub mod rdx_sort;
 pub mod renumbering_table;
+pub mod search_space;
 pub mod space_filling_curve;
 pub mod static_graph;
 pub mod tarjan;
