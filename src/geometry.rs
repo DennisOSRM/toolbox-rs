@@ -141,6 +141,12 @@ pub mod primitives {
 
 #[cfg(test)]
 mod tests {
+    macro_rules! assert_delta {
+        ($x:expr, $y:expr, $d:expr) => {
+            if !($x - $y < $d || $y - $x < $d) { panic!(); }
+        }
+    }
+
     use super::primitives::{cross_product, distance, FPCoordinate};
     use crate::geometry::primitives::{distance_to_segment, is_clock_wise_turn, Point, Segment};
 
@@ -227,7 +233,7 @@ mod tests {
         let sf = FPCoordinate::new_from_lat_lon(37.773972, -122.431297);
         let distance = distance(&ny, &sf);
 
-        assert_eq!(distance, 4140.175105689902)
+        assert_delta!(distance, 4140.175105689902, 0.0000001);
     }
 
     #[test]

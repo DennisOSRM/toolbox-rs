@@ -6,20 +6,21 @@ on:
   pull_request:
     branches: [ main ]
 
-env:
+env: 
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  build_and_test:
+    name: toolbox - latest
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        arch: [X64, ARM64]
-
-    runs-on: [self-hosted, linux]
-
+        toolchain:
+          - stable
+          - beta
+          - nightly
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --all-targets
-    - name: Run tests
-      run: cargo test
+      - uses: actions/checkout@v4
+      - run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
+      - run: cargo build --verbose
+      - run: cargo test --verbose
