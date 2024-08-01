@@ -1,6 +1,8 @@
 use bitvec::prelude::*;
 use xxhash_rust::xxh3::xxh3_64_with_seed;
 
+use crate::as_bytes::AsBytes;
+
 /// Straight-forward implementation of a bloom filter on u8 slices. It applies
 /// the result of Kirsch and Mitzenmacher [1] of using a simple linear
 /// combination of two hash functions without any loss in the asymptotic false
@@ -16,16 +18,6 @@ pub struct BloomFilter {
 pub enum BloomResult {
     No,
     YesWhp,
-}
-
-pub trait AsBytes {
-    fn as_bytes(&self) -> &[u8];
-}
-
-impl AsBytes for &str {
-    fn as_bytes(&self) -> &[u8] {
-        str::as_bytes(self)
-    }
 }
 
 impl BloomFilter {
