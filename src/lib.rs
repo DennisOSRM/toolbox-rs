@@ -1,10 +1,12 @@
 pub mod addressable_binary_heap;
+pub mod as_bytes;
 pub mod bfs;
 pub mod bin_pack;
 pub mod bloom_filter;
 pub mod bounding_box;
 pub mod cell;
 pub mod convex_hull;
+pub mod count_min_sketch;
 pub mod cycle_check;
 pub mod ddsg;
 pub mod dfs;
