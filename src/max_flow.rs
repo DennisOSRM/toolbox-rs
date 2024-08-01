@@ -4,13 +4,17 @@ use crate::graph::NodeID;
 use bitvec::vec::BitVec;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ResidualCapacity {
+pub struct ResidualEdgeData {
     pub capacity: i32,
+    pub reverse_is_admissable: bool,
 }
 
-impl ResidualCapacity {
-    pub fn new(capacity: i32) -> ResidualCapacity {
-        ResidualCapacity { capacity }
+impl ResidualEdgeData {
+    pub fn new(capacity: i32) -> ResidualEdgeData {
+        ResidualEdgeData {
+            capacity,
+            reverse_is_admissable: false,
+        }
     }
 }
 

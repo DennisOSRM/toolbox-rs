@@ -2,7 +2,7 @@ use crate::bfs::BFS;
 use crate::{
     edge::{Edge, InputEdge},
     graph::{Graph, NodeID},
-    max_flow::{MaxFlow, ResidualCapacity},
+    max_flow::{MaxFlow, ResidualEdgeData},
     static_graph::StaticGraph,
 };
 use bitvec::vec::BitVec;
@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 pub struct FordFulkerson {
-    residual_graph: StaticGraph<ResidualCapacity>,
+    residual_graph: StaticGraph<ResidualEdgeData>,
     max_flow: i32,
     finished: bool,
     source: NodeID,
@@ -28,12 +28,12 @@ impl FordFulkerson {
         source: usize,
         target: usize,
     ) -> Self {
-        let edge_list: Vec<InputEdge<ResidualCapacity>> = input_edges
+        let edge_list: Vec<InputEdge<ResidualEdgeData>> = input_edges
             .iter()
             .map(move |edge| InputEdge {
                 source: edge.source(),
                 target: edge.target(),
-                data: ResidualCapacity::new(1),
+                data: ResidualEdgeData::new(1),
             })
             .collect();
 
@@ -42,7 +42,7 @@ impl FordFulkerson {
     }
 
     pub fn from_edge_list(
-        mut edge_list: Vec<InputEdge<ResidualCapacity>>,
+        mut edge_list: Vec<InputEdge<ResidualEdgeData>>,
         source: usize,
         target: usize,
     ) -> Self {
@@ -101,7 +101,7 @@ impl MaxFlow for FordFulkerson {
             &[self.target],
             self.residual_graph.number_of_nodes(),
         );
-        let filter = |graph: &StaticGraph<ResidualCapacity>, edge| graph.data(edge).capacity <= 0;
+        let filter = |graph: &StaticGraph<ResidualEdgeData>, edge| graph.data(edge).capacity <= 0;
         // let mut iteration = 0;
         while bfs.run_with_filter(&self.residual_graph, filter) {
             let start = Instant::now();
@@ -183,23 +183,23 @@ mod tests {
     use crate::edge::InputEdge;
     use crate::ford_fulkerson::FordFulkerson;
     use crate::max_flow::MaxFlow;
-    use crate::max_flow::ResidualCapacity;
+    use crate::max_flow::ResidualEdgeData;
     use bitvec::bits;
     use bitvec::prelude::Lsb0;
 
     #[test]
     fn max_flow_clr() {
         let edges = vec![
-            InputEdge::new(0, 1, ResidualCapacity::new(16)),
-            InputEdge::new(0, 2, ResidualCapacity::new(13)),
-            InputEdge::new(1, 2, ResidualCapacity::new(10)),
-            InputEdge::new(1, 3, ResidualCapacity::new(12)),
-            InputEdge::new(2, 1, ResidualCapacity::new(4)),
-            InputEdge::new(2, 4, ResidualCapacity::new(14)),
-            InputEdge::new(3, 2, ResidualCapacity::new(9)),
-            InputEdge::new(3, 5, ResidualCapacity::new(20)),
-            InputEdge::new(4, 3, ResidualCapacity::new(7)),
-            InputEdge::new(4, 5, ResidualCapacity::new(4)),
+            InputEdge::new(0, 1, ResidualEdgeData::new(16)),
+            InputEdge::new(0, 2, ResidualEdgeData::new(13)),
+            InputEdge::new(1, 2, ResidualEdgeData::new(10)),
+            InputEdge::new(1, 3, ResidualEdgeData::new(12)),
+            InputEdge::new(2, 1, ResidualEdgeData::new(4)),
+            InputEdge::new(2, 4, ResidualEdgeData::new(14)),
+            InputEdge::new(3, 2, ResidualEdgeData::new(9)),
+            InputEdge::new(3, 5, ResidualEdgeData::new(20)),
+            InputEdge::new(4, 3, ResidualEdgeData::new(7)),
+            InputEdge::new(4, 5, ResidualEdgeData::new(4)),
         ];
 
         let source = 0;
@@ -224,18 +224,18 @@ mod tests {
     #[test]
     fn max_flow_ita() {
         let edges = vec![
-            InputEdge::new(0, 1, ResidualCapacity::new(5)),
-            InputEdge::new(0, 4, ResidualCapacity::new(7)),
-            InputEdge::new(0, 5, ResidualCapacity::new(6)),
-            InputEdge::new(1, 2, ResidualCapacity::new(4)),
-            InputEdge::new(1, 7, ResidualCapacity::new(3)),
-            InputEdge::new(4, 7, ResidualCapacity::new(4)),
-            InputEdge::new(4, 6, ResidualCapacity::new(1)),
-            InputEdge::new(5, 6, ResidualCapacity::new(5)),
-            InputEdge::new(2, 3, ResidualCapacity::new(3)),
-            InputEdge::new(7, 3, ResidualCapacity::new(7)),
-            InputEdge::new(6, 7, ResidualCapacity::new(1)),
-            InputEdge::new(6, 3, ResidualCapacity::new(6)),
+            InputEdge::new(0, 1, ResidualEdgeData::new(5)),
+            InputEdge::new(0, 4, ResidualEdgeData::new(7)),
+            InputEdge::new(0, 5, ResidualEdgeData::new(6)),
+            InputEdge::new(1, 2, ResidualEdgeData::new(4)),
+            InputEdge::new(1, 7, ResidualEdgeData::new(3)),
+            InputEdge::new(4, 7, ResidualEdgeData::new(4)),
+            InputEdge::new(4, 6, ResidualEdgeData::new(1)),
+            InputEdge::new(5, 6, ResidualEdgeData::new(5)),
+            InputEdge::new(2, 3, ResidualEdgeData::new(3)),
+            InputEdge::new(7, 3, ResidualEdgeData::new(7)),
+            InputEdge::new(6, 7, ResidualEdgeData::new(1)),
+            InputEdge::new(6, 3, ResidualEdgeData::new(6)),
         ];
 
         let source = 0;
@@ -259,23 +259,23 @@ mod tests {
     #[test]
     fn max_flow_yt() {
         let edges = vec![
-            InputEdge::new(9, 0, ResidualCapacity::new(5)),
-            InputEdge::new(9, 1, ResidualCapacity::new(10)),
-            InputEdge::new(9, 2, ResidualCapacity::new(15)),
-            InputEdge::new(0, 3, ResidualCapacity::new(10)),
-            InputEdge::new(1, 0, ResidualCapacity::new(15)),
-            InputEdge::new(1, 4, ResidualCapacity::new(20)),
-            InputEdge::new(2, 5, ResidualCapacity::new(25)),
-            InputEdge::new(3, 4, ResidualCapacity::new(25)),
-            InputEdge::new(3, 6, ResidualCapacity::new(10)),
-            InputEdge::new(4, 2, ResidualCapacity::new(5)),
-            InputEdge::new(4, 7, ResidualCapacity::new(30)),
-            InputEdge::new(5, 7, ResidualCapacity::new(20)),
-            InputEdge::new(5, 8, ResidualCapacity::new(10)),
-            InputEdge::new(7, 8, ResidualCapacity::new(15)),
-            InputEdge::new(6, 10, ResidualCapacity::new(5)),
-            InputEdge::new(7, 10, ResidualCapacity::new(15)),
-            InputEdge::new(8, 10, ResidualCapacity::new(10)),
+            InputEdge::new(9, 0, ResidualEdgeData::new(5)),
+            InputEdge::new(9, 1, ResidualEdgeData::new(10)),
+            InputEdge::new(9, 2, ResidualEdgeData::new(15)),
+            InputEdge::new(0, 3, ResidualEdgeData::new(10)),
+            InputEdge::new(1, 0, ResidualEdgeData::new(15)),
+            InputEdge::new(1, 4, ResidualEdgeData::new(20)),
+            InputEdge::new(2, 5, ResidualEdgeData::new(25)),
+            InputEdge::new(3, 4, ResidualEdgeData::new(25)),
+            InputEdge::new(3, 6, ResidualEdgeData::new(10)),
+            InputEdge::new(4, 2, ResidualEdgeData::new(5)),
+            InputEdge::new(4, 7, ResidualEdgeData::new(30)),
+            InputEdge::new(5, 7, ResidualEdgeData::new(20)),
+            InputEdge::new(5, 8, ResidualEdgeData::new(10)),
+            InputEdge::new(7, 8, ResidualEdgeData::new(15)),
+            InputEdge::new(6, 10, ResidualEdgeData::new(5)),
+            InputEdge::new(7, 10, ResidualEdgeData::new(15)),
+            InputEdge::new(8, 10, ResidualEdgeData::new(10)),
         ];
 
         let source = 9;
@@ -299,15 +299,15 @@ mod tests {
     #[test]
     fn max_flow_ff() {
         let edges = vec![
-            InputEdge::new(0, 1, ResidualCapacity::new(7)),
-            InputEdge::new(0, 2, ResidualCapacity::new(3)),
-            InputEdge::new(1, 2, ResidualCapacity::new(1)),
-            InputEdge::new(1, 3, ResidualCapacity::new(6)),
-            InputEdge::new(2, 4, ResidualCapacity::new(8)),
-            InputEdge::new(3, 5, ResidualCapacity::new(2)),
-            InputEdge::new(3, 2, ResidualCapacity::new(3)),
-            InputEdge::new(4, 3, ResidualCapacity::new(2)),
-            InputEdge::new(4, 5, ResidualCapacity::new(8)),
+            InputEdge::new(0, 1, ResidualEdgeData::new(7)),
+            InputEdge::new(0, 2, ResidualEdgeData::new(3)),
+            InputEdge::new(1, 2, ResidualEdgeData::new(1)),
+            InputEdge::new(1, 3, ResidualEdgeData::new(6)),
+            InputEdge::new(2, 4, ResidualEdgeData::new(8)),
+            InputEdge::new(3, 5, ResidualEdgeData::new(2)),
+            InputEdge::new(3, 2, ResidualEdgeData::new(3)),
+            InputEdge::new(4, 3, ResidualEdgeData::new(2)),
+            InputEdge::new(4, 5, ResidualEdgeData::new(8)),
         ];
 
         let source = 0;
@@ -332,15 +332,15 @@ mod tests {
     #[should_panic]
     fn flow_not_computed() {
         let edges = vec![
-            InputEdge::new(0, 1, ResidualCapacity::new(7)),
-            InputEdge::new(0, 2, ResidualCapacity::new(3)),
-            InputEdge::new(1, 2, ResidualCapacity::new(1)),
-            InputEdge::new(1, 3, ResidualCapacity::new(6)),
-            InputEdge::new(2, 4, ResidualCapacity::new(8)),
-            InputEdge::new(3, 5, ResidualCapacity::new(2)),
-            InputEdge::new(3, 2, ResidualCapacity::new(3)),
-            InputEdge::new(4, 3, ResidualCapacity::new(2)),
-            InputEdge::new(4, 5, ResidualCapacity::new(8)),
+            InputEdge::new(0, 1, ResidualEdgeData::new(7)),
+            InputEdge::new(0, 2, ResidualEdgeData::new(3)),
+            InputEdge::new(1, 2, ResidualEdgeData::new(1)),
+            InputEdge::new(1, 3, ResidualEdgeData::new(6)),
+            InputEdge::new(2, 4, ResidualEdgeData::new(8)),
+            InputEdge::new(3, 5, ResidualEdgeData::new(2)),
+            InputEdge::new(3, 2, ResidualEdgeData::new(3)),
+            InputEdge::new(4, 3, ResidualEdgeData::new(2)),
+            InputEdge::new(4, 5, ResidualEdgeData::new(8)),
         ];
 
         // the expect(.) call is being tested
@@ -353,15 +353,15 @@ mod tests {
     #[should_panic]
     fn assignment_not_computed() {
         let edges = vec![
-            InputEdge::new(0, 1, ResidualCapacity::new(7)),
-            InputEdge::new(0, 2, ResidualCapacity::new(3)),
-            InputEdge::new(1, 2, ResidualCapacity::new(1)),
-            InputEdge::new(1, 3, ResidualCapacity::new(6)),
-            InputEdge::new(2, 4, ResidualCapacity::new(8)),
-            InputEdge::new(3, 5, ResidualCapacity::new(2)),
-            InputEdge::new(3, 2, ResidualCapacity::new(3)),
-            InputEdge::new(4, 3, ResidualCapacity::new(2)),
-            InputEdge::new(4, 5, ResidualCapacity::new(8)),
+            InputEdge::new(0, 1, ResidualEdgeData::new(7)),
+            InputEdge::new(0, 2, ResidualEdgeData::new(3)),
+            InputEdge::new(1, 2, ResidualEdgeData::new(1)),
+            InputEdge::new(1, 3, ResidualEdgeData::new(6)),
+            InputEdge::new(2, 4, ResidualEdgeData::new(8)),
+            InputEdge::new(3, 5, ResidualEdgeData::new(2)),
+            InputEdge::new(3, 2, ResidualEdgeData::new(3)),
+            InputEdge::new(4, 3, ResidualEdgeData::new(2)),
+            InputEdge::new(4, 5, ResidualEdgeData::new(8)),
         ];
 
         // the expect(.) call is being tested
