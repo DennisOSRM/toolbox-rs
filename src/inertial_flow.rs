@@ -11,7 +11,7 @@ use crate::{
     dinic::Dinic,
     edge::{InputEdge, TrivialEdge},
     geometry::primitives::FPCoordinate,
-    max_flow::{MaxFlow, ResidualCapacity},
+    max_flow::{MaxFlow, ResidualEdgeData},
     renumbering_table::RenumberingTable,
 };
 
@@ -113,11 +113,11 @@ pub fn sub_step(
     // each thread holds their own copy of the edge set
     let mut edges = input_edges
         .iter()
-        .map(|edge| -> InputEdge<ResidualCapacity> {
-            InputEdge::<ResidualCapacity> {
+        .map(|edge| -> InputEdge<ResidualEdgeData> {
+            InputEdge::<ResidualEdgeData> {
                 source: edge.source,
                 target: edge.target,
-                data: ResidualCapacity::new(1),
+                data: ResidualEdgeData::new(1),
             }
         })
         .collect_vec();
