@@ -1,6 +1,5 @@
 /// hash table semantics build over an unsorted vector and linear search.
 /// This is fast for small data sets with small keys up to dozens of entries.
-
 pub struct TinyTable<K, V> {
     data: Vec<(K, V)>,
 }

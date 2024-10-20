@@ -12,8 +12,8 @@ use std::cell::UnsafeCell;
 pub struct UnsafeSlice<'a, T> {
     slice: &'a [UnsafeCell<T>],
 }
-unsafe impl<'a, T: Send + Sync> Send for UnsafeSlice<'a, T> {}
-unsafe impl<'a, T: Send + Sync> Sync for UnsafeSlice<'a, T> {}
+unsafe impl<T: Send + Sync> Send for UnsafeSlice<'_, T> {}
+unsafe impl<T: Send + Sync> Sync for UnsafeSlice<'_, T> {}
 
 impl<'a, T> UnsafeSlice<'a, T> {
     pub fn new(slice: &'a mut [T]) -> Self {

@@ -147,7 +147,7 @@ pub struct PathIter<'a> {
     id: usize,
 }
 
-impl<'a> PathIter<'a> {
+impl PathIter<'_> {
     pub fn new(bfs: &BFS) -> PathIter {
         debug!("init: {}", bfs.target);
         PathIter {
@@ -157,7 +157,7 @@ impl<'a> PathIter<'a> {
     }
 }
 
-impl<'a> Iterator for PathIter<'a> {
+impl Iterator for PathIter<'_> {
     type Item = NodeID;
     fn next(&mut self) -> Option<NodeID> {
         if self.id == INVALID_NODE_ID {
