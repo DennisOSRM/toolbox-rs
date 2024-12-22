@@ -67,7 +67,7 @@ mod tests {
 
         let result: Vec<&[SimplePair]> = run_iter.collect();
         assert_eq!(3, result.len());
-        let expected = vec![&runs[0..1], &runs[2..2], &runs[3..3]];
+        let expected = vec![&runs[0..2], &runs[2..3], &runs[3..]];
         assert_eq!(expected, result);
     }
 }
