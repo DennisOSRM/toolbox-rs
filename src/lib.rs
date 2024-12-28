@@ -27,6 +27,7 @@ pub mod level_directory;
 pub mod linked_list;
 pub mod lru;
 pub mod max_flow;
+pub mod math;
 pub mod metis;
 pub mod one_iterator;
 pub mod one_to_many_dijkstra;
