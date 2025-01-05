@@ -15,6 +15,7 @@ pub mod dinic;
 pub mod dynamic_graph;
 pub mod edge;
 pub mod edmonds_karp;
+pub mod enumerative_source_coding;
 pub mod ford_fulkerson;
 pub mod geometry;
 pub mod graph;
