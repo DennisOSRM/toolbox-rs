@@ -8,7 +8,7 @@ pub fn choose(n: u64, k: u64) -> u64 {
     }
 
     let k = if k > n - k { n - k } else { k };
-    
+
     let mut result = 1;
     for i in 1..=k {
         result = result * (n - i + 1) / i;

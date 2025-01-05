@@ -45,9 +45,8 @@ mod tests {
     fn trivial_iterator_of_weight_63() {
         let result: Vec<u64> = U64BitWeightIterator::with_weight(63).collect();
         assert_eq!(result.len(), 64);
-        let expected: [u64; 64] = core::array::from_fn(|i| {
-            0xFFFF_FFFF_FFFF_FFFF ^ (1u64 << (63 - i))
-        });
+        let expected: [u64; 64] =
+            core::array::from_fn(|i| 0xFFFF_FFFF_FFFF_FFFF ^ (1u64 << (63 - i)));
         assert_eq!(result, expected);
     }
 }
