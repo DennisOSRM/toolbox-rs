@@ -9,7 +9,7 @@ use crate::math::choose;
 /// # Examples
 ///
 /// ```
-/// use toolbox_rs::enumerative_coding::decode;
+/// use toolbox_rs::enumerative_source_coding::decode;
 ///
 /// // 0th number with 3 bits set in a 64 bit number
 /// assert_eq!(decode_u64(3, 0), 0b000_0111);    
