@@ -36,8 +36,8 @@ log = "0.4.22"
 num = "0.4.3"
 rand = "0.8.5"
 rayon = "1.10.0"
-serde = { version = "1.0.216", features = ["derive"] }
-xxhash-rust = {version = "0.8.13", features = ["xxh3"] }
+serde = { version = "1.0.217", features = ["derive"] }
+xxhash-rust = {version = "0.8.15", features = ["xxh3"] }
 
 [dev-dependencies]
 criterion = "0.5.1"
