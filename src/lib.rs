@@ -2,6 +2,7 @@ pub mod addressable_binary_heap;
 pub mod as_bytes;
 pub mod bfs;
 pub mod bin_pack;
+pub mod bit_weight_iterator;
 pub mod bloom_filter;
 pub mod bounding_box;
 pub mod cell;

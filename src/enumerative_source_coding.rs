@@ -1,7 +1,7 @@
 use crate::math::choose;
 
 /// Implementation of Cover's algorithm to enumerate of sequences of weight w, cf.
-/// "Enumerative Source Encoding". Thomas M. Cover. 
+/// "Enumerative Source Encoding". Thomas M. Cover.
 /// Appears in IEEE Transactions on Information Theory. Vol 19, Issue: 1, Jan 1973
 ///
 /// The implementation corresponds to Section "Example 2 - Enumeration of Sequences of Weight w".
