@@ -9,7 +9,9 @@ use num::Integer;
 pub struct IndexOutOfRangeError;
 
 #[derive(Clone, Debug)]
-pub struct Fenwick<T: Integer + std::clone::Clone + Copy + std::ops::AddAssign + std::ops::SubAssign> {
+pub struct Fenwick<
+    T: Integer + std::clone::Clone + Copy + std::ops::AddAssign + std::ops::SubAssign,
+> {
     tree: Vec<T>,
 }
 
@@ -90,7 +92,7 @@ impl<T: Integer + std::clone::Clone + Copy + std::ops::AddAssign + std::ops::Sub
         }
 
         let mut i = i + 1;
-        while i>j {
+        while i > j {
             sum -= self.tree[i];
             i -= Self::largest_power_of_two_divisor(i);
         }
