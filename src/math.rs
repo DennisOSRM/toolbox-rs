@@ -1,3 +1,5 @@
+use num::{Integer, PrimInt};
+
 pub fn choose(n: u64, k: u64) -> u64 {
     if k > n {
         return 0;
@@ -17,9 +19,27 @@ pub fn choose(n: u64, k: u64) -> u64 {
     result
 }
 
+/// computes the least-significant bit set.
+pub fn lsb_index<T: Integer + PrimInt>(n: T) -> Option<u32> {
+    if n == T::zero() {
+        return None;
+    }
+
+    Some(n.trailing_zeros())
+}
+
+/// computes the least-significant bit set. Doesn't return the correct answer if the input is zero
+pub fn non_zero_lsb_index<T: Integer + PrimInt>(n: T) -> u32 {
+    if n == T::zero() {
+        return 0;
+    }
+
+    n.trailing_zeros()
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::math::choose;
+    use crate::math::{choose, lsb_index, non_zero_lsb_index};
 
     #[test]
     fn some_well_known_n_choose_k_values() {
@@ -38,5 +58,25 @@ mod tests {
         test_cases.into_iter().for_each(|((n, k), expected)| {
             assert_eq!(choose(n, k), expected);
         });
+    }
+
+    #[test]
+    fn lsb_well_known_values() {
+        assert_eq!(lsb_index(0), None);
+        assert_eq!(lsb_index(10), Some(1));
+        assert_eq!(lsb_index(16), Some(4));
+        assert_eq!(lsb_index(255), Some(0));
+        assert_eq!(lsb_index(1024), Some(10));
+        assert_eq!(lsb_index(72057594037927936_i64), Some(56));
+    }
+
+    #[test]
+    fn lsb_index_well_known_values() {
+        assert_eq!(non_zero_lsb_index(0), 0);
+        assert_eq!(non_zero_lsb_index(10), 1);
+        assert_eq!(non_zero_lsb_index(16), 4);
+        assert_eq!(non_zero_lsb_index(255), 0);
+        assert_eq!(non_zero_lsb_index(1024), 10);
+        assert_eq!(non_zero_lsb_index(72057594037927936_i64), 56);
     }
 }
