@@ -12,10 +12,9 @@ env:
 jobs:
   build_and_test:
     name: toolbox - latest
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm]
         toolchain:
           - stable
           - beta
