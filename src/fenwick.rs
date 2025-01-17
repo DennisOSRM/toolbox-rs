@@ -5,14 +5,17 @@
 /// Internally the implementation is one-indexed, while externally it is zero-based. This simplifies the implementation.
 use num::Integer;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct IndexOutOfRangeError;
 
-pub struct Fenwick<T: Integer + std::clone::Clone + Copy + std::ops::AddAssign> {
+#[derive(Clone, Debug)]
+pub struct Fenwick<
+    T: Integer + std::clone::Clone + Copy + std::ops::AddAssign + std::ops::SubAssign,
+> {
     tree: Vec<T>,
 }
 
-impl<T: Integer + std::clone::Clone + Copy + std::ops::AddAssign> Fenwick<T> {
+impl<T: Integer + std::clone::Clone + Copy + std::ops::AddAssign + std::ops::SubAssign> Fenwick<T> {
     /// construct with fixed size.
     pub fn with_size(n: usize) -> Self {
         Self {
@@ -73,6 +76,37 @@ impl<T: Integer + std::clone::Clone + Copy + std::ops::AddAssign> Fenwick<T> {
     fn largest_power_of_two_divisor(n: usize) -> usize {
         // TODO: should this go into math.rs if generally useful?
         n & n.wrapping_neg()
+    }
+
+    pub fn range(&self, i: usize, j: usize) -> T {
+        if i > j {
+            return T::zero();
+        }
+
+        let mut sum = T::zero();
+        let mut j = j + 1;
+
+        while j > i {
+            sum += self.tree[j];
+            j -= Self::largest_power_of_two_divisor(j);
+        }
+
+        let mut i = i + 1;
+        while i > j {
+            sum -= self.tree[i];
+            i -= Self::largest_power_of_two_divisor(i);
+        }
+
+        sum
+    }
+
+    /// This function is a straight-forward implementation for range.
+    /// Should be used in testing, or benchmarking mode only.
+    pub fn slow_range(&self, i: usize, j: usize) -> T {
+        if i > j {
+            return T::zero();
+        }
+        self.query(j) - self.query(i)
     }
 }
 
@@ -144,5 +178,28 @@ mod tests {
         let mut fenwick = Fenwick::from_values(&[0, 1, 4]);
         assert!(fenwick.update(0, 100).is_ok());
         assert!(fenwick.update(3, 100).is_err());
+    }
+
+    #[test]
+    fn range_test() {
+        let input = [19, 3, 27, 28, 263, 3897, -4, 27];
+        let fenwick = Fenwick::from_values(&input);
+        for i in 0..input.len() {
+            for j in i..input.len() {
+                assert_eq!(fenwick.slow_range(i, j), fenwick.range(i, j));
+            }
+        }
+    }
+
+    #[test]
+    fn range_i_larger_than_j() {
+        let input = [19, 3, 27, 28, 263, 3897, -4, 27];
+        let fenwick = Fenwick::from_values(&input);
+
+        for i in 0..input.len() {
+            for j in 0..i {
+                assert_eq!(fenwick.slow_range(i, j), fenwick.range(i, j));
+            }
+        }
     }
 }
