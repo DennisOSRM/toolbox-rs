@@ -133,7 +133,9 @@ impl<T: Clone + Copy> DynamicGraph<T> {
 
     /// Inserts a node with an empty edge slice into the node array.
     pub fn insert_node(&mut self) {
-        self.node_array.push(NodeArrayEntry::new(self.node_array.last().unwrap().first_edge));
+        self.node_array.push(NodeArrayEntry::new(
+            self.node_array.last().unwrap().first_edge,
+        ));
         self.number_of_nodes += 1;
     }
 
@@ -375,7 +377,6 @@ mod tests {
         graph.insert_edge(10, 11, -1);
         assert_eq!(12, graph.number_of_nodes());
         assert_eq!(10, graph.number_of_edges());
-
     }
 
     #[test]
@@ -419,7 +420,6 @@ mod tests {
         *graph.data_mut(edge.unwrap()) = 123;
         assert_eq!(123, *graph.data(edge.unwrap()));
     }
-
 
     #[test]
     fn find_edge() {
