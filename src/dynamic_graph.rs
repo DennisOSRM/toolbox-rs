@@ -406,6 +406,22 @@ mod tests {
     }
 
     #[test]
+    fn data_mut() {
+        type Graph = DynamicGraph<i32>;
+        let mut graph = Graph::new(6, EDGES.to_vec());
+        assert_eq!(6, graph.number_of_nodes());
+        assert_eq!(8, graph.number_of_edges());
+
+        let edge = graph.find_edge(1, 5);
+        assert!(edge.is_some());
+        assert_ne!(123, *graph.data(edge.unwrap()));
+
+        *graph.data_mut(edge.unwrap()) = 123;
+        assert_eq!(123, *graph.data(edge.unwrap()));
+    }
+
+
+    #[test]
     fn find_edge() {
         type Graph = DynamicGraph<i32>;
         let graph = Graph::new_from_sorted_list(6, &EDGES);
