@@ -4,7 +4,7 @@
 /// edge.
 use crate::{
     edge::{Edge, EdgeData},
-    graph::{EdgeArrayEntry, EdgeID, Graph, NodeID, INVALID_EDGE_ID, INVALID_NODE_ID},
+    graph::{EdgeArrayEntry, EdgeID, Graph, NodeID, INVALID_NODE_ID},
 };
 use core::ops::Range;
 
@@ -133,7 +133,7 @@ impl<T: Clone + Copy> DynamicGraph<T> {
 
     /// Inserts a node with an empty edge slice into the node array.
     pub fn insert_node(&mut self) {
-        self.node_array.push(NodeArrayEntry::new(INVALID_EDGE_ID));
+        self.node_array.push(NodeArrayEntry::new(self.node_array.last().unwrap().first_edge));
         self.number_of_nodes += 1;
     }
 
@@ -145,10 +145,10 @@ impl<T: Clone + Copy> DynamicGraph<T> {
     /// the beginning of the newly added extension of the edge array.
     pub fn insert_edge(&mut self, source: NodeID, target: NodeID, data: T) {
         // if the source of target nodes don't exist yet, then add them.
-        while self.number_of_nodes < source {
+        while self.number_of_nodes <= source {
             self.insert_node();
         }
-        while self.number_of_nodes < target {
+        while self.number_of_nodes <= target {
             self.insert_node();
         }
 
@@ -357,6 +357,25 @@ mod tests {
         let graph = Graph::new(6, EDGES.to_vec());
         assert_eq!(6, graph.number_of_nodes());
         assert_eq!(8, graph.number_of_edges());
+    }
+
+    #[test]
+    fn insert_node_edge() {
+        type Graph = DynamicGraph<i32>;
+        let mut graph = Graph::new(6, EDGES.to_vec());
+        assert_eq!(6, graph.number_of_nodes());
+        assert_eq!(8, graph.number_of_edges());
+
+        graph.insert_node();
+        assert_eq!(7, graph.number_of_nodes());
+
+        graph.insert_edge(5, 6, 20);
+        assert_eq!(9, graph.number_of_edges());
+
+        graph.insert_edge(10, 11, -1);
+        assert_eq!(12, graph.number_of_nodes());
+        assert_eq!(10, graph.number_of_edges());
+
     }
 
     #[test]
