@@ -390,6 +390,22 @@ mod tests {
     }
 
     #[test]
+    fn remove_edge() {
+        type Graph = DynamicGraph<i32>;
+        let mut graph = Graph::new(6, EDGES.to_vec());
+        assert_eq!(6, graph.number_of_nodes());
+        assert_eq!(8, graph.number_of_edges());
+
+        let edge = graph.find_edge(1, 5);
+        assert!(edge.is_some());
+        graph.remove_edge(1, edge.unwrap());
+        assert_eq!(7, graph.number_of_edges());
+
+        let edge = graph.find_edge(1, 5);
+        assert!(edge.is_none());
+    }
+
+    #[test]
     fn find_edge() {
         type Graph = DynamicGraph<i32>;
         let graph = Graph::new_from_sorted_list(6, &EDGES);
