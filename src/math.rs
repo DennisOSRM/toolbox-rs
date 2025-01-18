@@ -19,6 +19,13 @@ pub fn choose(n: u64, k: u64) -> u64 {
     result
 }
 
+/// calculate the largest power of 2 less or equal to n
+pub fn prev_power_of_two<T: PrimInt>(n: T) -> T {
+    let leading_zeros = n.leading_zeros() as usize;
+    let sizeof = 8 * std::mem::size_of::<T>();
+    T::one() << (sizeof - leading_zeros - 1)
+}
+
 /// computes the least-significant bit set.
 pub fn lsb_index<T: Integer + PrimInt>(n: T) -> Option<u32> {
     if n == T::zero() {
@@ -39,7 +46,7 @@ pub fn non_zero_lsb_index<T: Integer + PrimInt>(n: T) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use crate::math::{choose, lsb_index, non_zero_lsb_index};
+    use crate::math::{choose, lsb_index, non_zero_lsb_index, prev_power_of_two};
 
     #[test]
     fn some_well_known_n_choose_k_values() {
@@ -78,5 +85,12 @@ mod tests {
         assert_eq!(non_zero_lsb_index(255), 0);
         assert_eq!(non_zero_lsb_index(1024), 10);
         assert_eq!(non_zero_lsb_index(72057594037927936_i64), 56);
+    }
+
+    #[test]
+    fn largest_power_of_two_less_or_equal() {
+        assert_eq!(prev_power_of_two(16_u8), 16);
+        assert_eq!(prev_power_of_two(17_i32), 16);
+        assert_eq!(prev_power_of_two(0x5555555555555_u64), 0x4000000000000)
     }
 }
