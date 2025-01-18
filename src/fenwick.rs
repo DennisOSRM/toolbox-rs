@@ -1,4 +1,4 @@
-/// Implementation of a Fenwick tree to keep track and query prefix sums in logarithmic time.
+/// Implementation of a Fenwick tree to keep track and rank prefix sums in logarithmic time.
 /// cf. Boris Ryabko (1989). "A fast on-line code" (PDF). Soviet Math. Dokl. 39 (3): 533–537
 ///     Peter M. Fenwick (1994). "A new data structure for cumulative frequency tables". Software: Practice and Experience. 24 (3): 327–336
 ///
@@ -49,14 +49,17 @@ impl<T: Integer + std::clone::Clone + Copy + std::ops::AddAssign + std::ops::Sub
     }
 
     /// retrieve the prefix sum at the given zero-based index
-    pub fn query(&self, index: usize) -> T {
+    pub fn rank(&self, index: usize) -> Option<T> {
+        if index >= self.len() {
+            return None;
+        }
         let mut index = index + 1;
         let mut sum = T::zero();
         while index > 0 {
             sum += self.tree[index];
             index -= Self::largest_power_of_two_divisor(index);
         }
-        sum
+        Some(sum)
     }
 
     // update the entry with a new relative value
@@ -106,7 +109,28 @@ impl<T: Integer + std::clone::Clone + Copy + std::ops::AddAssign + std::ops::Sub
         if i > j {
             return T::zero();
         }
-        self.query(j) - self.query(i)
+        self.rank(j).unwrap() - self.rank(i).unwrap()
+    }
+
+    /// finds the index whose prefix sum is less or equal to 'value'
+    /// returns None in the following case:
+    /// value < tree.rank(0), i.e. the prefix sum of the first item is less than the first value
+    pub fn select(&self, mut value: T) -> Option<usize> {
+        let mut index = 0;
+        let mut step = crate::math::prev_power_of_two(self.len());
+        while step > 0 {
+            if index + step < self.tree.len() && self.tree[index + step] <= value {
+                value -= self.tree[index + step];
+                index += step;
+            }
+            step >>= 1;
+        }
+
+        // translate internal 1-based indexing to external 0-based indexing
+        if index == 0 {
+            return None;
+        }
+        Some(index - 1)
     }
 }
 
@@ -118,8 +142,8 @@ mod tests {
     fn piecemeal_construction1() {
         let mut fenwick = Fenwick::with_size(30);
         fenwick.update(0, 10).unwrap();
-        assert_eq!(fenwick.query(0), 10);
-        assert_eq!(fenwick.query(1), 10);
+        assert_eq!(fenwick.rank(0).unwrap(), 10);
+        assert_eq!(fenwick.rank(1).unwrap(), 10);
     }
 
     #[test]
@@ -132,7 +156,7 @@ mod tests {
         }
         assert_eq!(fenwick.len(), 4);
         for i in 0..input.len() {
-            assert_eq!(result[i], fenwick.query(i));
+            assert_eq!(result[i], fenwick.rank(i).unwrap());
         }
     }
 
@@ -143,7 +167,7 @@ mod tests {
         let fenwick = Fenwick::from_values(&input);
         assert_eq!(fenwick.len(), 4);
         for i in 0..input.len() {
-            assert_eq!(result[i], fenwick.query(i));
+            assert_eq!(result[i], fenwick.rank(i).unwrap());
         }
     }
 
@@ -160,7 +184,7 @@ mod tests {
 
         assert_eq!(fenwick1.len(), fenwick2.len());
         for i in 0..input.len() {
-            assert_eq!(fenwick1.query(i), fenwick2.query(i));
+            assert_eq!(fenwick1.rank(i), fenwick2.rank(i));
         }
     }
 
@@ -201,5 +225,68 @@ mod tests {
                 assert_eq!(fenwick.slow_range(i, j), fenwick.range(i, j));
             }
         }
+    }
+
+    #[test]
+    fn rank() {
+        struct TestCase {
+            value: i32,
+            expected_index: Option<usize>,
+            expected_value: Option<i32>,
+        }
+
+        let input = [19, 3, 27, 28, 263, 3897, 4, 27];
+        // gives prefix sums: [19,22,49,77,340,4237,4241,4268]
+        let fenwick = Fenwick::from_values(&input);
+
+        let test_cases = [
+            TestCase {
+                value: 19,
+                expected_index: Some(0),
+                expected_value: Some(19),
+            },
+            TestCase {
+                value: 18,
+                expected_index: None,
+                expected_value: None,
+            },
+            TestCase {
+                value: 4233,
+                expected_index: Some(4),
+                expected_value: Some(340),
+            },
+            TestCase {
+                value: 4237,
+                expected_index: Some(5),
+                expected_value: Some(4237),
+            },
+            TestCase {
+                value: 4268,
+                expected_index: Some(7),
+                expected_value: Some(4268),
+            },
+            TestCase {
+                value: 5000,
+                expected_index: Some(7),
+                expected_value: Some(4268),
+            },
+        ];
+
+        for test_case in test_cases {
+            let index = fenwick.select(test_case.value);
+            assert_eq!(test_case.expected_index, index);
+            if let Some(index) = index {
+                let value = fenwick.rank(index);
+                assert_eq!(value, test_case.expected_value);
+            } else {
+                assert!(test_case.expected_value.is_none());
+            }
+        }
+
+        // for i in 0..input.len() {
+        //     println!("[{i}] = {}", fenwick.rank(i));
+        // }
+
+        // println!("select(19)={idx}, value: {value}");
     }
 }
