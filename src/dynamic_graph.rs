@@ -352,6 +352,14 @@ mod tests {
     }
 
     #[test]
+    fn new() {
+        type Graph = DynamicGraph<i32>;
+        let graph = Graph::new(6, EDGES.to_vec());
+        assert_eq!(6, graph.number_of_nodes());
+        assert_eq!(8, graph.number_of_edges());
+    }
+
+    #[test]
     fn degree() {
         type Graph = DynamicGraph<i32>;
         let graph = Graph::new_from_sorted_list(6, &EDGES);
