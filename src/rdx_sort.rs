@@ -195,10 +195,10 @@ mod tests {
 
     #[test]
     fn tenknumbers() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut list = Vec::new();
         (0..10_000).for_each(|_| {
-            list.push(rng.gen::<usize>());
+            list.push(rng.random::<u64>());
         });
         list.rdx_sort();
         list.windows(2).for_each(|i| {

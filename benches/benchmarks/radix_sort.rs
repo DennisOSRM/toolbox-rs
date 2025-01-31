@@ -1,10 +1,10 @@
 use criterion::{criterion_group, BatchSize, BenchmarkId, Criterion, SamplingMode, Throughput};
-use rand::{distributions::Standard, Rng};
+use rand::{distr::StandardUniform, Rng};
 use toolbox_rs::rdx_sort::radix::Sort;
 
 fn create_scrambled_data(length: usize) -> Vec<i32> {
-    let rng = rand::thread_rng();
-    rng.sample_iter(Standard).take(length).collect()
+    let rng = rand::rng();
+    rng.sample_iter(StandardUniform).take(length).collect()
 }
 
 fn bench_sorts(c: &mut Criterion) {
