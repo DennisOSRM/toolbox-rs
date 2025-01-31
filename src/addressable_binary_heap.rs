@@ -291,7 +291,7 @@ mod tests {
         let mut input = Vec::new();
 
         for _ in 0..1000 {
-            let number = rng.gen();
+            let number = rng.random();
             input.push(number);
             heap.insert(number, number, 0);
         }
