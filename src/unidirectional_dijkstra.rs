@@ -149,7 +149,7 @@ mod tests {
     fn simple_graph() {
         let graph = create_graph();
 
-        let mut dijkstra = UnidirectionalDijkstra::new();
+        let mut dijkstra = UnidirectionalDijkstra::default();
         let distance = dijkstra.run(&graph, 0, 3);
         assert_eq!(6, dijkstra.search_space_len());
         assert_eq!(9, distance);

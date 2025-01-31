@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn retrieve_node_path() {
         let graph = create_graph();
-        let mut dijkstra = OneToManyDijkstra::new();
+        let mut dijkstra = OneToManyDijkstra::default();
         let success = dijkstra.run(&graph, 0, &[3]);
         assert!(success);
         assert_eq!(9, dijkstra.distance(3));
