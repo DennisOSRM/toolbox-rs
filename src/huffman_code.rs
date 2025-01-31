@@ -153,6 +153,20 @@ mod tests {
     use super::generate_huffman_code_from_unsorted;
 
     #[test]
+    fn run_with_empty_input_unsorted() {
+        let input = Vec::<(char, i32)>::new();
+        let code_book = generate_huffman_code_from_unsorted(&input);
+        assert_eq!(0, code_book.len());
+    }
+
+    #[test]
+    fn run_with_empty_input_sorted() {
+        let input = Vec::<(char, i32)>::new();
+        let code_book = generate_huffman_code_from_sorted(&input);
+        assert_eq!(0, code_book.len());
+    }
+
+    #[test]
     fn construction_unsorted() {
         let v = [
             ('a', 5),
