@@ -133,7 +133,8 @@ mod tests {
         assert_eq!(edges[0].data, 1);
         assert_eq!(edges[4].source, 0);
         assert_eq!(edges[4].target, 2);
-        assert_eq!(edges[4].data, 1);  }
+        assert_eq!(edges[4].data, 1);
+    }
 
     #[test]
     fn test_read_graph_original_weights() {
