@@ -149,7 +149,7 @@ mod tests {
         assert_eq!(fenwick.select(0), None);
 
         // Test range_query on an empty tree
-        assert_eq!(fenwick.range_query(0, 0), 0);
+        assert_eq!(fenwick.range(0, 0), 0);
     }
 
     #[test]
