@@ -139,6 +139,20 @@ mod tests {
     use super::Fenwick;
 
     #[test]
+    fn empty_tree() {
+        let fenwick = Fenwick::with_size(0);
+
+        // Test rank on an empty tree
+        assert_eq!(fenwick.rank(0), None);
+
+        // Test select on an empty tree
+        assert_eq!(fenwick.select(0), None);
+
+        // Test range_query on an empty tree
+        assert_eq!(fenwick.range_query(0, 0), 0);
+    }
+
+    #[test]
     fn piecemeal_construction1() {
         let mut fenwick = Fenwick::with_size(30);
         fenwick.update(0, 10).unwrap();
