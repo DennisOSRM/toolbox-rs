@@ -105,3 +105,65 @@ pub fn read_coordinates(filename: &str) -> Vec<FPCoordinate> {
 
     coordinates
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_read_graph_unit_weights() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("graph.txt");
+        let mut file = File::create(&file_path).unwrap();
+        writeln!(file, "c This is a comment").unwrap();
+        writeln!(file, "p sp 4 5").unwrap();
+        writeln!(file, "a 1 2 1").unwrap();
+        writeln!(file, "a 2 3 1").unwrap();
+        writeln!(file, "a 3 4 1").unwrap();
+        writeln!(file, "a 4 1 1").unwrap();
+        writeln!(file, "a 1 3 1").unwrap();
+
+        let edges = read_graph::<NodeID>(file_path.to_str().unwrap(), WeightType::Unit);
+        assert_eq!(edges.len(), 5);
+        assert_eq!(edges[0].source, 0);
+        assert_eq!(edges[0].target, 1);
+        assert_eq!(edges[0].data, 1);
+        assert_eq!(edges[4].source, 0);
+        assert_eq!(edges[4].target, 2);
+        assert_eq!(edges[4].data, 1);  }
+
+    #[test]
+    fn test_read_graph_original_weights() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("graph.txt");
+        let mut file = File::create(&file_path).unwrap();
+        writeln!(file, "c This is a comment").unwrap();
+        writeln!(file, "p sp 4 5").unwrap();
+        writeln!(file, "a 1 2 10").unwrap();
+        writeln!(file, "a 2 3 20").unwrap();
+        writeln!(file, "a 3 4 30").unwrap();
+        writeln!(file, "a 4 1 40").unwrap();
+        writeln!(file, "a 1 3 50").unwrap();
+
+        let edges = read_graph::<NodeID>(file_path.to_str().unwrap(), WeightType::Original);
+        assert_eq!(edges.len(), 5);
+        assert_eq!(edges[0].source, 0);
+        assert_eq!(edges[0].target, 1);
+        assert_eq!(edges[0].data, 10);
+        assert_eq!(edges.len(), 5);
+        assert_eq!(edges[4].source, 0);
+        assert_eq!(edges[4].target, 2);
+        assert_eq!(edges[4].data, 50);
+    }
+
+    #[test]
+    fn test_read_graph_invalid_file() {
+        let result = std::panic::catch_unwind(|| {
+            read_graph::<NodeID>("invalid_file.txt", WeightType::Unit);
+        });
+        assert!(result.is_err());
+    }
+}
