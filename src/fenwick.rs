@@ -82,7 +82,7 @@ impl<T: Integer + std::clone::Clone + Copy + std::ops::AddAssign + std::ops::Sub
     }
 
     pub fn range(&self, i: usize, j: usize) -> T {
-        if i > j {
+        if i >= j {
             return T::zero();
         }
 
