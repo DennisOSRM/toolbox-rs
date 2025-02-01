@@ -26,11 +26,7 @@ pub fn read_graph<T: std::cmp::Eq + From<usize>>(
             }
             'p' => {
                 problem_count += 1;
-                let sizes = line
-                    .get(5..)
-                    .unwrap_or("")
-                    .split_ascii_whitespace()
-                    .collect_vec();
+                let sizes = &line.split_ascii_whitespace().collect_vec()[2..4];
                 info!("expecting {} nodes and {} edges", sizes[0], sizes[1]);
                 edges.reserve(sizes[0].parse::<usize>().unwrap());
             }
@@ -85,6 +81,7 @@ pub fn read_coordinates(filename: &str) -> Vec<FPCoordinate> {
             }
             'p' => {
                 problem_count += 1;
+                debug_assert!(line.starts_with("p aux sp co"));
                 let size = line.get(12..).unwrap_or("").parse::<usize>().unwrap();
                 info!("expecting {size} coordinates");
                 coordinates.reserve(size);
@@ -111,7 +108,7 @@ mod tests {
     use super::*;
     use std::fs::File;
     use std::io::Write;
-    use tempfile::tempdir;
+    use tempfile::{tempdir, NamedTempFile};
 
     #[test]
     fn test_read_graph_unit_weights() {
@@ -165,6 +162,105 @@ mod tests {
         let result = std::panic::catch_unwind(|| {
             read_graph::<NodeID>("invalid_file.txt", WeightType::Unit);
         });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_coordinates_valid_file() {
+        // Create a temporary file with valid input
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "c This is a comment").unwrap();
+        writeln!(file, "p aux sp co 3").unwrap();
+        writeln!(file, "v 1 100 200").unwrap();
+        writeln!(file, "v 2 150 250").unwrap();
+        writeln!(file, "v 3 300 400").unwrap();
+
+        // Call the function
+        let coordinates = read_coordinates(file.path().to_str().unwrap());
+
+        // Verify the results
+        assert_eq!(coordinates.len(), 3);
+        assert_eq!(coordinates[0], FPCoordinate::new(200, 100));
+        assert_eq!(coordinates[1], FPCoordinate::new(250, 150));
+        assert_eq!(coordinates[2], FPCoordinate::new(400, 300));
+    }
+
+    #[test]
+    fn test_read_coordinates_empty_file() {
+        // Create an empty temporary file
+        let file = NamedTempFile::new().unwrap();
+
+        // Call the function
+        let coordinates = read_coordinates(file.path().to_str().unwrap());
+
+        // Verify the results
+        assert_eq!(coordinates.len(), 0);
+    }
+
+    #[test]
+    fn test_read_coordinates_invalid_line_format() {
+        // Create a temporary file with invalid input
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "v invalid 100 200").unwrap(); // Invalid NodeID
+
+        // Call the function and expect a panic
+        let result = std::panic::catch_unwind(|| {
+            read_coordinates(file.path().to_str().unwrap());
+        });
+
+        // Verify that the function panicked
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_coordinates_missing_problem_line() {
+        // Create a temporary file without a problem line
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "c This is a comment").unwrap();
+        writeln!(file, "v 1 100 200").unwrap();
+
+        // Call the function
+        let coordinates = read_coordinates(file.path().to_str().unwrap());
+
+        // Verify the results
+        assert_eq!(coordinates.len(), 1);
+        assert_eq!(coordinates[0], FPCoordinate::new(200, 100));
+    }
+
+    #[test]
+    fn test_read_coordinates_large_file() {
+        // Create a temporary file with a large number of coordinates
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "p aux sp co 1000").unwrap();
+        for i in 1..=1000 {
+            writeln!(file, "v {} {} {}", i, i * 100, i * 200).unwrap();
+        }
+
+        // Call the function
+        let coordinates = read_coordinates(file.path().to_str().unwrap());
+
+        // Verify the results
+        assert_eq!(coordinates.len(), 1000);
+        for i in 0..1000 {
+            assert_eq!(
+                coordinates[i as usize],
+                FPCoordinate::new((i + 1) * 200, (i + 1) * 100)
+            );
+        }
+    }
+
+    #[test]
+    fn test_read_coordinates_invalid_latitude_longitude() {
+        // Create a temporary file with invalid latitude/longitude values
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "v 1 invalid 200").unwrap(); // Invalid longitude
+
+        // Call the function and expect a panic
+        let result = std::panic::catch_unwind(|| {
+            read_coordinates(file.path().to_str().unwrap());
+        });
+
+        // Verify that the function panicked
         assert!(result.is_err());
     }
 }
