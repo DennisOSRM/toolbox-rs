@@ -134,6 +134,56 @@ mod tests {
     }
 
     #[test]
+    fn test_read_graph_unit_weights_eigenloops() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("graph.txt");
+        let mut file = File::create(&file_path).unwrap();
+        writeln!(file, "c This is a comment").unwrap();
+        writeln!(file, "p sp 4 5").unwrap();
+        writeln!(file, "a 1 2 1").unwrap();
+        writeln!(file, "a 2 3 1").unwrap();
+        writeln!(file, "a 3 4 1").unwrap();
+        writeln!(file, "a 4 1 1").unwrap();
+        writeln!(file, "a 1 3 1").unwrap();
+        writeln!(file, "a 1 1 1").unwrap();
+
+        let edges = read_graph::<NodeID>(file_path.to_str().unwrap(), WeightType::Unit);
+        assert_eq!(edges.len(), 5);
+        assert_eq!(edges[0].source, 0);
+        assert_eq!(edges[0].target, 1);
+        assert_eq!(edges[0].data, 1);
+        assert_eq!(edges[4].source, 0);
+        assert_eq!(edges[4].target, 2);
+        assert_eq!(edges[4].data, 1);
+    }
+
+    #[test]
+    fn test_read_graph_unit_weights_broken_lines() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("graph.txt");
+        let mut file = File::create(&file_path).unwrap();
+        writeln!(file, "c This is a comment").unwrap();
+        writeln!(file, "p sp 4 5").unwrap();
+        writeln!(file, "a 1 2 1").unwrap();
+        writeln!(file, "a 2 3 1").unwrap();
+        writeln!(file, "a 3 4 1").unwrap();
+        writeln!(file, "a 1 1 1 6").unwrap();
+        writeln!(file, "a 4 1 1").unwrap();
+        writeln!(file, "x 4 1 1").unwrap();
+        writeln!(file, "h 4 1 1").unwrap();
+        writeln!(file, "a 1 3 1").unwrap();
+
+        let edges = read_graph::<NodeID>(file_path.to_str().unwrap(), WeightType::Unit);
+        assert_eq!(edges.len(), 5);
+        assert_eq!(edges[0].source, 0);
+        assert_eq!(edges[0].target, 1);
+        assert_eq!(edges[0].data, 1);
+        assert_eq!(edges[4].source, 0);
+        assert_eq!(edges[4].target, 2);
+        assert_eq!(edges[4].data, 1);
+    }
+
+    #[test]
     fn test_read_graph_original_weights() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("graph.txt");
