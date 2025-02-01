@@ -21,6 +21,9 @@ pub fn choose(n: u64, k: u64) -> u64 {
 
 /// calculate the largest power of 2 less or equal to n
 pub fn prev_power_of_two<T: PrimInt>(n: T) -> T {
+    if n == T::zero() {
+        return T::zero();
+    }
     let leading_zeros = n.leading_zeros() as usize;
     let sizeof = 8 * std::mem::size_of::<T>();
     T::one() << (sizeof - leading_zeros - 1)

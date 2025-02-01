@@ -82,7 +82,7 @@ impl<T: Integer + std::clone::Clone + Copy + std::ops::AddAssign + std::ops::Sub
     }
 
     pub fn range(&self, i: usize, j: usize) -> T {
-        if i > j {
+        if i >= j {
             return T::zero();
         }
 
@@ -137,6 +137,20 @@ impl<T: Integer + std::clone::Clone + Copy + std::ops::AddAssign + std::ops::Sub
 #[cfg(test)]
 mod tests {
     use super::Fenwick;
+
+    #[test]
+    fn empty_tree() {
+        let fenwick = Fenwick::with_size(0);
+
+        // Test rank on an empty tree
+        assert_eq!(fenwick.rank(0), None);
+
+        // Test select on an empty tree
+        assert_eq!(fenwick.select(0), None);
+
+        // Test range_query on an empty tree
+        assert_eq!(fenwick.range(0, 0), 0);
+    }
 
     #[test]
     fn piecemeal_construction1() {
