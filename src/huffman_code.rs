@@ -45,7 +45,7 @@ fn min_node<T>(
         return q1.pop_front().unwrap();
     }
 
-    if q1.front().unwrap().frequency < q2.front().unwrap().frequency {
+    if q1.front().unwrap() < q2.front().unwrap() {
         return q1.pop_front().unwrap();
     }
     q2.pop_front().unwrap()
@@ -149,6 +149,8 @@ pub fn generate_huffman_code_from_unsorted<T: Copy + Debug>(
 
 #[cfg(test)]
 mod tests {
+    use crate::huffman_code::HuffmanNode;
+
     use super::generate_huffman_code_from_sorted;
     use super::generate_huffman_code_from_unsorted;
 
@@ -226,5 +228,48 @@ mod tests {
 
         assert!(matching == code_book.len());
         assert!(matching == expected.len());
+    }
+
+    #[test]
+    fn ord() {
+        let node1 = HuffmanNode {
+            character: Some('a'),
+            frequency: 5,
+            left: None,
+            right: None,
+        };
+        let node2 = HuffmanNode {
+            character: Some('b'),
+            frequency: 9,
+            left: None,
+            right: None,
+        };
+        let node3 = HuffmanNode {
+            character: Some('c'),
+            frequency: 5,
+            left: None,
+            right: None,
+        };
+        assert!(node1 < node2);
+        assert!(node2 > node1);
+        assert_eq!(node1, node3);
+    }
+
+    #[test]
+    fn partial_ord() {
+        let node1 = HuffmanNode {
+            character: Some('a'),
+            frequency: 5,
+            left: None,
+            right: None,
+        };
+        let node2 = HuffmanNode {
+            character: Some('b'),
+            frequency: 9,
+            left: None,
+            right: None,
+        };
+        assert!(node1 < node2);
+        assert!(node2 > node1);
     }
 }
