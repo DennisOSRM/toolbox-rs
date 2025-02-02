@@ -14,6 +14,9 @@ pub trait EdgeData {
     fn data(&self) -> &Self::DATA;
 }
 
+pub trait EdgeWithData: Edge<ID = usize> + EdgeData<DATA = i32> {}
+impl EdgeWithData for InputEdge<i32> {}
+
 #[derive(Clone, Copy)]
 pub struct TrivialEdge {
     pub source: usize,

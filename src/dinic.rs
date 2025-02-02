@@ -7,7 +7,7 @@
 //! The DFS restarts after it found an augmenting path on the tail of the
 //! saturated edge that is closest to the source.
 use crate::{
-    edge::{Edge, InputEdge},
+    edge::InputEdge,
     graph::{Graph, NodeID},
     max_flow::{MaxFlow, ResidualEdgeData},
     static_graph::StaticGraph,
@@ -40,101 +40,6 @@ pub struct Dinic {
 }
 
 impl Dinic {
-    // todo(dl): add closure parameter to derive edge data
-    pub fn from_generic_edge_list(
-        input_edges: &[impl Edge<ID = NodeID>],
-        source: NodeID,
-        target: NodeID,
-    ) -> Self {
-        debug_assert!(!input_edges.is_empty());
-        debug!("instantiating max-flow solver");
-        let edge_list: Vec<InputEdge<ResidualEdgeData>> = input_edges
-            .iter()
-            .map(move |edge| InputEdge {
-                source: edge.source(),
-                target: edge.target(),
-                data: ResidualEdgeData::new(1),
-            })
-            .collect();
-
-        debug!("created {} ff edges", edge_list.len());
-        Dinic::from_edge_list(edge_list, source, target)
-    }
-
-    pub fn from_edge_list(
-        mut edge_list: Vec<InputEdge<ResidualEdgeData>>,
-        source: usize,
-        target: usize,
-    ) -> Self {
-        debug_assert!(!edge_list.is_empty());
-        let number_of_edges = edge_list.len();
-
-        debug!("extending {} edges", edge_list.len());
-        // blindly generate reverse edges for all edges with zero capacity
-        edge_list.extend_from_within(..);
-        debug!("into {} edges", edge_list.len());
-
-        edge_list.iter_mut().skip(number_of_edges).for_each(|edge| {
-            edge.reverse();
-            edge.data.capacity = 0;
-            edge.data.reverse_is_admissable = true;
-        });
-        debug!("sorting after reversing");
-
-        // dedup-merge edge set, by using the following trick: not the dedup(.) call
-        // below takes the second argument as mut. When deduping equivalent values
-        // a and b, then a is accumulated onto b.
-        // edge_list.sort_unstable_by_key(|a| {
-        //     // returning a tuple yields a lexical sort
-        //     (a.source, a.target)
-        // });
-        edge_list.sort_unstable_by(|a, b| {
-            if a.source == b.source {
-                return a.target.cmp(&b.target);
-            }
-            a.source.cmp(&b.source)
-        });
-        debug!("start dedup");
-        edge_list.dedup_by(|a, b| {
-            // edges a and b are assumed to be equivalent in the residual graph if
-            // (and only if) they are parallel. In other words, this removes parallel
-            // edges in the residual graph and accumulates capacities on the remaining
-            // egde.
-            let edges_are_parallel = a.is_parallel_to(b);
-            if edges_are_parallel {
-                b.data.capacity += a.data.capacity;
-                b.data.reverse_is_admissable |= a.data.reverse_is_admissable
-            }
-            edges_are_parallel
-        });
-        edge_list.shrink_to_fit();
-        debug!("dedup done");
-
-        // at this point the edge set of the residual graph doesn't have any
-        // duplicates anymore. Note that this is fine, as we are looking to
-        // compute a node partition.
-
-        let residual_graph = StaticGraph::new_from_sorted_list(edge_list);
-        let number_of_nodes = residual_graph.number_of_nodes();
-
-        Self {
-            residual_graph,
-            max_flow: 0,
-            finished: false,
-            level: Vec::with_capacity(number_of_nodes),
-            parents: Vec::with_capacity(number_of_nodes),
-            stack: Vec::with_capacity(number_of_nodes),
-            dfs_count: 0,
-            bfs_count: 0,
-            queue: VecDeque::with_capacity(number_of_nodes),
-            source,
-            target,
-            bound: None,
-        }
-    }
-
-    // create layer graph L^(s,t) by doing a reverse BFS from target to source.
-    // All paths from s to t in the layer graph are then 'downhill'
     fn bfs(&mut self) -> bool {
         let start = Instant::now();
         self.bfs_count += 1;
@@ -255,12 +160,83 @@ impl Dinic {
 
         let duration = start.elapsed();
         debug!("DFS took: {:?} (unsuccessful)", duration);
-        // None
         blocking_flow
     }
 }
 
 impl MaxFlow for Dinic {
+    fn from_edge_list(
+        mut edge_list: Vec<InputEdge<ResidualEdgeData>>,
+        source: usize,
+        target: usize,
+    ) -> Self {
+        debug_assert!(!edge_list.is_empty());
+        let number_of_edges = edge_list.len();
+
+        debug!("extending {} edges", edge_list.len());
+        // blindly generate reverse edges for all edges with zero capacity
+        edge_list.extend_from_within(..);
+        debug!("into {} edges", edge_list.len());
+
+        edge_list.iter_mut().skip(number_of_edges).for_each(|edge| {
+            edge.reverse();
+            edge.data.capacity = 0;
+            edge.data.reverse_is_admissable = true;
+        });
+        debug!("sorting after reversing");
+
+        // dedup-merge edge set, by using the following trick: not the dedup(.) call
+        // below takes the second argument as mut. When deduping equivalent values
+        // a and b, then a is accumulated onto b.
+        // edge_list.sort_unstable_by_key(|a| {
+        //     // returning a tuple yields a lexical sort
+        //     (a.source, a.target)
+        // });
+        edge_list.sort_unstable_by(|a, b| {
+            if a.source == b.source {
+                return a.target.cmp(&b.target);
+            }
+            a.source.cmp(&b.source)
+        });
+        debug!("start dedup");
+        edge_list.dedup_by(|a, b| {
+            // edges a and b are assumed to be equivalent in the residual graph if
+            // (and only if) they are parallel. In other words, this removes parallel
+            // edges in the residual graph and accumulates capacities on the remaining
+            // egde.
+            let edges_are_parallel = a.is_parallel_to(b);
+            if edges_are_parallel {
+                b.data.capacity += a.data.capacity;
+                b.data.reverse_is_admissable |= a.data.reverse_is_admissable
+            }
+            edges_are_parallel
+        });
+        edge_list.shrink_to_fit();
+        debug!("dedup done");
+
+        // at this point the edge set of the residual graph doesn't have any
+        // duplicates anymore. Note that this is fine, as we are looking to
+        // compute a node partition.
+
+        let residual_graph = StaticGraph::new_from_sorted_list(edge_list);
+        let number_of_nodes = residual_graph.number_of_nodes();
+
+        Self {
+            residual_graph,
+            max_flow: 0,
+            finished: false,
+            level: Vec::with_capacity(number_of_nodes),
+            parents: Vec::with_capacity(number_of_nodes),
+            stack: Vec::with_capacity(number_of_nodes),
+            dfs_count: 0,
+            bfs_count: 0,
+            queue: VecDeque::with_capacity(number_of_nodes),
+            source,
+            target,
+            bound: None,
+        }
+    }
+
     fn run_with_upper_bound(&mut self, bound: Arc<AtomicI32>) {
         debug!("upper bound: {}", bound.load(Ordering::Relaxed));
 
@@ -338,6 +314,7 @@ impl MaxFlow for Dinic {
 mod tests {
 
     use crate::dinic::Dinic;
+    use crate::edge::EdgeData;
     use crate::edge::InputEdge;
     use crate::max_flow::MaxFlow;
     use crate::max_flow::ResidualEdgeData;
@@ -376,6 +353,43 @@ mod tests {
             .expect("assignment computation did not run");
 
         assert_eq!(assignment, bits![1, 1, 1, 0, 1, 0]);
+    }
+
+    #[test]
+    fn max_flow_ita_from_generic_edge_list() {
+        let edges = vec![
+            InputEdge::new(0, 1, 5),
+            InputEdge::new(0, 4, 7),
+            InputEdge::new(0, 5, 6),
+            InputEdge::new(1, 2, 4),
+            InputEdge::new(1, 7, 3),
+            InputEdge::new(4, 7, 4),
+            InputEdge::new(4, 6, 1),
+            InputEdge::new(5, 6, 5),
+            InputEdge::new(2, 3, 3),
+            InputEdge::new(7, 3, 7),
+            InputEdge::new(6, 7, 1),
+            InputEdge::new(6, 3, 6),
+        ];
+
+        let source = 0;
+        let target = 3;
+        let mut max_flow_solver = Dinic::from_generic_edge_list(&edges, source, target, |edge| {
+            ResidualEdgeData::new(*edge.data())
+        });
+        max_flow_solver.run();
+
+        // it's OK to expect the solver to have run
+        let max_flow = max_flow_solver
+            .max_flow()
+            .expect("max flow computation did not run");
+        assert_eq!(15, max_flow);
+
+        // it's OK to expect the solver to have run
+        let assignment = max_flow_solver
+            .assignment(source)
+            .expect("assignment computation did not run");
+        assert_eq!(assignment, bits![1, 0, 0, 0, 1, 1, 0, 0]);
     }
 
     #[test]
