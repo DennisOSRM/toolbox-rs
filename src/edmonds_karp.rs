@@ -1,6 +1,6 @@
 use crate::{
     dfs::DFS,
-    edge::{Edge, InputEdge},
+    edge::InputEdge,
     graph::{Graph, NodeID},
     max_flow::{MaxFlow, ResidualEdgeData},
     static_graph::StaticGraph,
@@ -25,27 +25,8 @@ pub struct EdmondsKarp {
     bound: Option<Arc<AtomicI32>>,
 }
 
-impl EdmondsKarp {
-    // todo(dl): add closure parameter to derive edge data
-    pub fn from_generic_edge_list(
-        input_edges: Vec<impl Edge<ID = NodeID>>,
-        source: usize,
-        target: usize,
-    ) -> Self {
-        let edge_list: Vec<InputEdge<ResidualEdgeData>> = input_edges
-            .into_iter()
-            .map(move |edge| InputEdge {
-                source: edge.source(),
-                target: edge.target(),
-                data: ResidualEdgeData::new(1),
-            })
-            .collect();
-
-        debug!("created {} ff edges", edge_list.len());
-        EdmondsKarp::from_edge_list(edge_list, source, target)
-    }
-
-    pub fn from_edge_list(
+impl MaxFlow for EdmondsKarp {
+    fn from_edge_list(
         mut edge_list: Vec<InputEdge<ResidualEdgeData>>,
         source: usize,
         target: usize,
@@ -90,9 +71,6 @@ impl EdmondsKarp {
             bound: None,
         }
     }
-}
-
-impl MaxFlow for EdmondsKarp {
     fn run_with_upper_bound(&mut self, bound: Arc<AtomicI32>) {
         warn!("Upper bound {} is discarded", bound.load(Ordering::Relaxed));
         self.bound = Some(bound);
