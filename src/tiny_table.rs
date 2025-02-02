@@ -47,7 +47,7 @@ impl<K: Clone + Copy + PartialEq, V: Clone + Copy> TinyTable<K, V> {
     }
 
     pub fn clear(&mut self) {
-        self.data.clear()
+        self.data.clear();
     }
 }
 
