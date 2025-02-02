@@ -2,6 +2,8 @@ name: "cargo clippy"
 
 on:
   push:
+    branches:
+      - main  
   pull_request:
 
 env:
