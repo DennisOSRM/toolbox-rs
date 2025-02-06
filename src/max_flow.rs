@@ -10,15 +10,11 @@ use log::debug;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ResidualEdgeData {
     pub capacity: i32,
-    pub reverse_is_admissable: bool,
 }
 
 impl ResidualEdgeData {
     pub fn new(capacity: i32) -> ResidualEdgeData {
-        ResidualEdgeData {
-            capacity,
-            reverse_is_admissable: false,
-        }
+        ResidualEdgeData { capacity }
     }
 }
 

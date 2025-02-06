@@ -1,6 +1,5 @@
 use std::{
     cmp::max,
-    ops::Index,
     sync::{atomic::AtomicI32, Arc},
 };
 
@@ -15,42 +14,28 @@ use crate::{
     renumbering_table::RenumberingTable,
 };
 
-pub struct RotatedComparators([fn(i32, i32) -> i32; 4]);
-// comparator equivalent to rotation matrix at 0, 90, 180 and 270 degrees
+const ROTATED_COMPARATORS: [fn(i32, i32) -> i32; 4] = [
+    |lat, _ln| -> i32 { lat },
+    |_lt, lon| -> i32 { lon },
+    |lat, lon| -> i32 { lon + lat },
+    |lat, lon| -> i32 { -lon + lat },
+];
 
-impl Default for RotatedComparators {
-    fn default() -> Self {
-        Self::new()
-    }
+#[derive(Debug)]
+pub enum FlowError {
+    AxisOutOfBounds,
+    String(String),
 }
 
-impl RotatedComparators {
-    pub fn new() -> Self {
-        // Comparator functions use the follwoing coefficients: (0, 1), (1, 0), (1, 1), (-1, 1)])
-        RotatedComparators([
-            |lat, _lon| -> i32 { lat },
-            |_lat, lon| -> i32 { lon },
-            |lat, lon| -> i32 { lon + lat },
-            |lat, lon| -> i32 { -lon + lat },
-        ])
-    }
-}
-
-impl Index<usize> for RotatedComparators {
-    type Output = fn(i32, i32) -> i32;
-    fn index(&self, i: usize) -> &fn(i32, i32) -> i32 {
-        &self.0[i % self.0.len()]
-    }
-}
-
-pub struct FlowResult {
+#[derive(Clone, Debug, PartialEq)]
+pub struct Flow {
     pub flow: i32,
     pub balance: f64,
     pub left_ids: Vec<usize>,
     pub right_ids: Vec<usize>,
 }
 
-pub fn flow_cmp(a: &FlowResult, b: &FlowResult) -> std::cmp::Ordering {
+pub fn flow_cmp(a: &Flow, b: &Flow) -> std::cmp::Ordering {
     if a.flow == b.flow {
         // note that a and b are inverted here on purpose:
         // balance is at most 0.5 and the closer the value the more balanced the partitions
@@ -76,13 +61,17 @@ pub fn sub_step(
     axis: usize,
     balance_factor: f64,
     upper_bound: Arc<AtomicI32>,
-) -> FlowResult {
+) -> Result<Flow, FlowError> {
     debug_assert!(axis < 4);
     debug_assert!(balance_factor > 0.);
     debug_assert!(balance_factor < 0.5);
     debug_assert!(coordinates.len() > 2);
 
-    let comparator = &RotatedComparators::new()[axis];
+    if axis >= 4 {
+        return Err(FlowError::AxisOutOfBounds);
+    }
+
+    let comparator = ROTATED_COMPARATORS[axis];
     debug!("[{axis}] sorting cooefficient: {:?}", comparator);
     // the iteration proxy list to be sorted. The coordinates vector itself is not touched.
     let mut node_id_list = node_id_list.to_vec();
@@ -154,14 +143,9 @@ pub fn sub_step(
 
     let max_flow = max_flow_solver.max_flow();
 
-    if max_flow.is_err() {
+    if let Err(message) = max_flow {
         // Error is returned in case the search is aborted early
-        return FlowResult {
-            flow: i32::MAX,
-            balance: 0.,
-            left_ids: Vec::new(),
-            right_ids: Vec::new(),
-        };
+        return Err(FlowError::String(message));
     }
     let flow = max_flow.expect("max flow computation did not run");
 
@@ -183,12 +167,12 @@ pub fn sub_step(
         / (left_ids.len() + right_ids.len()) as f64;
     debug!("[{axis}] balance: {balance}");
 
-    FlowResult {
+    Ok(Flow {
         flow,
         balance,
         left_ids,
         right_ids,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -198,99 +182,135 @@ mod tests {
 
     use crate::{
         geometry::primitives::FPCoordinate,
-        inertial_flow::{sub_step, TrivialEdge},
+        inertial_flow::{flow_cmp, sub_step, Flow, TrivialEdge},
     };
 
-    use super::RotatedComparators;
+    static EDGES: [TrivialEdge; 14] = [
+        TrivialEdge {
+            source: 0,
+            target: 1,
+        },
+        TrivialEdge {
+            source: 1,
+            target: 0,
+        },
+        TrivialEdge {
+            source: 0,
+            target: 2,
+        },
+        TrivialEdge {
+            source: 2,
+            target: 0,
+        },
+        TrivialEdge {
+            source: 1,
+            target: 2,
+        },
+        TrivialEdge {
+            source: 2,
+            target: 1,
+        },
+        TrivialEdge {
+            source: 2,
+            target: 4,
+        },
+        TrivialEdge {
+            source: 4,
+            target: 2,
+        },
+        TrivialEdge {
+            source: 3,
+            target: 5,
+        },
+        TrivialEdge {
+            source: 5,
+            target: 3,
+        },
+        TrivialEdge {
+            source: 4,
+            target: 3,
+        },
+        TrivialEdge {
+            source: 3,
+            target: 4,
+        },
+        TrivialEdge {
+            source: 4,
+            target: 5,
+        },
+        TrivialEdge {
+            source: 5,
+            target: 4,
+        },
+    ];
 
-    #[test]
-    fn iterate_with_wrap() {
-        let comparators = RotatedComparators::new();
-
-        (0..4).zip(4..8).for_each(|indices| {
-            assert_eq!(comparators[indices.0], comparators[indices.1]);
-        });
-    }
+    static COORDINATES: [FPCoordinate; 6] = [
+        FPCoordinate::new(1, 0),
+        FPCoordinate::new(2, 1),
+        FPCoordinate::new(0, 1),
+        FPCoordinate::new(2, 2),
+        FPCoordinate::new(0, 2),
+        FPCoordinate::new(1, 3),
+    ];
+    static NODE_ID_LIST: [usize; 6] = [0, 1, 2, 3, 4, 5];
 
     #[test]
     fn inertial_flow() {
-        let edges = vec![
-            TrivialEdge {
-                source: 0,
-                target: 1,
-            },
-            TrivialEdge {
-                source: 1,
-                target: 0,
-            },
-            TrivialEdge {
-                source: 0,
-                target: 2,
-            },
-            TrivialEdge {
-                source: 2,
-                target: 0,
-            },
-            TrivialEdge {
-                source: 1,
-                target: 2,
-            },
-            TrivialEdge {
-                source: 2,
-                target: 1,
-            },
-            TrivialEdge {
-                source: 2,
-                target: 4,
-            },
-            TrivialEdge {
-                source: 4,
-                target: 2,
-            },
-            TrivialEdge {
-                source: 3,
-                target: 5,
-            },
-            TrivialEdge {
-                source: 5,
-                target: 3,
-            },
-            TrivialEdge {
-                source: 4,
-                target: 3,
-            },
-            TrivialEdge {
-                source: 3,
-                target: 4,
-            },
-            TrivialEdge {
-                source: 4,
-                target: 5,
-            },
-            TrivialEdge {
-                source: 5,
-                target: 4,
-            },
-        ];
-
         let upper_bound = Arc::new(AtomicI32::new(6));
-
-        let coordinates = vec![
-            FPCoordinate::new(1, 0),
-            FPCoordinate::new(2, 1),
-            FPCoordinate::new(0, 1),
-            FPCoordinate::new(2, 2),
-            FPCoordinate::new(0, 2),
-            FPCoordinate::new(1, 3),
-        ];
-        let node_id_list = (0..coordinates.len()).collect_vec();
-
-        let result = sub_step(&edges, &node_id_list, &coordinates, 3, 0.25, upper_bound);
+        let result = sub_step(&EDGES, &NODE_ID_LIST, &COORDINATES, 3, 0.25, upper_bound)
+            .expect("error should not happen");
         assert_eq!(result.flow, 1);
         assert_eq!(result.balance, 0.5);
         assert_eq!(result.left_ids.len(), 3);
         assert_eq!(result.left_ids, vec![4, 5, 3]);
         assert_eq!(result.right_ids.len(), 3);
         assert_eq!(result.right_ids, vec![2, 0, 1]);
+    }
+
+    #[test]
+    fn inertial_flow_all_indices() {
+        let upper_bound = Arc::new(AtomicI32::new(6));
+        let result = (0..4)
+            .map(|axis| -> Result<_, _> {
+                sub_step(
+                    &EDGES,
+                    &NODE_ID_LIST,
+                    &COORDINATES,
+                    axis,
+                    0.25,
+                    upper_bound.clone(),
+                )
+            })
+            .collect_vec();
+        assert_eq!(result.len(), 4);
+
+        for r in &result {
+            let r = r.as_ref().clone().expect("error should not happen");
+            assert_eq!(r.flow, 1);
+            assert_eq!(r.balance, 0.5);
+            assert_eq!(r.left_ids.len(), 3);
+            assert_eq!(r.right_ids.len(), 3);
+        }
+
+        let min_max = result.into_iter().map(|r| r.unwrap()).minmax_by(flow_cmp);
+        let (min, max) = min_max.into_option().expect("minmax failed");
+        assert_eq!(
+            min,
+            Flow {
+                flow: 1,
+                balance: 0.5,
+                left_ids: vec![2, 0, 1],
+                right_ids: vec![4, 5, 3]
+            }
+        );
+        assert_eq!(
+            max,
+            Flow {
+                flow: 1,
+                balance: 0.5,
+                left_ids: vec![4, 5, 3],
+                right_ids: vec![2, 0, 1]
+            }
+        );
     }
 }

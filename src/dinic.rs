@@ -63,7 +63,9 @@ impl Dinic {
                 }
 
                 // check capacity of reverse edge
-                if !self.residual_graph.data(edge).reverse_is_admissable {
+                let rev_edge = self.residual_graph.find_edge_unchecked(v, u);
+                let edge_capacity = self.residual_graph.data(rev_edge).capacity;
+                if edge_capacity < 1 {
                     // no capacity to use on this edge
                     continue;
                 }
@@ -105,7 +107,7 @@ impl Dinic {
                     continue;
                 }
                 let available_capacity = self.residual_graph.data(edge).capacity;
-                if available_capacity < 1 {
+                if available_capacity == 0 {
                     // no capacity to use on this edge
                     continue;
                 }
@@ -129,9 +131,6 @@ impl Dinic {
                         }
                         let rev_edge = self.residual_graph.find_edge_unchecked(v, u);
                         self.residual_graph.data_mut(rev_edge).capacity += flow;
-                        // update capacity on reverse edge
-                        self.residual_graph.data_mut(rev_edge).reverse_is_admissable =
-                            self.residual_graph.data_mut(fwd_edge).capacity > 0;
                         v = u;
                     }
                     let duration = start.elapsed();
@@ -181,17 +180,12 @@ impl MaxFlow for Dinic {
         edge_list.iter_mut().skip(number_of_edges).for_each(|edge| {
             edge.reverse();
             edge.data.capacity = 0;
-            edge.data.reverse_is_admissable = true;
         });
         debug!("sorting after reversing");
 
         // dedup-merge edge set, by using the following trick: not the dedup(.) call
         // below takes the second argument as mut. When deduping equivalent values
         // a and b, then a is accumulated onto b.
-        // edge_list.sort_unstable_by_key(|a| {
-        //     // returning a tuple yields a lexical sort
-        //     (a.source, a.target)
-        // });
         edge_list.sort_unstable_by(|a, b| {
             if a.source == b.source {
                 return a.target.cmp(&b.target);
@@ -207,7 +201,6 @@ impl MaxFlow for Dinic {
             let edges_are_parallel = a.is_parallel_to(b);
             if edges_are_parallel {
                 b.data.capacity += a.data.capacity;
-                b.data.reverse_is_admissable |= a.data.reverse_is_admissable
             }
             edges_are_parallel
         });
@@ -274,6 +267,7 @@ impl MaxFlow for Dinic {
         self.max_flow = flow;
         self.finished = true;
     }
+
     fn max_flow(&self) -> Result<i32, String> {
         if !self.finished {
             return Err("Assigment was not computed.".to_string());

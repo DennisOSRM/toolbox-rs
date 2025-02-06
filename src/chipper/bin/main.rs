@@ -12,7 +12,7 @@ use toolbox_rs::geometry::primitives::FPCoordinate;
 use toolbox_rs::io;
 use toolbox_rs::unsafe_slice::UnsafeSlice;
 use toolbox_rs::{
-    inertial_flow::{self, flow_cmp, FlowResult},
+    inertial_flow::{self, flow_cmp, Flow},
     partition::PartitionID,
 };
 use {command_line::Arguments, serialize::write_results};
@@ -80,7 +80,7 @@ fn main() {
                 // run inertial flow on all four axes
                 let best_max_flow = (0..4)
                     .into_par_iter()
-                    .map(|axis| -> FlowResult {
+                    .map(|axis| -> Result<Flow, inertial_flow::FlowError> {
                         inertial_flow::sub_step(
                             &job.0,
                             &job.1,
@@ -90,7 +90,13 @@ fn main() {
                             upper_bound.clone(),
                         )
                     })
+                    .filter(|result| result.is_ok())
+                    .map(|result| result.unwrap())
                     .min_by(flow_cmp);
+
+                if best_max_flow.is_none() {
+                    return Vec::new();
+                }
 
                 let result = best_max_flow.unwrap();
                 debug!(
