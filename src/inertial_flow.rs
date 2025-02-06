@@ -1,6 +1,5 @@
 use std::{
     cmp::max,
-    ops::Index,
     sync::{atomic::AtomicI32, Arc},
 };
 
@@ -15,42 +14,27 @@ use crate::{
     renumbering_table::RenumberingTable,
 };
 
-pub struct RotatedComparators([fn(i32, i32) -> i32; 4]);
-// comparator equivalent to rotation matrix at 0, 90, 180 and 270 degrees
+const ROTATED_COMPARATORS: [fn(i32, i32) -> i32; 4] = [
+    |lat, _ln| -> i32 { lat },
+    |_lt, lon| -> i32 { lon },
+    |lat, lon| -> i32 { lon + lat },
+    |lat, lon| -> i32 { -lon + lat },
+];
 
-impl Default for RotatedComparators {
-    fn default() -> Self {
-        Self::new()
-    }
+#[derive(Debug)]
+pub enum FlowError {
+    AxisOutOfBounds,
+    String(String),
 }
 
-impl RotatedComparators {
-    pub fn new() -> Self {
-        // Comparator functions use the follwoing coefficients: (0, 1), (1, 0), (1, 1), (-1, 1)])
-        RotatedComparators([
-            |lat, _lon| -> i32 { lat },
-            |_lat, lon| -> i32 { lon },
-            |lat, lon| -> i32 { lon + lat },
-            |lat, lon| -> i32 { -lon + lat },
-        ])
-    }
-}
-
-impl Index<usize> for RotatedComparators {
-    type Output = fn(i32, i32) -> i32;
-    fn index(&self, i: usize) -> &fn(i32, i32) -> i32 {
-        &self.0[i % self.0.len()]
-    }
-}
-
-pub struct FlowResult {
+pub struct Flow {
     pub flow: i32,
     pub balance: f64,
     pub left_ids: Vec<usize>,
     pub right_ids: Vec<usize>,
 }
 
-pub fn flow_cmp(a: &FlowResult, b: &FlowResult) -> std::cmp::Ordering {
+pub fn flow_cmp(a: &Flow, b: &Flow) -> std::cmp::Ordering {
     if a.flow == b.flow {
         // note that a and b are inverted here on purpose:
         // balance is at most 0.5 and the closer the value the more balanced the partitions
@@ -76,13 +60,17 @@ pub fn sub_step(
     axis: usize,
     balance_factor: f64,
     upper_bound: Arc<AtomicI32>,
-) -> FlowResult {
+) -> Result<Flow, FlowError> {
     debug_assert!(axis < 4);
     debug_assert!(balance_factor > 0.);
     debug_assert!(balance_factor < 0.5);
     debug_assert!(coordinates.len() > 2);
 
-    let comparator = &RotatedComparators::new()[axis];
+    if axis >= 4 {
+        return Err(FlowError::AxisOutOfBounds);
+    }
+
+    let comparator = ROTATED_COMPARATORS[axis];
     debug!("[{axis}] sorting cooefficient: {:?}", comparator);
     // the iteration proxy list to be sorted. The coordinates vector itself is not touched.
     let mut node_id_list = node_id_list.to_vec();
@@ -154,14 +142,9 @@ pub fn sub_step(
 
     let max_flow = max_flow_solver.max_flow();
 
-    if max_flow.is_err() {
+    if let Err(message) = max_flow {
         // Error is returned in case the search is aborted early
-        return FlowResult {
-            flow: i32::MAX,
-            balance: 0.,
-            left_ids: Vec::new(),
-            right_ids: Vec::new(),
-        };
+        return Err(FlowError::String(message));
     }
     let flow = max_flow.expect("max flow computation did not run");
 
@@ -183,12 +166,12 @@ pub fn sub_step(
         / (left_ids.len() + right_ids.len()) as f64;
     debug!("[{axis}] balance: {balance}");
 
-    FlowResult {
+    Ok(Flow {
         flow,
         balance,
         left_ids,
         right_ids,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -200,17 +183,6 @@ mod tests {
         geometry::primitives::FPCoordinate,
         inertial_flow::{sub_step, TrivialEdge},
     };
-
-    use super::RotatedComparators;
-
-    #[test]
-    fn iterate_with_wrap() {
-        let comparators = RotatedComparators::new();
-
-        (0..4).zip(4..8).for_each(|indices| {
-            assert_eq!(comparators[indices.0], comparators[indices.1]);
-        });
-    }
 
     #[test]
     fn inertial_flow() {
@@ -285,7 +257,8 @@ mod tests {
         ];
         let node_id_list = (0..coordinates.len()).collect_vec();
 
-        let result = sub_step(&edges, &node_id_list, &coordinates, 3, 0.25, upper_bound);
+        let result = sub_step(&edges, &node_id_list, &coordinates, 3, 0.25, upper_bound)
+            .expect("error should not happen");
         assert_eq!(result.flow, 1);
         assert_eq!(result.balance, 0.5);
         assert_eq!(result.left_ids.len(), 3);
