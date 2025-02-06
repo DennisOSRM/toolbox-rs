@@ -170,6 +170,19 @@ mod test {
     use super::LinkedList;
 
     #[test]
+    fn default_init_cursor_noop() {
+        let mut list = LinkedList::default();
+
+        assert_eq!(list.len(), 0);
+        assert_eq!(list.pop_back(), None);
+        assert_eq!(list.len(), 0);
+        let cursor = list.push_front(10);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list.pop_back(), Some(10));
+        list.move_to_front(&cursor); // no-op since list is empty
+    }
+
+    #[test]
     fn test_basic_front() {
         let mut list = LinkedList::new();
 

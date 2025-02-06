@@ -38,3 +38,155 @@ pub fn read_vec_from_file<T: serde::de::DeserializeOwned>(filename: &str) -> Vec
     let reader = BufReader::new(File::open(filename).unwrap());
     deserialize_from(reader).unwrap()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    // Test `read_lines` function
+    #[test]
+    fn test_read_lines() {
+        // Create a temporary file with some lines
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "line1").unwrap();
+        writeln!(file, "line2").unwrap();
+        writeln!(file, "line3").unwrap();
+
+        // Read lines from the file
+        let lines = read_lines(file.path()).unwrap();
+        let lines: Vec<String> = lines.map(|line| line.unwrap()).collect();
+
+        // Verify the lines are read correctly
+        assert_eq!(lines, vec!["line1", "line2", "line3"]);
+    }
+
+    // Test `read_lines` with a non-existent file
+    #[test]
+    fn test_read_lines_nonexistent_file() {
+        let result = read_lines("nonexistent_file.txt");
+        assert!(result.is_err());
+    }
+
+    // Test `read_graph_into_trivial_edges` function
+    #[test]
+    fn test_read_graph_into_trivial_edges() {
+        // Define test input edges
+        #[derive(Serialize)]
+        struct TestEdge {
+            source: usize,
+            target: usize,
+            weight: f64,
+        }
+
+        let input_edges = vec![
+            TestEdge {
+                source: 1,
+                target: 2,
+                weight: 1.0,
+            },
+            TestEdge {
+                source: 2,
+                target: 3,
+                weight: 2.0,
+            },
+        ];
+
+        // Serialize the input edges to a temporary file
+        let mut file = NamedTempFile::new().unwrap();
+        bincode::serialize_into(&mut file, &input_edges).unwrap();
+
+        // Read the graph into trivial edges
+        let trivial_edges = read_graph_into_trivial_edges(file.path().to_str().unwrap());
+
+        // Verify the output
+        assert_eq!(trivial_edges.len(), 2);
+        assert_eq!(trivial_edges[0].source, 1);
+        assert_eq!(trivial_edges[0].target, 2);
+        assert_eq!(trivial_edges[1].source, 2);
+        assert_eq!(trivial_edges[1].target, 3);
+    }
+
+    // Test `read_graph_into_trivial_edges` with a non-existent file
+    #[test]
+    #[should_panic(
+        expected = "called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: \"No such file or directory\" }"
+    )]
+    fn test_read_graph_into_trivial_edges_nonexistent_file() {
+        read_graph_into_trivial_edges("nonexistent_file.bin");
+    }
+
+    // Test `read_vec_from_file` function
+    #[test]
+    fn test_read_vec_from_file() {
+        // Define test data
+        let test_data = vec![1, 2, 3, 4, 5];
+
+        // Serialize the test data to a temporary file
+        let mut file = NamedTempFile::new().unwrap();
+        bincode::serialize_into(&mut file, &test_data).unwrap();
+
+        // Read the vector from the file
+        let result: Vec<i32> = read_vec_from_file(file.path().to_str().unwrap());
+
+        // Verify the output
+        assert_eq!(result, test_data);
+    }
+
+    // Test `read_vec_from_file` with a custom struct
+    #[test]
+    fn test_read_vec_from_file_with_custom_struct() {
+        // Define a custom struct for testing
+        #[derive(Serialize, Deserialize, Debug, PartialEq)]
+        struct TestStruct {
+            id: u64,
+            name: String,
+        }
+
+        let test_data = vec![
+            TestStruct {
+                id: 1,
+                name: "Alice".to_string(),
+            },
+            TestStruct {
+                id: 2,
+                name: "Bob".to_string(),
+            },
+        ];
+
+        // Serialize the test data to a temporary file
+        let mut file = NamedTempFile::new().unwrap();
+        bincode::serialize_into(&mut file, &test_data).unwrap();
+
+        // Read the vector from the file
+        let result: Vec<TestStruct> = read_vec_from_file(file.path().to_str().unwrap());
+
+        // Verify the output
+        assert_eq!(result, test_data);
+    }
+
+    // Test `read_vec_from_file` with a non-existent file
+    #[test]
+    #[should_panic(
+        expected = "called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: \"No such file or directory\" }"
+    )]
+    fn test_read_vec_from_file_nonexistent_file() {
+        read_vec_from_file::<i32>("nonexistent_file.bin");
+    }
+
+    // Test `read_vec_from_file` with invalid data
+    #[test]
+    #[should_panic(
+        expected = "called `Result::unwrap()` on an `Err` value: Io(Error { kind: UnexpectedEof, message: \"failed to fill whole buffer\" })"
+    )]
+    fn test_read_vec_from_file_invalid_data() {
+        // Create a temporary file with invalid binary data
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"invalid binary data").unwrap();
+
+        // Attempt to read the invalid data
+        let _: Vec<i32> = read_vec_from_file(file.path().to_str().unwrap());
+    }
+}

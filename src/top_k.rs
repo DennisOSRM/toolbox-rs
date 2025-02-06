@@ -33,15 +33,17 @@ where
     }
 
     let mut top_k = Vec::with_capacity(2 * k);
-    let mut threshold = T::Integral::default();
+    let mut threshold: Option<T::Integral> = None;
     for item in input {
-        if item.value() <= threshold {
-            continue;
+        if let Some(ref t) = threshold {
+            if item.value() >= *t {
+                continue;
+            }
         }
         top_k.push(item);
         if top_k.len() == 2 * k {
             let (_, median, _) = top_k.select_nth_unstable(k - 1);
-            threshold = median.value();
+            threshold = Some(median.value());
             top_k.truncate(k);
         }
     }
@@ -81,10 +83,11 @@ mod test {
             Hit { score: 20 },
         ];
         let output = top_k(input, 3);
-        assert_eq!(
-            output,
-            vec![Hit { score: 1 }, Hit { score: 5 }, Hit { score: 8 },]
-        );
+        let expected = vec![Hit { score: 1 }, Hit { score: 5 }, Hit { score: 8 }];
+
+        output.iter().zip(expected.iter()).for_each(|(a, b)| {
+            assert_eq!(a.value(), b.value());
+        });
     }
 
     #[test]
@@ -92,5 +95,19 @@ mod test {
         let input = [8, 12, 5, 1, 20];
         let output = top_k(input, 3);
         assert_eq!(output, vec![1, 5, 8,]);
+    }
+
+    #[test]
+    fn top_3_15_i32() {
+        let input = [8, 12, 5, 1, 20, 7, 2, 6, 3, 4, 9, 21, 26, 27, 8];
+        let output = top_k(input, 3);
+        assert_eq!(output, vec![1, 2, 3,]);
+    }
+
+    #[test]
+    fn top_0_15_i32() {
+        let input = [8, 12, 5, 1, 20, 7, 2, 6, 3, 4, 9, 21, 26, 27, 8];
+        let output = top_k(input, 0);
+        assert_eq!(output, Vec::<i32>::new());
     }
 }
