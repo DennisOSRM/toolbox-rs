@@ -27,6 +27,7 @@ pub enum FlowError {
     String(String),
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct Flow {
     pub flow: i32,
     pub balance: f64,
@@ -181,83 +182,82 @@ mod tests {
 
     use crate::{
         geometry::primitives::FPCoordinate,
-        inertial_flow::{sub_step, TrivialEdge},
+        inertial_flow::{flow_cmp, sub_step, Flow, TrivialEdge},
     };
+
+    static EDGES: [TrivialEdge; 14] = [
+        TrivialEdge {
+            source: 0,
+            target: 1,
+        },
+        TrivialEdge {
+            source: 1,
+            target: 0,
+        },
+        TrivialEdge {
+            source: 0,
+            target: 2,
+        },
+        TrivialEdge {
+            source: 2,
+            target: 0,
+        },
+        TrivialEdge {
+            source: 1,
+            target: 2,
+        },
+        TrivialEdge {
+            source: 2,
+            target: 1,
+        },
+        TrivialEdge {
+            source: 2,
+            target: 4,
+        },
+        TrivialEdge {
+            source: 4,
+            target: 2,
+        },
+        TrivialEdge {
+            source: 3,
+            target: 5,
+        },
+        TrivialEdge {
+            source: 5,
+            target: 3,
+        },
+        TrivialEdge {
+            source: 4,
+            target: 3,
+        },
+        TrivialEdge {
+            source: 3,
+            target: 4,
+        },
+        TrivialEdge {
+            source: 4,
+            target: 5,
+        },
+        TrivialEdge {
+            source: 5,
+            target: 4,
+        },
+    ];
+
+    static COORDINATES: [FPCoordinate; 6] = [
+        FPCoordinate::new(1, 0),
+        FPCoordinate::new(2, 1),
+        FPCoordinate::new(0, 1),
+        FPCoordinate::new(2, 2),
+        FPCoordinate::new(0, 2),
+        FPCoordinate::new(1, 3),
+    ];
+    static NODE_ID_LIST: [usize; 6] = [0, 1, 2, 3, 4, 5];
 
     #[test]
     fn inertial_flow() {
-        let edges = vec![
-            TrivialEdge {
-                source: 0,
-                target: 1,
-            },
-            TrivialEdge {
-                source: 1,
-                target: 0,
-            },
-            TrivialEdge {
-                source: 0,
-                target: 2,
-            },
-            TrivialEdge {
-                source: 2,
-                target: 0,
-            },
-            TrivialEdge {
-                source: 1,
-                target: 2,
-            },
-            TrivialEdge {
-                source: 2,
-                target: 1,
-            },
-            TrivialEdge {
-                source: 2,
-                target: 4,
-            },
-            TrivialEdge {
-                source: 4,
-                target: 2,
-            },
-            TrivialEdge {
-                source: 3,
-                target: 5,
-            },
-            TrivialEdge {
-                source: 5,
-                target: 3,
-            },
-            TrivialEdge {
-                source: 4,
-                target: 3,
-            },
-            TrivialEdge {
-                source: 3,
-                target: 4,
-            },
-            TrivialEdge {
-                source: 4,
-                target: 5,
-            },
-            TrivialEdge {
-                source: 5,
-                target: 4,
-            },
-        ];
-
         let upper_bound = Arc::new(AtomicI32::new(6));
-
-        let coordinates = vec![
-            FPCoordinate::new(1, 0),
-            FPCoordinate::new(2, 1),
-            FPCoordinate::new(0, 1),
-            FPCoordinate::new(2, 2),
-            FPCoordinate::new(0, 2),
-            FPCoordinate::new(1, 3),
-        ];
-        let node_id_list = (0..coordinates.len()).collect_vec();
-
-        let result = sub_step(&edges, &node_id_list, &coordinates, 3, 0.25, upper_bound)
+        let result = sub_step(&EDGES, &NODE_ID_LIST, &COORDINATES, 3, 0.25, upper_bound)
             .expect("error should not happen");
         assert_eq!(result.flow, 1);
         assert_eq!(result.balance, 0.5);
@@ -265,5 +265,52 @@ mod tests {
         assert_eq!(result.left_ids, vec![4, 5, 3]);
         assert_eq!(result.right_ids.len(), 3);
         assert_eq!(result.right_ids, vec![2, 0, 1]);
+    }
+
+    #[test]
+    fn inertial_flow_all_indices() {
+        let upper_bound = Arc::new(AtomicI32::new(6));
+        let result = (0..4)
+            .map(|axis| -> Result<_, _> {
+                sub_step(
+                    &EDGES,
+                    &NODE_ID_LIST,
+                    &COORDINATES,
+                    axis,
+                    0.25,
+                    upper_bound.clone(),
+                )
+            })
+            .collect_vec();
+        assert_eq!(result.len(), 4);
+
+        for r in &result {
+            let r = r.as_ref().clone().expect("error should not happen");
+            assert_eq!(r.flow, 1);
+            assert_eq!(r.balance, 0.5);
+            assert_eq!(r.left_ids.len(), 3);
+            assert_eq!(r.right_ids.len(), 3);
+        }
+
+        let min_max = result.into_iter().map(|r| r.unwrap()).minmax_by(flow_cmp);
+        let (min, max) = min_max.into_option().expect("minmax failed");
+        assert_eq!(
+            min,
+            Flow {
+                flow: 1,
+                balance: 0.5,
+                left_ids: vec![2, 0, 1],
+                right_ids: vec![4, 5, 3]
+            }
+        );
+        assert_eq!(
+            max,
+            Flow {
+                flow: 1,
+                balance: 0.5,
+                left_ids: vec![4, 5, 3],
+                right_ids: vec![2, 0, 1]
+            }
+        );
     }
 }
