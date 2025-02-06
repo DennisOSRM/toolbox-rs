@@ -44,7 +44,6 @@ pub fn read_graph<T: std::cmp::Eq + From<usize>>(
         .split_ascii_whitespace()
         .collect_vec();
     let number_of_nodes = sizes[0].parse::<NodeID>().unwrap();
-    info!("expecting {} nodes and {} edges", number_of_nodes, sizes[1]);
 
     // load unweighted metis graph and coordinates
     for (source, line) in lines.enumerate() {
@@ -84,4 +83,121 @@ pub fn read_coordinates(filename: &str) -> Vec<FPCoordinate> {
     }
 
     coordinates
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_read_graph_valid() {
+        let graph_content = "4 8\n3 2\n2 3\n1 3\n1 2\n";
+        let tmp_file = NamedTempFile::new().unwrap();
+        write(tmp_file.path(), graph_content).unwrap();
+
+        let edges = read_graph::<usize>(tmp_file.path().to_str().unwrap(), WeightType::Unit);
+
+        assert_eq!(edges.len(), 6);
+        assert_eq!(
+            edges[0],
+            InputEdge {
+                source: 0,
+                target: 2,
+                data: 1
+            }
+        );
+        assert_eq!(
+            edges[1],
+            InputEdge {
+                source: 0,
+                target: 1,
+                data: 1
+            }
+        );
+        assert_eq!(
+            edges[2],
+            InputEdge {
+                source: 1,
+                target: 2,
+                data: 1
+            }
+        );
+        assert_eq!(
+            edges[3],
+            InputEdge {
+                source: 2,
+                target: 0,
+                data: 1
+            }
+        );
+        assert_eq!(
+            edges[4],
+            InputEdge {
+                source: 3,
+                target: 0,
+                data: 1
+            }
+        );
+        assert_eq!(
+            edges[5],
+            InputEdge {
+                source: 3,
+                target: 1,
+                data: 1
+            }
+        );
+    }
+
+    #[test]
+    fn test_read_coordinates_valid() {
+        let coord_content = "1234567 4567890\n2345678 5678901\n";
+        let tmp_file = NamedTempFile::new().unwrap();
+        write(tmp_file.path(), coord_content).unwrap();
+
+        let coords = read_coordinates(tmp_file.path().to_str().unwrap());
+
+        assert_eq!(coords.len(), 2);
+        let (lon, lat) = coords[0].to_lon_lat_pair();
+        assert!((lat - 45.67890).abs() < 1e-5);
+        assert!((lon - 12.34567).abs() < 1e-5);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_read_graph_invalid_file() {
+        read_graph::<usize>("nonexistent_file.txt", WeightType::Unit);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_read_graph_invalid_format() {
+        let graph_content = "not a number\n1 2\n";
+        let tmp_file = NamedTempFile::new().unwrap();
+        write(tmp_file.path(), graph_content).unwrap();
+
+        read_graph::<usize>(tmp_file.path().to_str().unwrap(), WeightType::Unit);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_read_graph_node_out_of_bounds() {
+        let graph_content = "2 1\n3\n1\n"; // Node 3 exceeds number_of_nodes
+        let tmp_file = NamedTempFile::new().unwrap();
+        write(tmp_file.path(), graph_content).unwrap();
+
+        read_graph::<usize>(tmp_file.path().to_str().unwrap(), WeightType::Unit);
+    }
+
+    #[test]
+    fn test_read_graph_skip_eigenloops() {
+        let graph_content = "2 1\n1 1\n2\n";
+        let tmp_file = NamedTempFile::new().unwrap();
+        write(tmp_file.path(), graph_content).unwrap();
+
+        let edges = read_graph::<usize>(tmp_file.path().to_str().unwrap(), WeightType::Unit);
+
+        assert_eq!(edges.len(), 0); // Eigenloop should be skipped
+    }
 }
