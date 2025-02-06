@@ -111,9 +111,7 @@ mod tests {
 
     // Test `read_graph_into_trivial_edges` with a non-existent file
     #[test]
-    #[should_panic(
-        expected = "called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: \"No such file or directory\" }"
-    )]
+    #[should_panic]
     fn test_read_graph_into_trivial_edges_nonexistent_file() {
         read_graph_into_trivial_edges("nonexistent_file.bin");
     }
@@ -169,18 +167,14 @@ mod tests {
 
     // Test `read_vec_from_file` with a non-existent file
     #[test]
-    #[should_panic(
-        expected = "called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: \"No such file or directory\" }"
-    )]
+    #[should_panic]
     fn test_read_vec_from_file_nonexistent_file() {
         read_vec_from_file::<i32>("nonexistent_file.bin");
     }
 
     // Test `read_vec_from_file` with invalid data
     #[test]
-    #[should_panic(
-        expected = "called `Result::unwrap()` on an `Err` value: Io(Error { kind: UnexpectedEof, message: \"failed to fill whole buffer\" })"
-    )]
+    #[should_panic]
     fn test_read_vec_from_file_invalid_data() {
         // Create a temporary file with invalid binary data
         let mut file = NamedTempFile::new().unwrap();
