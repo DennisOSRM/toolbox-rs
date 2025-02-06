@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/DennisOSRM/toolbox-rs/compare/v0.2.0...v0.2.1) - 2025-02-06
+
+### Other
+
+- Improve error handling and test coverage in inertial flow implementation ([#460](https://github.com/DennisOSRM/toolbox-rs/pull/460))
+- Increase test coverage for several files, fix top-k implementation ([#459](https://github.com/DennisOSRM/toolbox-rs/pull/459))
+- Add more test coverage to Huffman Coding implementation ([#458](https://github.com/DennisOSRM/toolbox-rs/pull/458))
+- Do not run full Rust workflow on push to every branch ([#457](https://github.com/DennisOSRM/toolbox-rs/pull/457))
+- Move common functionality into MaxFlow trait implementation ([#456](https://github.com/DennisOSRM/toolbox-rs/pull/456))
+- Dimacs coverage ([#455](https://github.com/DennisOSRM/toolbox-rs/pull/455))
+- Fix DDSG parsing, add more unit tests to cover data parsing ([#454](https://github.com/DennisOSRM/toolbox-rs/pull/454))
+- Upgrade clap, log, indicatif dependencies ([#453](https://github.com/DennisOSRM/toolbox-rs/pull/453))
+- Add more edge case tests to fenwick.rs ([#452](https://github.com/DennisOSRM/toolbox-rs/pull/452))
+- Cover ::default() in Dijkstra implementations ([#451](https://github.com/DennisOSRM/toolbox-rs/pull/451))
+- Add more test coverage to Huffman coding ([#450](https://github.com/DennisOSRM/toolbox-rs/pull/450))
+- Update rand requirement from 0.8.5 to 0.9.0 ([#446](https://github.com/DennisOSRM/toolbox-rs/pull/446))
+
 ## [0.2.0](https://github.com/DennisOSRM/toolbox-rs/compare/v0.1.6...v0.2.0) - 2025-01-31
 
 ### Other
