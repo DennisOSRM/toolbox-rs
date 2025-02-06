@@ -534,6 +534,9 @@ mod tests {
             heap.insert(*i, *i, *i);
         }
 
+        // never inserted
+        assert!(!heap.contains(16));
+
         // rebind list of input values as mutable
         let mut input = input;
         input.sort();

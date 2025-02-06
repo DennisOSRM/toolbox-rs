@@ -162,6 +162,9 @@ impl MaxFlow for EdmondsKarp {
 #[cfg(test)]
 mod tests {
 
+    use std::sync::atomic::AtomicI32;
+    use std::sync::Arc;
+
     use crate::edge::InputEdge;
     use crate::edmonds_karp::EdmondsKarp;
     use crate::max_flow::MaxFlow;
@@ -201,6 +204,34 @@ mod tests {
             .expect("assignment computation did not run");
 
         assert_eq!(assignment, bits![1, 1, 1, 0, 1, 0]);
+    }
+
+    #[test]
+    fn run_with_upper_bound_no_effect() {
+        let edges = vec![
+            InputEdge::new(0, 1, ResidualEdgeData::new(16)),
+            InputEdge::new(0, 2, ResidualEdgeData::new(13)),
+            InputEdge::new(1, 2, ResidualEdgeData::new(10)),
+            InputEdge::new(1, 3, ResidualEdgeData::new(12)),
+            InputEdge::new(2, 1, ResidualEdgeData::new(4)),
+            InputEdge::new(2, 4, ResidualEdgeData::new(14)),
+            InputEdge::new(3, 2, ResidualEdgeData::new(9)),
+            InputEdge::new(3, 5, ResidualEdgeData::new(20)),
+            InputEdge::new(4, 3, ResidualEdgeData::new(7)),
+            InputEdge::new(4, 5, ResidualEdgeData::new(4)),
+        ];
+
+        let source = 0;
+        let target = 5;
+        let mut max_flow_solver = EdmondsKarp::from_edge_list(edges, source, target);
+        let upper_bound = Arc::new(AtomicI32::new(1));
+        max_flow_solver.run_with_upper_bound(upper_bound);
+
+        // it's OK to expect the solver to have run
+        let max_flow = max_flow_solver
+            .max_flow()
+            .expect("max flow computation did not run");
+        assert_eq!(23, max_flow);
     }
 
     #[test]
