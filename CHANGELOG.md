@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2](https://github.com/DennisOSRM/toolbox-rs/compare/v0.2.1...v0.2.2) - 2025-02-09
+
+### Other
+
+- Cover direction conversion in unit tests ([#464](https://github.com/DennisOSRM/toolbox-rs/pull/464))
+- Add implementation of single linked list ([#463](https://github.com/DennisOSRM/toolbox-rs/pull/463))
+- Add tests to cover metis file format ([#461](https://github.com/DennisOSRM/toolbox-rs/pull/461))
+
 ## [0.2.1](https://github.com/DennisOSRM/toolbox-rs/compare/v0.2.0...v0.2.1) - 2025-02-06
 
 ### Other
