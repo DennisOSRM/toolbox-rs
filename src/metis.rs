@@ -208,7 +208,7 @@ mod tests {
         assert!(matches!(Direction::try_from(1), Ok(Direction::Forward)));
         assert!(matches!(Direction::try_from(2), Ok(Direction::Reverse)));
         assert!(matches!(Direction::try_from(3), Ok(Direction::Closed)));
-        
+
         // test invalid input values
         assert!(Direction::try_from(-1).is_err());
         assert!(Direction::try_from(4).is_err());
