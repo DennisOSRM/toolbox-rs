@@ -92,7 +92,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
-    fn test_read_graph_valid() {
+    fn read_graph_valid() {
         let graph_content = "4 8\n3 2\n2 3\n1 3\n1 2\n";
         let tmp_file = NamedTempFile::new().unwrap();
         write(tmp_file.path(), graph_content).unwrap();
@@ -151,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_coordinates_valid() {
+    fn read_coordinates_valid() {
         let coord_content = "1234567 4567890\n2345678 5678901\n";
         let tmp_file = NamedTempFile::new().unwrap();
         write(tmp_file.path(), coord_content).unwrap();
@@ -166,13 +166,13 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn test_read_graph_invalid_file() {
+    fn read_graph_invalid_file() {
         read_graph::<usize>("nonexistent_file.txt", WeightType::Unit);
     }
 
     #[test]
     #[should_panic]
-    fn test_read_graph_invalid_format() {
+    fn read_graph_invalid_format() {
         let graph_content = "not a number\n1 2\n";
         let tmp_file = NamedTempFile::new().unwrap();
         write(tmp_file.path(), graph_content).unwrap();
@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn test_read_graph_node_out_of_bounds() {
+    fn read_graph_node_out_of_bounds() {
         let graph_content = "2 1\n3\n1\n"; // Node 3 exceeds number_of_nodes
         let tmp_file = NamedTempFile::new().unwrap();
         write(tmp_file.path(), graph_content).unwrap();
@@ -191,7 +191,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_graph_skip_eigenloops() {
+    fn read_graph_skip_eigenloops() {
         let graph_content = "2 1\n1 1\n2\n";
         let tmp_file = NamedTempFile::new().unwrap();
         write(tmp_file.path(), graph_content).unwrap();
@@ -199,5 +199,26 @@ mod tests {
         let edges = read_graph::<usize>(tmp_file.path().to_str().unwrap(), WeightType::Unit);
 
         assert_eq!(edges.len(), 0); // Eigenloop should be skipped
+    }
+
+    #[test]
+    fn direction_try_from() {
+        // test valid input values
+        assert!(matches!(Direction::try_from(0), Ok(Direction::Both)));
+        assert!(matches!(Direction::try_from(1), Ok(Direction::Forward)));
+        assert!(matches!(Direction::try_from(2), Ok(Direction::Reverse)));
+        assert!(matches!(Direction::try_from(3), Ok(Direction::Closed)));
+        
+        // test invalid input values
+        assert!(Direction::try_from(-1).is_err());
+        assert!(Direction::try_from(4).is_err());
+    }
+
+    #[test]
+    fn direction_as_i32() {
+        assert_eq!(Direction::Both as i32, 0);
+        assert_eq!(Direction::Forward as i32, 1);
+        assert_eq!(Direction::Reverse as i32, 2);
+        assert_eq!(Direction::Closed as i32, 3);
     }
 }
