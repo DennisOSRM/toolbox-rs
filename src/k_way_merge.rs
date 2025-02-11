@@ -1,11 +1,19 @@
 use std::iter::Iterator;
 use std::{cmp::Reverse, collections::BinaryHeap};
 
-// TODO: add trait to represent merge tree
-// trait MergeTree<T> {
-//     fn push(&mut self, t: T);
-//     fn pop(&mut self) -> Option<T>;
-// }
+pub trait MergeTree<T> {
+    /// Pushes an item onto the merge tree
+    fn push(&mut self, item: T);
+
+    /// Removes and returns the minimum item from the tree
+    fn pop(&mut self) -> Option<T>;
+
+    /// Returns true if the tree is empty
+    fn is_empty(&self) -> bool;
+
+    /// Returns the number of items in the tree
+    fn len(&self) -> usize;
+}
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct Entry<T> {
