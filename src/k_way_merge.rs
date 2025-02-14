@@ -3,10 +3,10 @@ use std::{cmp::Reverse, collections::BinaryHeap};
 
 pub trait MergeTree<T> {
     /// Pushes an item onto the merge tree
-    fn push(&mut self, item: T);
+    fn push(&mut self, item: MergeEntry<T>);
 
     /// Removes and returns the minimum item from the tree
-    fn pop(&mut self) -> Option<T>;
+    fn pop(&mut self) -> Option<MergeEntry<T>>;
 
     /// Returns true if the tree is empty
     fn is_empty(&self) -> bool;
@@ -15,14 +15,33 @@ pub trait MergeTree<T> {
     fn len(&self) -> usize;
 }
 
+// impl<T: Ord> MergeTree<T> for BinaryHeap<T> {
+//     fn push(&mut self, item: T) {
+//         self.push(item);
+//     }
+
+//     fn pop(&mut self) -> Option<T> {
+//         self.pop()
+//     }
+
+//     fn is_empty(&self) -> bool {
+//         self.is_empty()
+//     }
+
+//     fn len(&self) -> usize {
+//         self.len()
+//     }
+// }
+
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
-struct Entry<T> {
-    item: T,
-    index: usize,
+#[derive(Clone, Debug)]
+pub struct MergeEntry<T> {
+    pub item: T,
+    pub index: usize,
 }
 
 pub struct KWayMergeIterator<'a, T, I: Iterator<Item = T>> {
-    heap: BinaryHeap<Reverse<Entry<T>>>,
+    heap: BinaryHeap<Reverse<MergeEntry<T>>>,
     list: &'a mut [I],
 }
 
@@ -31,7 +50,7 @@ impl<'a, T: std::cmp::Ord, I: Iterator<Item = T>> KWayMergeIterator<'a, T, I> {
         let mut heap = BinaryHeap::new();
         for (i, iterator) in list.iter_mut().enumerate() {
             if let Some(first) = iterator.next() {
-                heap.push(Reverse(Entry {
+                heap.push(Reverse(MergeEntry {
                     item: first,
                     index: i,
                 }));
@@ -45,12 +64,12 @@ impl<T: std::cmp::Ord, I: Iterator<Item = T>> Iterator for KWayMergeIterator<'_,
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let Reverse(Entry {
+        let Reverse(MergeEntry {
             item: value,
             index: list,
         }) = self.heap.pop()?;
         if let Some(next) = self.list[list].next() {
-            self.heap.push(Reverse(Entry {
+            self.heap.push(Reverse(MergeEntry {
                 item: next,
                 index: list,
             }));
