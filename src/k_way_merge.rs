@@ -33,8 +33,7 @@ pub trait MergeTree<T> {
 //     }
 // }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
-#[derive(Clone, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Debug)]
 pub struct MergeEntry<T> {
     pub item: T,
     pub index: usize,
