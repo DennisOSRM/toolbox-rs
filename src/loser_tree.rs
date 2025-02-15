@@ -1,8 +1,6 @@
-use std::cmp::Ordering;
-
 use crate::k_way_merge::{MergeEntry, MergeTree};
 
-pub struct LoserTree<T: Clone>
+pub struct LoserTree<T>
 where
     MergeEntry<T>: Clone,
 {
@@ -26,17 +24,18 @@ impl<T: Clone + Ord + PartialOrd> LoserTree<T> {
 
     /// Play a match between two leaves and return the index of the winner
     fn play_match(&mut self, pos1: usize, pos2: usize) -> usize {
-        let val1 = &self.leaves[pos1];
-        let val2 = &self.leaves[pos2];
-
-        match (val1, val2) {
-            (Some(v1), Some(v2)) => match v1.cmp(v2) {
-                Ordering::Greater => pos1,
-                Ordering::Less | Ordering::Equal => pos2,
+        match &self.leaves[pos1] {
+            None => pos2,
+            Some(v1) => match &self.leaves[pos2] {
+                None => pos1,
+                Some(v2) => {
+                    if v1 > v2 {
+                        pos1
+                    } else {
+                        pos2
+                    }
+                }
             },
-            (Some(_), None) => pos1,
-            (None, Some(_)) => pos2,
-            (None, None) => pos1,
         }
     }
 
