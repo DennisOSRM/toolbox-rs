@@ -16,8 +16,8 @@ impl<T: Clone + Ord + PartialOrd> LoserTree<T> {
     pub fn new(capacity: usize) -> Self {
         let size = capacity.next_power_of_two();
         Self {
-            losers: Vec::with_capacity(size - 1),
-            leaves: Vec::with_capacity(size),
+            losers: vec![0; size - 1],
+            leaves: vec![None; size],
             winner: 0,
         }
     }
