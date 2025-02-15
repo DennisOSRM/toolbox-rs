@@ -2,7 +2,7 @@ use crate::k_way_merge::{MergeEntry, MergeTree};
 
 pub struct LoserTree<T>
 where
-    MergeEntry<T>: Clone,
+    T: Ord,
 {
     /// array of loser indices
     losers: Vec<usize>,
