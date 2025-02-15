@@ -30,6 +30,7 @@ pub mod k_way_merge;
 pub mod kruskal;
 pub mod level_directory;
 pub mod linked_list;
+pub mod loser_tree;
 pub mod lru;
 pub mod math;
 pub mod max_flow;
