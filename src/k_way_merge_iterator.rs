@@ -45,7 +45,7 @@ impl<T: std::cmp::Ord, I: Iterator<Item = T>, M: MergeTree<T>> Iterator
 mod test {
     use std::collections::BinaryHeap;
 
-    use crate::k_way_merge::MergeEntry;
+    use crate::k_way_merge_iterator::MergeEntry;
 
     #[test]
     fn four_way_merge() {

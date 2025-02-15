@@ -26,7 +26,7 @@ pub mod great_circle;
 pub mod huffman_code;
 pub mod inertial_flow;
 pub mod io;
-pub mod k_way_merge;
+pub mod k_way_merge_iterator;
 pub mod kruskal;
 pub mod level_directory;
 pub mod linked_list;
