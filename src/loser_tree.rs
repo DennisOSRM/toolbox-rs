@@ -31,8 +31,8 @@ impl<T: Clone + Ord + PartialOrd> LoserTree<T> {
 
         match (val1, val2) {
             (Some(v1), Some(v2)) => match v1.cmp(v2) {
-                Ordering::Less | Ordering::Equal => pos1,
-                Ordering::Greater => pos2,
+                Ordering::Greater => pos1,
+                Ordering::Less | Ordering::Equal => pos2,
             },
             (Some(_), None) => pos1,
             (None, Some(_)) => pos2,
@@ -117,7 +117,7 @@ impl<T: Ord + std::clone::Clone> MergeTree<T> for LoserTree<T> {
     fn pop(&mut self) -> std::option::Option<MergeEntry<T>> {
         let winner = self.leaves[self.winner].take();
         if winner.is_some() {
-            self.rebuild_full_tree();
+            self.rebuild_path(self.winner); // O(log n) operation
         }
         winner
     }
