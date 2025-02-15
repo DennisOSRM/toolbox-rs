@@ -10,15 +10,23 @@ where
     leaves: Vec<Option<MergeEntry<T>>>,
     /// index of the winner
     winner: usize,
+    size: usize,
 }
 
 impl<T: Clone + Ord + PartialOrd> LoserTree<T> {
-    pub fn new(capacity: usize) -> Self {
+    pub fn with_capacity(capacity: usize) -> Self {
         let size = capacity.next_power_of_two();
+        let mut losers = Vec::with_capacity(size - 1);
+        let mut leaves = Vec::with_capacity(size);
+
+        // Vorinitialisierung
+        losers.resize(size - 1, 0);
+        leaves.resize(size, None);
         Self {
-            losers: vec![0; size - 1],
-            leaves: vec![None; size],
+            losers,
+            leaves,
             winner: 0,
+            size: 0,
         }
     }
 
@@ -108,25 +116,27 @@ impl<T: Clone + Ord + PartialOrd> LoserTree<T> {
 impl<T: Ord + std::clone::Clone> MergeTree<T> for LoserTree<T> {
     fn push(&mut self, item: MergeEntry<T>) {
         let index = item.index;
-        self.leaves[index].replace(item);
+        self.leaves[index] = Some(item);
 
         self.rebuild_path(index);
+        self.size += 1;
     }
 
     fn pop(&mut self) -> std::option::Option<MergeEntry<T>> {
         let winner = self.leaves[self.winner].take();
         if winner.is_some() {
+            self.size -= 1;
             self.rebuild_path(self.winner); // O(log n) operation
         }
         winner
     }
 
     fn is_empty(&self) -> bool {
-        self.leaves.iter().all(|x| x.is_none())
+        self.size == 0
     }
 
     fn len(&self) -> usize {
-        self.leaves.iter().filter(|x| x.is_some()).count()
+        self.size
     }
 }
 
@@ -136,7 +146,7 @@ mod tests {
 
     #[test]
     fn test_new_loser_tree() {
-        let tree: LoserTree<i32> = LoserTree::new(3);
+        let tree: LoserTree<i32> = LoserTree::with_capacity(3);
         assert_eq!(tree.leaves.len(), 4); // next higher power of 2
         assert_eq!(tree.losers.len(), 3); // internal nodes
         assert!(tree.is_empty());
@@ -145,7 +155,7 @@ mod tests {
 
     #[test]
     fn test_push_and_pop() {
-        let mut tree = LoserTree::new(4);
+        let mut tree = LoserTree::with_capacity(4);
 
         // Test Push
         tree.push(MergeEntry { item: 3, index: 0 });
@@ -168,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_partial_fill() {
-        let mut tree = LoserTree::new(4);
+        let mut tree = LoserTree::with_capacity(4);
 
         tree.push(MergeEntry { item: 2, index: 0 });
         tree.push(MergeEntry { item: 1, index: 1 });
@@ -182,7 +192,7 @@ mod tests {
 
     #[test]
     fn test_rebuild_after_pop() {
-        let mut tree = LoserTree::new(4);
+        let mut tree = LoserTree::with_capacity(4);
 
         tree.push(MergeEntry { item: 3, index: 0 });
         tree.push(MergeEntry { item: 1, index: 1 });
