@@ -1,66 +1,14 @@
-use std::cmp::Ordering;
-use std::collections::BinaryHeap;
 use std::iter::Iterator;
 
-pub trait MergeTree<T> {
-    /// Pushes an item onto the merge tree
-    fn push(&mut self, item: MergeEntry<T>);
+use crate::{merge_entry::MergeEntry, merge_tree::MergeTree};
 
-    /// Removes and returns the minimum item from the tree
-    fn pop(&mut self) -> Option<MergeEntry<T>>;
-
-    /// Returns true if the tree is empty
-    fn is_empty(&self) -> bool;
-
-    /// Returns the number of items in the tree
-    fn len(&self) -> usize;
-}
-
-impl<T: Ord> MergeTree<T> for BinaryHeap<MergeEntry<T>> {
-    fn push(&mut self, item: MergeEntry<T>) {
-        self.push(item);
-    }
-
-    fn pop(&mut self) -> std::option::Option<MergeEntry<T>> {
-        self.pop()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.is_empty()
-    }
-
-    fn len(&self) -> usize {
-        self.len()
-    }
-}
-
-#[derive(PartialEq, Eq, Clone, Debug)]
-pub struct MergeEntry<T> {
-    pub item: T,
-    pub index: usize,
-}
-
-impl<T: Ord> PartialOrd for MergeEntry<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<T: Ord> Ord for MergeEntry<T> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        // reverse ordering for a min heap
-        other.item.cmp(&self.item)
-    }
-}
-
-pub struct KWayMergeIterator<'a, T, I: Iterator<Item = T>> {
-    heap: BinaryHeap<MergeEntry<T>>,
+pub struct KWayMergeIterator<'a, T, I: Iterator<Item = T>, M: MergeTree<T>> {
+    heap: M,
     list: &'a mut [I],
 }
 
-impl<'a, T: std::cmp::Ord, I: Iterator<Item = T>> KWayMergeIterator<'a, T, I> {
-    pub fn new(list: &'a mut [I]) -> Self {
-        let mut heap = BinaryHeap::new();
+impl<'a, T: std::cmp::Ord, I: Iterator<Item = T>, M: MergeTree<T>> KWayMergeIterator<'a, T, I, M> {
+    pub fn new(list: &'a mut [I], mut heap: M) -> Self {
         for (i, iterator) in list.iter_mut().enumerate() {
             if let Some(first) = iterator.next() {
                 heap.push(MergeEntry {
@@ -73,7 +21,9 @@ impl<'a, T: std::cmp::Ord, I: Iterator<Item = T>> KWayMergeIterator<'a, T, I> {
     }
 }
 
-impl<T: std::cmp::Ord, I: Iterator<Item = T>> Iterator for KWayMergeIterator<'_, T, I> {
+impl<T: std::cmp::Ord, I: Iterator<Item = T>, M: MergeTree<T>> Iterator
+    for KWayMergeIterator<'_, T, I, M>
+{
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -95,7 +45,7 @@ impl<T: std::cmp::Ord, I: Iterator<Item = T>> Iterator for KWayMergeIterator<'_,
 mod test {
     use std::collections::BinaryHeap;
 
-    use crate::k_way_merge::MergeEntry;
+    use crate::k_way_merge_iterator::MergeEntry;
 
     #[test]
     fn four_way_merge() {
@@ -105,7 +55,8 @@ mod test {
             vec![11, 13, 15, 17, 19].into_iter(),
             vec![12, 14, 16, 18, 20].into_iter(),
         ];
-        let k_way_merge = super::KWayMergeIterator::new(&mut list);
+        let heap = BinaryHeap::new();
+        let k_way_merge = super::KWayMergeIterator::new(&mut list, heap);
         let result: Vec<_> = k_way_merge.collect();
         assert_eq!(
             result,
@@ -120,7 +71,8 @@ mod test {
             vec![2, 4, 8, 11].into_iter(),
             vec![9, 10].into_iter(),
         ];
-        let k_way_merge = super::KWayMergeIterator::new(&mut list);
+        let heap = BinaryHeap::new();
+        let k_way_merge = super::KWayMergeIterator::new(&mut list, heap);
         let result: Vec<_> = k_way_merge.collect();
         assert_eq!(result, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
     }
@@ -128,7 +80,8 @@ mod test {
     #[test]
     fn merge_of_empty_sequences() {
         let mut list: Vec<std::vec::IntoIter<u64>> = vec![vec![].into_iter(), vec![].into_iter()];
-        let k_way_merge = super::KWayMergeIterator::new(&mut list);
+        let heap = BinaryHeap::new();
+        let k_way_merge = super::KWayMergeIterator::new(&mut list, heap);
         let result: Vec<_> = k_way_merge.collect();
         assert_eq!(result, Vec::<u64>::new());
     }

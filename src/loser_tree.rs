@@ -1,4 +1,4 @@
-use crate::k_way_merge::{MergeEntry, MergeTree};
+use crate::{merge_entry::MergeEntry, merge_tree::MergeTree};
 
 pub struct LoserTree<T>
 where
@@ -19,7 +19,6 @@ impl<T: Clone + Ord + PartialOrd> LoserTree<T> {
         let mut losers = Vec::with_capacity(size - 1);
         let mut leaves = Vec::with_capacity(size);
 
-        // Vorinitialisierung
         losers.resize(size - 1, 0);
         leaves.resize(size, None);
         Self {
@@ -30,50 +29,20 @@ impl<T: Clone + Ord + PartialOrd> LoserTree<T> {
         }
     }
 
-    /// Play a match between two leaves and return the index of the winner
+    /// play a match between two leaves and return the index of the winner
+    #[inline]
     fn play_match(&mut self, pos1: usize, pos2: usize) -> usize {
-        match &self.leaves[pos1] {
-            None => pos2,
-            Some(v1) => match &self.leaves[pos2] {
-                None => pos1,
-                Some(v2) => {
-                    if v1 > v2 {
-                        pos1
-                    } else {
-                        pos2
-                    }
-                }
+        use std::cmp::Ordering;
+
+        match (&self.leaves[pos1], &self.leaves[pos2]) {
+            (None, _) => pos2,
+            (_, None) => pos1,
+            (Some(v1), Some(v2)) => match v1.cmp(v2) {
+                Ordering::Greater => pos1,
+                _ => pos2,
             },
         }
     }
-
-    /// Rebuild the full tree from the leaves to the root
-    // pub fn rebuild_full_tree(&mut self) {
-    //     let n = self.leaves.len();
-    //     let internal_nodes = n - 1;
-
-    //     // play all matches bottom-up
-    //     for pos in (0..internal_nodes).rev() {
-    //         let left = 2 * pos + 1;
-    //         let right = 2 * pos + 2;
-
-    //         let winner = self.play_match(
-    //             if left >= internal_nodes {
-    //                 left - internal_nodes
-    //             } else {
-    //                 self.losers[left]
-    //             },
-    //             if right >= internal_nodes {
-    //                 right - internal_nodes
-    //             } else {
-    //                 self.losers[right]
-    //             },
-    //         );
-    //         self.losers[pos] = winner;
-    //     }
-
-    //     self.winner = self.losers[0];
-    // }
 
     /// rebuild only the path from leaf i to the root
     fn rebuild_path(&mut self, mut i: usize) {
@@ -81,7 +50,7 @@ impl<T: Clone + Ord + PartialOrd> LoserTree<T> {
         let internal_nodes = n - 1;
 
         // convert leaf index to internal node index
-        i = i + internal_nodes;
+        i += internal_nodes;
 
         // walk up the tree till the root
         while i > 0 {
@@ -111,10 +80,21 @@ impl<T: Clone + Ord + PartialOrd> LoserTree<T> {
 
         self.winner = self.losers[0];
     }
+
+    pub fn clear(&mut self) {
+        self.size = 0;
+        self.winner = 0;
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.leaves.len()
+    }
 }
 
 impl<T: Ord + std::clone::Clone> MergeTree<T> for LoserTree<T> {
     fn push(&mut self, item: MergeEntry<T>) {
+        debug_assert!(item.index < self.leaves.len(), "index out of bounds");
+
         let index = item.index;
         self.leaves[index] = Some(item);
 
@@ -157,7 +137,6 @@ mod tests {
     fn test_push_and_pop() {
         let mut tree = LoserTree::with_capacity(4);
 
-        // Test Push
         tree.push(MergeEntry { item: 3, index: 0 });
         tree.push(MergeEntry { item: 1, index: 1 });
         tree.push(MergeEntry { item: 4, index: 2 });
@@ -166,7 +145,7 @@ mod tests {
         assert_eq!(tree.len(), 4);
         assert!(!tree.is_empty());
 
-        // Items shall be sorted
+        // items shall be sorted
         assert_eq!(tree.pop().unwrap().item, 1);
         assert_eq!(tree.pop().unwrap().item, 2);
         assert_eq!(tree.pop().unwrap().item, 3);
@@ -204,5 +183,53 @@ mod tests {
         assert_eq!(tree.pop().unwrap().item, 2);
         assert_eq!(tree.pop().unwrap().item, 3);
         assert_eq!(tree.pop().unwrap().item, 4);
+    }
+
+    #[test]
+    fn test_merge_tree_interface() {
+        let mut tree = LoserTree::with_capacity(4);
+
+        // Test empty state
+        assert!(tree.is_empty());
+        assert_eq!(tree.len(), 0);
+        assert!(tree.pop().is_none());
+
+        // Test pushing elements
+        tree.push(MergeEntry { item: 3, index: 0 });
+        assert_eq!(tree.len(), 1);
+        assert!(!tree.is_empty());
+
+        tree.push(MergeEntry { item: 1, index: 1 });
+        assert_eq!(tree.len(), 2);
+
+        // Test popping elements in order
+        assert_eq!(tree.pop().unwrap().item, 1);
+        assert_eq!(tree.len(), 1);
+
+        assert_eq!(tree.pop().unwrap().item, 3);
+        assert_eq!(tree.len(), 0);
+        assert!(tree.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "index out of bounds")]
+    fn test_push_invalid_index() {
+        let mut tree = LoserTree::with_capacity(2);
+        tree.push(MergeEntry { item: 1, index: 2 }); // index out of bounds
+    }
+
+    #[test]
+    fn test_clear() {
+        let mut tree = LoserTree::with_capacity(4);
+        tree.push(MergeEntry { item: 1, index: 0 });
+        tree.clear();
+        assert!(tree.is_empty());
+        assert_eq!(tree.len(), 0);
+    }
+
+    #[test]
+    fn test_capacity() {
+        let tree = LoserTree::<i32>::with_capacity(3);
+        assert_eq!(tree.capacity(), 4); // nächste Zweierpotenz
     }
 }

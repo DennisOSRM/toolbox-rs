@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, BenchmarkId, Criterion};
 use rand::{seq::SliceRandom, Rng};
-use toolbox_rs::k_way_merge::KWayMergeIterator;
+use toolbox_rs::{k_way_merge_iterator::KWayMergeIterator, loser_tree::LoserTree};
 
 /// Create a list of random runs of numbers.
 ///
@@ -27,15 +27,16 @@ fn create_random_runs(s: usize, k: usize) -> Vec<impl Iterator<Item = i32>> {
     runs
 }
 
-fn k_way_merge_benchmark(c: &mut Criterion) {
-    let mut group = c.benchmark_group("k_way_merge");
+fn k_way_merge_heap(c: &mut Criterion) {
+    let mut group = c.benchmark_group("k_way_merge w/ BinaryHeap");
 
     for k in [10, 100, 1000] {
         group.bench_with_input(BenchmarkId::from_parameter(k), &k, |b, &k| {
             b.iter_with_setup(
                 || create_random_runs(1_000_000, k),
                 |mut list| {
-                    let k_way_merge = KWayMergeIterator::new(black_box(&mut list));
+                    let heap = std::collections::BinaryHeap::new();
+                    let k_way_merge = KWayMergeIterator::new(black_box(&mut list), heap);
                     black_box(k_way_merge.collect::<Vec<_>>())
                 },
             )
@@ -44,4 +45,23 @@ fn k_way_merge_benchmark(c: &mut Criterion) {
 
     group.finish();
 }
-criterion_group!(k_way_merge, k_way_merge_benchmark,);
+
+fn k_way_merge_loser_tree(c: &mut Criterion) {
+    let mut group = c.benchmark_group("k_way_merge w/ LoserTree");
+
+    for k in [10, 100, 1000] {
+        group.bench_with_input(BenchmarkId::from_parameter(k), &k, |b, &k| {
+            b.iter_with_setup(
+                || create_random_runs(1_000_000, k),
+                |mut list| {
+                    let heap = LoserTree::with_capacity(k);
+                    let k_way_merge = KWayMergeIterator::new(black_box(&mut list), heap);
+                    black_box(k_way_merge.collect::<Vec<_>>())
+                },
+            )
+        });
+    }
+
+    group.finish();
+}
+criterion_group!(k_way_merge, k_way_merge_heap, k_way_merge_loser_tree,);
