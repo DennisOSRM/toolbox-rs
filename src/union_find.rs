@@ -107,4 +107,35 @@ mod tests {
         // check that all sets have been merged into a single one
         assert_eq!(1, uf.number_of_sets);
     }
+
+    #[test]
+    fn test_number_of_sets() {
+        let mut uf = UnionFind::new(6);
+
+        // Initial state: 6 separate sets
+        assert_eq!(6, uf.number_of_sets());
+
+        // Unite elements 0 and 1 -> 5 sets
+        uf.union(0, 1);
+        assert_eq!(5, uf.number_of_sets());
+
+        // Unite elements 2 and 3 -> 4 sets
+        uf.union(2, 3);
+        assert_eq!(4, uf.number_of_sets());
+
+        // Unite elements 0 and 2 (merging two existing sets) -> 3 sets
+        uf.union(0, 2);
+        assert_eq!(3, uf.number_of_sets());
+
+        // Unite elements already in same set -> still 3 sets
+        uf.union(1, 3);
+        assert_eq!(3, uf.number_of_sets());
+
+        // Unite remaining elements
+        uf.union(4, 5);
+        assert_eq!(2, uf.number_of_sets());
+
+        uf.union(0, 4);
+        assert_eq!(1, uf.number_of_sets());
+    }
 }
