@@ -6,5 +6,6 @@ criterion_main!(
     benchmarks::fenwick::all_fenwick,
     benchmarks::great_circle::distances,
     benchmarks::k_way_merge::k_way_merge,
+    benchmarks::loser_tree::loser_tree_benches,
     benchmarks::radix_sort::all_sorts
 );
