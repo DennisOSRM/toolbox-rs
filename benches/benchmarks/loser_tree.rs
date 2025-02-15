@@ -29,7 +29,7 @@ fn loser_tree_benchmark(c: &mut Criterion) {
                 || {
                     // Create k sorted sequences of 1000 elements each
                     let sequences = create_benchmark_data(k, 1000);
-                    let mut tree = LoserTree::new(k);
+                    let mut tree = LoserTree::with_capacity(k);
 
                     // Initialize with first element from each sequence
                     for (idx, seq) in sequences.iter().enumerate() {
