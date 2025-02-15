@@ -1,7 +1,6 @@
 use criterion::{black_box, criterion_group, BenchmarkId, Criterion};
 use rand::{rng, Rng};
-use toolbox_rs::k_way_merge::{MergeEntry, MergeTree};
-use toolbox_rs::loser_tree::LoserTree;
+use toolbox_rs::{loser_tree::LoserTree, merge_entry::MergeEntry, merge_tree::MergeTree};
 
 /// Creates k sorted sequences of random numbers for benchmarking
 fn create_benchmark_data(k: usize, sequence_length: usize) -> Vec<Vec<i32>> {

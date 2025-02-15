@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, BenchmarkId, Criterion};
 use rand::{seq::SliceRandom, Rng};
-use toolbox_rs::k_way_merge::KWayMergeIterator;
+use toolbox_rs::k_way_merge_iterator::KWayMergeIterator;
 
 /// Create a list of random runs of numbers.
 ///
@@ -35,7 +35,8 @@ fn k_way_merge_benchmark(c: &mut Criterion) {
             b.iter_with_setup(
                 || create_random_runs(1_000_000, k),
                 |mut list| {
-                    let k_way_merge = KWayMergeIterator::new(black_box(&mut list));
+                    let heap = std::collections::BinaryHeap::new();
+                    let k_way_merge = KWayMergeIterator::new(black_box(&mut list), heap);
                     black_box(k_way_merge.collect::<Vec<_>>())
                 },
             )
