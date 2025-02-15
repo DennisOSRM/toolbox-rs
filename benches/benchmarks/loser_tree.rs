@@ -69,4 +69,4 @@ fn loser_tree_benchmark(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(loser_tree_benches, loser_tree_benchmark);
+criterion_group!(loser_tree, loser_tree_benchmark);

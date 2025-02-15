@@ -1,4 +1,4 @@
-use crate::k_way_merge::{MergeEntry, MergeTree};
+use crate::{merge_entry::MergeEntry, merge_tree::MergeTree};
 
 pub struct LoserTree<T>
 where

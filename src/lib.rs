@@ -34,6 +34,8 @@ pub mod loser_tree;
 pub mod lru;
 pub mod math;
 pub mod max_flow;
+pub mod merge_entry;
+pub mod merge_tree;
 pub mod metis;
 pub mod one_iterator;
 pub mod one_to_many_dijkstra;
