@@ -41,32 +41,32 @@ impl<T: Clone + Ord + PartialOrd> LoserTree<T> {
     }
 
     /// Rebuild the full tree from the leaves to the root
-    fn rebuild_full_tree(&mut self) {
-        let n = self.leaves.len();
-        let internal_nodes = n - 1;
+    // pub fn rebuild_full_tree(&mut self) {
+    //     let n = self.leaves.len();
+    //     let internal_nodes = n - 1;
 
-        // play all matches bottom-up
-        for pos in (0..internal_nodes).rev() {
-            let left = 2 * pos + 1;
-            let right = 2 * pos + 2;
+    //     // play all matches bottom-up
+    //     for pos in (0..internal_nodes).rev() {
+    //         let left = 2 * pos + 1;
+    //         let right = 2 * pos + 2;
 
-            let winner = self.play_match(
-                if left >= internal_nodes {
-                    left - internal_nodes
-                } else {
-                    self.losers[left]
-                },
-                if right >= internal_nodes {
-                    right - internal_nodes
-                } else {
-                    self.losers[right]
-                },
-            );
-            self.losers[pos] = winner;
-        }
+    //         let winner = self.play_match(
+    //             if left >= internal_nodes {
+    //                 left - internal_nodes
+    //             } else {
+    //                 self.losers[left]
+    //             },
+    //             if right >= internal_nodes {
+    //                 right - internal_nodes
+    //             } else {
+    //                 self.losers[right]
+    //             },
+    //         );
+    //         self.losers[pos] = winner;
+    //     }
 
-        self.winner = self.losers[0];
-    }
+    //     self.winner = self.losers[0];
+    // }
 
     /// rebuild only the path from leaf i to the root
     fn rebuild_path(&mut self, mut i: usize) {
