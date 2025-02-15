@@ -25,8 +25,8 @@ mod tests {
 
     #[test]
     fn test_ordering() {
-        let e1 = MergeEntry{item: 1, index: 0};
-        let e2 = MergeEntry{item: 2, index: 1};
-        assert!(e1 > e2);  // Umgekehrte Ordnung für Min-Heap
+        let e1 = MergeEntry { item: 1, index: 0 };
+        let e2 = MergeEntry { item: 2, index: 1 };
+        assert!(e1 > e2); // Umgekehrte Ordnung für Min-Heap
     }
 }
