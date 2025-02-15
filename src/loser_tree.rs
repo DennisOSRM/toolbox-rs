@@ -30,18 +30,16 @@ impl<T: Clone + Ord + PartialOrd> LoserTree<T> {
     }
 
     /// play a match between two leaves and return the index of the winner
+    #[inline]
     fn play_match(&mut self, pos1: usize, pos2: usize) -> usize {
-        match &self.leaves[pos1] {
-            None => pos2,
-            Some(v1) => match &self.leaves[pos2] {
-                None => pos1,
-                Some(v2) => {
-                    if v1 > v2 {
-                        pos1
-                    } else {
-                        pos2
-                    }
-                }
+        use std::cmp::Ordering;
+
+        match (&self.leaves[pos1], &self.leaves[pos2]) {
+            (None, _) => pos2,
+            (_, None) => pos1,
+            (Some(v1), Some(v2)) => match v1.cmp(v2) {
+                Ordering::Greater => pos1,
+                _ => pos2,
             },
         }
     }
