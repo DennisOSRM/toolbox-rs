@@ -19,7 +19,6 @@
  * limitations under the License.
  */
 
-
 /// Decodes an encoded path string into a sequence of coordinates
 ///
 /// # Arguments
