@@ -24,7 +24,7 @@ impl LatLng {
 ///
 /// # Examples
 /// ```
-/// use toolbox::polyline::decode;
+/// use toolbox_rs::polyline::decode;
 ///
 /// let encoded = "_p~iF~ps|U_ulLnnqC_mqNvxq`@";
 /// let points = decode(encoded, 5);
@@ -70,7 +70,7 @@ pub fn decode(encoded_path: &str, precision: i32) -> Vec<[f64; 2]> {
 ///
 /// # Examples
 /// ```
-/// use toolbox::polyline::encode;
+/// use toolbox_rs::polyline::encode;
 ///
 /// let path = vec![[38.5, -120.2], [40.7, -120.95], [43.252, -126.453]];
 /// let encoded = encode(&path, 5);
@@ -161,12 +161,12 @@ mod tests {
     ];
 
     #[test]
-    fn test_decode_empty() {
+    fn decode_empty() {
         assert!(decode("", 5).is_empty());
     }
 
     #[test]
-    fn test_decode_default() {
+    fn decode_default() {
         let decoded = decode("_p~iF~ps|U_ulLnnqC_mqNvxq`@", 5);
         for (i, point) in DEFAULT.iter().enumerate() {
             assert!((decoded[i][0] - point[0]).abs() < 1e-5);
@@ -175,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_custom_precision() {
+    fn decode_custom_precision() {
         let decoded = decode("_izlhA~rlgdF_{geC~ywl@_kwzCn`{nI", 6);
         for (i, point) in DEFAULT.iter().enumerate() {
             assert!((decoded[i][0] - point[0]).abs() < 1e-6);
@@ -184,7 +184,7 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_precision_zero() {
+    fn decode_precision_zero() {
         let decoded = decode("mAnFC@CH", 0);
         for (i, point) in DEFAULT_ROUNDED.iter().enumerate() {
             assert!((decoded[i][0] - point[0]).abs() < 1.0);
@@ -193,14 +193,14 @@ mod tests {
     }
 
     #[test]
-    fn test_roundtrip() {
+    fn roundtrip() {
         let encoded = "gcneIpgxzRcDnBoBlEHzKjBbHlG`@`IkDxIiKhKoMaLwTwHeIqHuAyGXeB~Ew@fFjAtIzExF";
         let decoded = decode(encoded, 5);
         assert_eq!(encode(&decoded, 5), encoded);
     }
 
     #[test]
-    fn test_roundtrip_slashes() {
+    fn roundtrip_slashes() {
         let encoded = encode(&SLASHES, 5);
         let decoded = decode(&encoded, 5);
         for (i, point) in SLASHES.iter().enumerate() {
@@ -210,37 +210,37 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_empty() {
+    fn encode_empty() {
         assert_eq!(encode(&[], 5), "");
     }
 
     #[test]
-    fn test_encode_default() {
+    fn encode_default() {
         assert_eq!(encode(&DEFAULT, 5), "_p~iF~ps|U_ulLnnqC_mqNvxq`@");
     }
 
     #[test]
-    fn test_encode_rounding() {
+    fn encode_rounding() {
         assert_eq!(encode(&ROUNDING, 5), "?A?@");
     }
 
     #[test]
-    fn test_encode_negative() {
+    fn encode_negative() {
         assert_eq!(encode(&NEGATIVE, 5), "ss`{E~kbkTeAQw@J");
     }
 
     #[test]
-    fn test_encode_custom_precision() {
+    fn encode_custom_precision() {
         assert_eq!(encode(&DEFAULT, 6), "_izlhA~rlgdF_{geC~ywl@_kwzCn`{nI");
     }
 
     #[test]
-    fn test_encode_precision_zero() {
+    fn encode_precision_zero() {
         assert_eq!(encode(&DEFAULT, 0), "mAnFC@CH");
     }
 
     #[test]
-    fn test_encode_negative_values() {
+    fn encode_negative_values() {
         let point = [[-107.3741825, 0.0]];
         let encoded = encode(&point, 7);
         let decoded = decode(&encoded, 7);
@@ -248,7 +248,7 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_decode() {
+    fn encode_decode() {
         let points = vec![[38.5, -120.2], [40.7, -120.95], [43.252, -126.453]];
         let encoded = encode(&points, 5);
         assert_eq!(encoded, "_p~iF~ps|U_ulLnnqC_mqNvxq`@");
