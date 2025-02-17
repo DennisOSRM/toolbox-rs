@@ -79,8 +79,12 @@ pub fn decode(encoded_path: &str, precision: i32) -> Vec<[f64; 2]> {
 /// ```
 pub fn encode(path: &[[f64; 2]], precision: i32) -> String {
     let factor = 10f64.powi(precision);
-    let transform =
-        |point: &[f64; 2]| -> [i32; 2] { [round(point[0] * factor), round(point[1] * factor)] };
+    let transform = |point: &[f64; 2]| -> [i32; 2] {
+        [
+            (point[0] * factor).round() as i32,
+            (point[1] * factor).round() as i32,
+        ]
+    };
 
     polyline_encode_line(path, transform)
 }
@@ -129,17 +133,6 @@ fn polyline_encode_unsigned(mut value: i32, result: &mut Vec<char>) {
         value >>= 5;
     }
     result.push((value + 63) as u8 as char);
-}
-
-fn round(v: f64) -> i32 {
-    let abs = v.abs();
-    let floor = abs.floor();
-    let rounded = if abs - floor >= 0.5 {
-        floor + 1.0
-    } else {
-        floor
-    };
-    (rounded * if v >= 0.0 { 1.0 } else { -1.0 }) as i32
 }
 
 #[cfg(test)]
