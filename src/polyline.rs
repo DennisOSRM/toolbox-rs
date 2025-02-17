@@ -41,7 +41,7 @@ pub fn decode(encoded_path: &str, precision: i32) -> Vec<[f64; 2]> {
     let mut lng = 0;
 
     while index < len {
-        let (result, new_index) = decode_unsigned(encoded_path, index);
+        let (result, new_index) = decode_unsigned(encoded_path.as_bytes(), index);
         index = new_index;
         lat += if result & 1 != 0 {
             !(result >> 1)
@@ -49,7 +49,7 @@ pub fn decode(encoded_path: &str, precision: i32) -> Vec<[f64; 2]> {
             result >> 1
         };
 
-        let (result, new_index) = decode_unsigned(encoded_path, index);
+        let (result, new_index) = decode_unsigned(encoded_path.as_bytes(), index);
         index = new_index;
         lng += if result & 1 != 0 {
             !(result >> 1)
@@ -89,12 +89,13 @@ pub fn encode(path: &[[f64; 2]], precision: i32) -> String {
     polyline_encode_line(path, transform)
 }
 
-fn decode_unsigned(encoded: &str, mut index: usize) -> (i32, usize) {
+#[inline(always)]
+fn decode_unsigned(encoded: &[u8], mut index: usize) -> (i32, usize) {
     let mut result = 1;
     let mut shift = 0;
 
-    loop {
-        let b = (encoded.as_bytes()[index] as i32) - 63 - 1;
+    while let Some(&byte) = encoded.get(index) {
+        let b = (byte as i32) - 63 - 1;
         index += 1;
         result += b << shift;
         shift += 5;
