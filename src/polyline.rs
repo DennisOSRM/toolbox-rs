@@ -137,6 +137,133 @@ fn polyline_encode_unsigned(mut value: i32, result: &mut Vec<char>) {
     result.push((value + 63) as u8 as char);
 }
 
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+use std::arch::aarch64::*;
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+use std::arch::x86_64::*;
+
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+#[repr(align(32))]
+struct AlignedFactors {
+    scale: [f64; 4],
+    inv_scale: [f64; 4],
+}
+
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+impl<T: Into<f64>> From<T> for AlignedFactors {
+    fn from(factor: T) -> Self {
+        let f = factor.into();
+        Self {
+            scale: [f; 4],
+            inv_scale: [1.0 / f; 4],
+        }
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+unsafe fn encode_points_simd(points: &[[f64; 2]], precision: i32) -> Vec<i32> {
+    let factor = 10f64.powi(precision);
+    let aligned_factors = AlignedFactors::from(factor);
+    let factors = _mm256_load_pd(aligned_factors.scale.as_ptr());
+
+    let mut result = Vec::with_capacity(points.len() * 2);
+    let chunks = points.chunks_exact(2);
+    let remainder = chunks.remainder();
+
+    for chunk in chunks {
+        let coords = _mm256_loadu_pd(chunk.as_ptr() as *const f64);
+        let scaled = _mm256_mul_pd(coords, factors);
+        let rounded = _mm256_round_pd(scaled, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+
+        let mut values = [0i32; 4];
+        _mm256_store_pd(values.as_mut_ptr() as *mut f64, rounded);
+
+        result.extend_from_slice(&values);
+    }
+
+    // Verarbeite übrige Punkte
+    for point in remainder {
+        result.push((point[0] * factor).round() as i32);
+        result.push((point[1] * factor).round() as i32);
+    }
+
+    result
+}
+
+// ARM NEON Implementation
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+unsafe fn encode_points_simd(points: &[[f64; 2]], precision: i32) -> Vec<i32> {
+    let factor = 10f64.powi(precision);
+    let aligned_factors = AlignedFactors::from(factor);
+
+    let mut result = Vec::with_capacity(points.len() * 2);
+    let chunks = points.chunks_exact(2);
+    let remainder = chunks.remainder();
+
+    for chunk in chunks {
+        // Lade 2 Punkte (4 f64-Werte)
+        let coords1 = vld1q_f64(chunk[0].as_ptr());
+        let coords2 = vld1q_f64(chunk[1].as_ptr());
+
+        // Multipliziere mit Faktor
+        let scaled1 = vmulq_n_f64(coords1, factor);
+        let scaled2 = vmulq_n_f64(coords2, factor);
+
+        // round to nearest integer
+        let rounded1 = vcvtnq_s64_f64(scaled1);
+        let rounded2 = vcvtnq_s64_f64(scaled2);
+
+        // store rounded values
+        let mut values1 = [0i32; 2];
+        let mut values2 = [0i32; 2];
+        vst1q_s32(values1.as_mut_ptr(), rounded1);
+        vst1q_s32(values2.as_mut_ptr(), rounded2);
+
+        result.extend_from_slice(&values1);
+        result.extend_from_slice(&values2);
+    }
+
+    // process remaining points
+    for point in remainder {
+        result.push(round(point[0] * factor));
+        result.push(round(point[1] * factor));
+    }
+
+    result
+}
+
+pub fn encode_simd(path: &[[f64; 2]], precision: i32) -> String {
+    if path.is_empty() {
+        return String::new();
+    }
+
+    #[cfg(any(
+        all(target_arch = "x86_64", target_feature = "avx2"),
+        all(target_arch = "aarch64", target_feature = "neon")
+    ))]
+    {
+        let mut result = Vec::new();
+        let mut prev = [0, 0];
+
+        unsafe {
+            let values = encode_points_simd(path, precision);
+            for chunk in values.chunks(2) {
+                let delta = [chunk[0] - prev[0], chunk[1] - prev[1]];
+                polyline_encode_signed(delta[0], &mut result);
+                polyline_encode_signed(delta[1], &mut result);
+                prev = [chunk[0], chunk[1]];
+            }
+        }
+
+        return result.into_iter().collect();
+    }
+
+    // fallback to scalar implementation
+    encode(path, precision)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,5 +381,27 @@ mod tests {
             assert!((decoded[i][0] - point[0]).abs() < 1e-10);
             assert!((decoded[i][1] - point[1]).abs() < 1e-10);
         }
+    }
+
+    #[test]
+    fn simd_encode() {
+        let points = vec![[38.5, -120.2], [40.7, -120.95], [43.252, -126.453]];
+        let encoded = encode_simd(&points, 5);
+        assert_eq!(encoded, "_p~iF~ps|U_ulLnnqC_mqNvxq`@");
+    }
+
+    #[test]
+    fn simd_encode_empty() {
+        let points: Vec<[f64; 2]> = vec![];
+        let encoded = encode_simd(&points, 5);
+        assert_eq!(encoded, "");
+    }
+
+    #[test]
+    fn simd_encode_single_point() {
+        let points = vec![[38.5, -120.2]];
+        let encoded = encode_simd(&points, 5);
+        let scalar_encoded = encode(&points, 5);
+        assert_eq!(encoded, scalar_encoded);
     }
 }
