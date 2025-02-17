@@ -40,6 +40,7 @@ pub mod metis;
 pub mod one_iterator;
 pub mod one_to_many_dijkstra;
 pub mod partition;
+pub mod polyline;
 pub mod projection;
 pub mod rdx_sort;
 pub mod renumbering_table;
