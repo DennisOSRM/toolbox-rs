@@ -111,7 +111,8 @@ fn polyline_encode_line<F>(path: &[[f64; 2]], transform: F) -> String
 where
     F: Fn(&[f64; 2]) -> [i32; 2],
 {
-    let mut result = Vec::new();
+    // guess a rough estimate of the capacity leading to less reallocations
+    let mut result = Vec::with_capacity(path.len() * 4);
     let mut start = [0, 0];
 
     for point in path {
