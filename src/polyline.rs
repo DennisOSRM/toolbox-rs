@@ -4,7 +4,7 @@
 //! polyline algorithm. See https://developers.google.com/maps/documentation/utilities/polylinealgorithm
 
 /**
- * Copyright 2020 Google LLC
+ * Reproduced from the above link to comply with the Apache License, Version 2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,18 +19,6 @@
  * limitations under the License.
  */
 
-/// A point with latitude and longitude coordinates
-#[derive(Debug, Clone, PartialEq)]
-pub struct LatLng {
-    pub lat: f64,
-    pub lng: f64,
-}
-
-impl LatLng {
-    pub fn new(lat: f64, lng: f64) -> Self {
-        Self { lat, lng }
-    }
-}
 
 /// Decodes an encoded path string into a sequence of coordinates
 ///
