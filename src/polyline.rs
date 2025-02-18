@@ -75,7 +75,7 @@ pub fn decode(encoded_path: &str, precision: i32) -> Vec<[f64; 2]> {
 ///
 /// let path = vec![[38.5, -120.2], [40.7, -120.95], [43.252, -126.453]];
 /// let encoded = encode(&path, 5);
-/// assert_eq!(encoded, "_p~iF~ps|U_ulLnnqC_mqNvxq`@");
+/// assert_eq!(std::str::from_utf8(&encoded).unwrap(), "_p~iF~ps|U_ulLnnqC_mqNvxq`@");
 /// ```
 pub fn encode(path: &[[f64; 2]], precision: i32) -> Vec<u8> {
     let factor = 10f64.powi(precision);
