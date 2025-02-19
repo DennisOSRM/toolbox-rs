@@ -25,7 +25,9 @@ fn bench_polyline(c: &mut Criterion) {
     // Decode Benchmarks
     group.bench_function("decode/small", |b| b.iter(|| decode(small_encoded, 5)));
 
-    group.bench_function("decode/large", |b| b.iter(|| decode(&large_encoded, 5)));
+    group.bench_function("decode/large", |b| {
+        b.iter(|| decode(std::str::from_utf8(&large_encoded).unwrap(), 5))
+    });
 
     // Precision Benchmarks
     for precision in [0, 5, 10] {

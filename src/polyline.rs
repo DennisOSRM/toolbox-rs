@@ -75,9 +75,9 @@ pub fn decode(encoded_path: &str, precision: i32) -> Vec<[f64; 2]> {
 ///
 /// let path = vec![[38.5, -120.2], [40.7, -120.95], [43.252, -126.453]];
 /// let encoded = encode(&path, 5);
-/// assert_eq!(encoded, "_p~iF~ps|U_ulLnnqC_mqNvxq`@");
+/// assert_eq!(std::str::from_utf8(&encoded).unwrap(), "_p~iF~ps|U_ulLnnqC_mqNvxq`@");
 /// ```
-pub fn encode(path: &[[f64; 2]], precision: i32) -> String {
+pub fn encode(path: &[[f64; 2]], precision: i32) -> Vec<u8> {
     let factor = 10f64.powi(precision);
     let transform = |point: &[f64; 2]| -> [i32; 2] {
         [
@@ -107,7 +107,7 @@ fn decode_unsigned(encoded: &[u8], mut index: usize) -> (i32, usize) {
     (result, index)
 }
 
-fn polyline_encode_line<F>(path: &[[f64; 2]], transform: F) -> String
+fn polyline_encode_line<F>(path: &[[f64; 2]], transform: F) -> Vec<u8>
 where
     F: Fn(&[f64; 2]) -> [i32; 2],
 {
@@ -122,19 +122,19 @@ where
         start = end;
     }
 
-    result.into_iter().collect()
+    result
 }
 
-fn polyline_encode_signed(value: i32, result: &mut Vec<char>) {
+fn polyline_encode_signed(value: i32, result: &mut Vec<u8>) {
     polyline_encode_unsigned(if value < 0 { !(value << 1) } else { value << 1 }, result);
 }
 
-fn polyline_encode_unsigned(mut value: i32, result: &mut Vec<char>) {
+fn polyline_encode_unsigned(mut value: i32, result: &mut Vec<u8>) {
     while value >= 0x20 {
-        result.push(((0x20 | (value & 0x1f)) + 63) as u8 as char);
+        result.push(((0x20 | (value & 0x1f)) + 63) as u8);
         value >>= 5;
     }
-    result.push((value + 63) as u8 as char);
+    result.push((value + 63) as u8);
 }
 
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
@@ -266,6 +266,8 @@ pub fn encode_simd(path: &[[f64; 2]], precision: i32) -> String {
 
 #[cfg(test)]
 mod tests {
+    use core::str;
+
     use super::*;
 
     // test data from Google's polyline algorithm documentation
@@ -319,13 +321,13 @@ mod tests {
     fn roundtrip() {
         let encoded = "gcneIpgxzRcDnBoBlEHzKjBbHlG`@`IkDxIiKhKoMaLwTwHeIqHuAyGXeB~Ew@fFjAtIzExF";
         let decoded = decode(encoded, 5);
-        assert_eq!(encode(&decoded, 5), encoded);
+        assert_eq!(str::from_utf8(&encode(&decoded, 5)).unwrap(), encoded);
     }
 
     #[test]
     fn roundtrip_slashes() {
         let encoded = encode(&SLASHES, 5);
-        let decoded = decode(&encoded, 5);
+        let decoded = decode(str::from_utf8(&encoded).unwrap(), 5);
         for (i, point) in SLASHES.iter().enumerate() {
             assert!((decoded[i][0] - point[0]).abs() < 1e-5);
             assert!((decoded[i][1] - point[1]).abs() < 1e-5);
@@ -334,39 +336,48 @@ mod tests {
 
     #[test]
     fn encode_empty() {
-        assert_eq!(encode(&[], 5), "");
+        assert_eq!(str::from_utf8(&encode(&[], 5)).unwrap(), "");
     }
 
     #[test]
     fn encode_default() {
-        assert_eq!(encode(&DEFAULT, 5), "_p~iF~ps|U_ulLnnqC_mqNvxq`@");
+        assert_eq!(
+            str::from_utf8(&encode(&DEFAULT, 5)).unwrap(),
+            "_p~iF~ps|U_ulLnnqC_mqNvxq`@"
+        );
     }
 
     #[test]
     fn encode_rounding() {
-        assert_eq!(encode(&ROUNDING, 5), "?A?@");
+        assert_eq!(str::from_utf8(&encode(&ROUNDING, 5)).unwrap(), "?A?@");
     }
 
     #[test]
     fn encode_negative() {
-        assert_eq!(encode(&NEGATIVE, 5), "ss`{E~kbkTeAQw@J");
+        assert_eq!(
+            str::from_utf8(&encode(&NEGATIVE, 5)).unwrap(),
+            "ss`{E~kbkTeAQw@J"
+        );
     }
 
     #[test]
     fn encode_custom_precision() {
-        assert_eq!(encode(&DEFAULT, 6), "_izlhA~rlgdF_{geC~ywl@_kwzCn`{nI");
+        assert_eq!(
+            str::from_utf8(&encode(&DEFAULT, 6)).unwrap(),
+            "_izlhA~rlgdF_{geC~ywl@_kwzCn`{nI"
+        );
     }
 
     #[test]
     fn encode_precision_zero() {
-        assert_eq!(encode(&DEFAULT, 0), "mAnFC@CH");
+        assert_eq!(str::from_utf8(&encode(&DEFAULT, 0)).unwrap(), "mAnFC@CH");
     }
 
     #[test]
     fn encode_negative_values() {
         let point = [[-107.3741825, 0.0]];
         let encoded = encode(&point, 7);
-        let decoded = decode(&encoded, 7);
+        let decoded = decode(str::from_utf8(&encoded).unwrap(), 7);
         assert!(decoded[0][0] < 0.0);
     }
 
@@ -374,9 +385,12 @@ mod tests {
     fn encode_decode() {
         let points = vec![[38.5, -120.2], [40.7, -120.95], [43.252, -126.453]];
         let encoded = encode(&points, 5);
-        assert_eq!(encoded, "_p~iF~ps|U_ulLnnqC_mqNvxq`@");
+        assert_eq!(
+            str::from_utf8(&encoded).unwrap(),
+            "_p~iF~ps|U_ulLnnqC_mqNvxq`@"
+        );
 
-        let decoded = decode(&encoded, 5);
+        let decoded = decode(str::from_utf8(&encoded).unwrap(), 5);
         for (i, point) in points.iter().enumerate() {
             assert!((decoded[i][0] - point[0]).abs() < 1e-10);
             assert!((decoded[i][1] - point[1]).abs() < 1e-10);
