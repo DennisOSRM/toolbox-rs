@@ -18,8 +18,8 @@ use log::debug;
 use std::{
     collections::VecDeque,
     sync::{
-        atomic::{AtomicI32, Ordering},
         Arc,
+        atomic::{AtomicI32, Ordering},
     },
     time::Instant,
 };

@@ -149,8 +149,8 @@ mod tests {
         };
     }
 
-    use super::primitives::{cross_product, distance, FPCoordinate};
-    use crate::geometry::primitives::{distance_to_segment, is_clock_wise_turn, Point, Segment};
+    use super::primitives::{FPCoordinate, cross_product, distance};
+    use crate::geometry::primitives::{Point, Segment, distance_to_segment, is_clock_wise_turn};
 
     #[test]
     fn distance_one() {

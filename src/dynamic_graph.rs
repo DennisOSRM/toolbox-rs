@@ -4,7 +4,7 @@
 /// edge.
 use crate::{
     edge::{Edge, EdgeData},
-    graph::{EdgeArrayEntry, EdgeID, Graph, NodeID, INVALID_NODE_ID},
+    graph::{EdgeArrayEntry, EdgeID, Graph, INVALID_NODE_ID, NodeID},
 };
 use core::ops::Range;
 
