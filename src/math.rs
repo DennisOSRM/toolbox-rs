@@ -102,22 +102,31 @@ mod tests {
     }
 
     #[test]
-    fn test_horner() {
+    fn test_horner1() {
         // Test of polynom: 2x² + 3x + 1
-        let coefficients = [1.0, 3.0, 2.0];
+        let coefficients = [2.0, 3.0, 1.0];
         assert_eq!(horner(0.0, &coefficients), 1.0);
         assert_eq!(horner(1.0, &coefficients), 6.0);
         assert_eq!(horner(2.0, &coefficients), 15.0);
+    }
 
+    #[test]
+    fn test_horner2() {
         // Test of polynom: x³ - 2x² + 3x - 4
-        let coefficients = [-4.0, 3.0, -2.0, 1.0];
+        let coefficients = [1.0, -2.0, 3.0, -4.0];
         assert!((horner(0.0, &coefficients) - (-4.0)).abs() < 1e-10);
         assert!((horner(1.0, &coefficients) - (-2.0)).abs() < 1e-10);
         assert!((horner(2.0, &coefficients) - 2.0).abs() < 1e-10);
+    }
 
+    #[test]
+    fn test_horner3() {
         // Test of empty polynom
         assert_eq!(horner(1.0, &[]), 0.0);
+    }
 
+    #[test]
+    fn test_horner4() {
         // Test of constant polynom
         assert_eq!(horner(42.0, &[5.0]), 5.0);
     }
