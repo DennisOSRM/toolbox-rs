@@ -151,7 +151,7 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
-    use crate::ddsg::{read_coordinates, Direction, WeightType};
+    use crate::ddsg::{Direction, WeightType, read_coordinates};
 
     #[test]
     fn direction_try_from() {

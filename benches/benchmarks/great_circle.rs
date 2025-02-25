@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, Criterion};
+use criterion::{Criterion, black_box, criterion_group};
 use toolbox_rs::great_circle::distance::*;
 
 pub fn haversine_benchmark(c: &mut Criterion) {

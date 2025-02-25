@@ -8,8 +8,8 @@ use crate::{
 use bitvec::vec::BitVec;
 use itertools::Itertools;
 use log::{debug, warn};
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Instant;
 
 pub struct FordFulkerson {
@@ -159,8 +159,8 @@ impl MaxFlow for FordFulkerson {
 #[cfg(test)]
 mod tests {
 
-    use std::sync::atomic::AtomicI32;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicI32;
 
     use crate::edge::InputEdge;
     use crate::ford_fulkerson::FordFulkerson;

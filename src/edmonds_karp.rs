@@ -10,8 +10,8 @@ use itertools::Itertools;
 use log::{debug, warn};
 use std::{
     sync::{
-        atomic::{AtomicI32, Ordering},
         Arc,
+        atomic::{AtomicI32, Ordering},
     },
     time::Instant,
 };
@@ -162,8 +162,8 @@ impl MaxFlow for EdmondsKarp {
 #[cfg(test)]
 mod tests {
 
-    use std::sync::atomic::AtomicI32;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicI32;
 
     use crate::edge::InputEdge;
     use crate::edmonds_karp::EdmondsKarp;

@@ -27,7 +27,7 @@ impl<'a, T> UnsafeSlice<'a, T> {
     ///  Two threads concurrently writing to the same location will cause UB!!
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn get(&self, index: usize) -> &mut T {
-        &mut *self.slice[index].get()
+        unsafe { &mut *self.slice[index].get() }
     }
 }
 

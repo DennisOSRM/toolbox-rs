@@ -1,4 +1,4 @@
-use criterion::{criterion_group, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group};
 use toolbox_rs::polyline::{decode, encode};
 
 fn bench_polyline(c: &mut Criterion) {

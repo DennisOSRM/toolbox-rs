@@ -1,5 +1,5 @@
-use criterion::{black_box, criterion_group, BenchmarkId, Criterion};
-use rand::{seq::SliceRandom, Rng};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group};
+use rand::{Rng, seq::SliceRandom};
 use toolbox_rs::{k_way_merge_iterator::KWayMergeIterator, loser_tree::LoserTree};
 
 /// Create a list of random runs of numbers.

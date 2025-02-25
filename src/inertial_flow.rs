@@ -1,6 +1,6 @@
 use std::{
     cmp::max,
-    sync::{atomic::AtomicI32, Arc},
+    sync::{Arc, atomic::AtomicI32},
 };
 
 use itertools::Itertools;
@@ -178,11 +178,11 @@ pub fn sub_step(
 #[cfg(test)]
 mod tests {
     use itertools::Itertools;
-    use std::sync::{atomic::AtomicI32, Arc};
+    use std::sync::{Arc, atomic::AtomicI32};
 
     use crate::{
         geometry::primitives::FPCoordinate,
-        inertial_flow::{flow_cmp, sub_step, Flow, TrivialEdge},
+        inertial_flow::{Flow, TrivialEdge, flow_cmp, sub_step},
     };
 
     static EDGES: [TrivialEdge; 14] = [

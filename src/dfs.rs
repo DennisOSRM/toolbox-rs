@@ -2,7 +2,7 @@ use bitvec::vec::BitVec;
 use log::{debug, info};
 use std::time::Instant;
 
-use crate::graph::{EdgeID, Graph, NodeID, INVALID_NODE_ID};
+use crate::graph::{EdgeID, Graph, INVALID_NODE_ID, NodeID};
 
 pub struct DFS {
     sources: Vec<NodeID>,

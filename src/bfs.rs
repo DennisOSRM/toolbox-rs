@@ -1,4 +1,4 @@
-use crate::graph::{EdgeID, Graph, NodeID, INVALID_NODE_ID};
+use crate::graph::{EdgeID, Graph, INVALID_NODE_ID, NodeID};
 use bitvec::vec::BitVec;
 use log::{debug, info};
 use std::{collections::VecDeque, time::Instant};
