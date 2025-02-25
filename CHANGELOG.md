@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3](https://github.com/DennisOSRM/toolbox-rs/compare/v0.2.2...v0.2.3) - 2025-02-19
+
+### Other
+
+- Avoid copy ([#473](https://github.com/DennisOSRM/toolbox-rs/pull/473))
+- Port over Google's polyline algorithm ([#471](https://github.com/DennisOSRM/toolbox-rs/pull/471))
+- Generic k way merge ([#470](https://github.com/DennisOSRM/toolbox-rs/pull/470))
+- Cover all functions (and LOCs) in union_find.rs with unit tests ([#469](https://github.com/DennisOSRM/toolbox-rs/pull/469))
+- Implement a tree of losers to be used in a k-way merge ([#467](https://github.com/DennisOSRM/toolbox-rs/pull/467))
+- Remove reverse wrapper from k-way merge ([#468](https://github.com/DennisOSRM/toolbox-rs/pull/468))
+- K way merge iterator using binary heap ([#465](https://github.com/DennisOSRM/toolbox-rs/pull/465))
+
 ## [0.2.2](https://github.com/DennisOSRM/toolbox-rs/compare/v0.2.1...v0.2.2) - 2025-02-09
 
 ### Other
