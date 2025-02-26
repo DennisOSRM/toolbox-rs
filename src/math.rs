@@ -47,9 +47,13 @@ pub fn non_zero_lsb_index<T: Integer + PrimInt>(n: T) -> u32 {
     n.trailing_zeros()
 }
 
+pub fn horner(x: f64, coefficients: &[f64]) -> f64 {
+    coefficients.iter().fold(0.0, |acc, &coeff| acc * x + coeff)
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::math::{choose, lsb_index, non_zero_lsb_index, prev_power_of_two};
+    use crate::math::{choose, horner, lsb_index, non_zero_lsb_index, prev_power_of_two};
 
     #[test]
     fn some_well_known_n_choose_k_values() {
@@ -95,5 +99,35 @@ mod tests {
         assert_eq!(prev_power_of_two(16_u8), 16);
         assert_eq!(prev_power_of_two(17_i32), 16);
         assert_eq!(prev_power_of_two(0x5555555555555_u64), 0x4000000000000)
+    }
+
+    #[test]
+    fn test_horner1() {
+        // Test of polynom: 2x² + 3x + 1
+        let coefficients = [2.0, 3.0, 1.0];
+        assert_eq!(horner(0.0, &coefficients), 1.0);
+        assert_eq!(horner(1.0, &coefficients), 6.0);
+        assert_eq!(horner(2.0, &coefficients), 15.0);
+    }
+
+    #[test]
+    fn test_horner2() {
+        // Test of polynom: x³ - 2x² + 3x - 4
+        let coefficients = [1.0, -2.0, 3.0, -4.0];
+        assert!((horner(0.0, &coefficients) - (-4.0)).abs() < 1e-10);
+        assert!((horner(1.0, &coefficients) - (-2.0)).abs() < 1e-10);
+        assert!((horner(2.0, &coefficients) - 2.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_horner3() {
+        // Test of empty polynom
+        assert_eq!(horner(1.0, &[]), 0.0);
+    }
+
+    #[test]
+    fn test_horner4() {
+        // Test of constant polynom
+        assert_eq!(horner(42.0, &[5.0]), 5.0);
     }
 }
