@@ -1,13 +1,8 @@
-// length of semi-major axis of the WGS84 ellipsoid, i.e. radius at equator
-
-use std::f64::consts::PI;
-
 use crate::math::horner;
 
+// length of semi-major axis of the WGS84 ellipsoid, i.e. radius at equator
 pub const EARTH_RADIUS_KM: f64 = 6_378.137;
-const DEGREE_TO_RAD: f64 = 0.017_453_292_519_943_295;
 const EPSG3857_MAX_LATITUDE: f64 = 85.051_128_779_806_59;
-const RAD_TO_DEGREE: f64 = 1.0 / DEGREE_TO_RAD;
 const MAX_LONGITUDE: f64 = 180.0;
 const TILE_SIZE: f64 = 256.0;
 
@@ -37,15 +32,15 @@ impl FloatLongitude {
 
 pub fn y_to_lat(y: f64) -> FloatLatitude {
     let clamped_y = y.clamp(-180.0, 180.0);
-    let normalized_lat = RAD_TO_DEGREE * 2.0 * (clamped_y * DEGREE_TO_RAD).exp().atan();
+    let normalized_lat = 2.0_f64.to_degrees() * (clamped_y.to_radians()).exp().atan();
 
     FloatLatitude(normalized_lat - 90.0)
 }
 
 pub fn lat_to_y(latitude: FloatLatitude) -> f64 {
     let clamped_latitude = latitude.clamp();
-    let f = (DEGREE_TO_RAD * clamped_latitude.0).sin();
-    RAD_TO_DEGREE * 0.5 * ((1.0 + f) / (1.0 - f)).ln()
+    let f = (clamped_latitude.0.to_radians()).sin();
+    0.5_f64.to_degrees() * ((1.0 + f) / (1.0 - f)).ln()
 }
 
 pub fn lat_to_y_approx(latitude: FloatLatitude) -> f64 {
@@ -92,8 +87,9 @@ pub fn lat_to_y_approx(latitude: FloatLatitude) -> f64 {
 pub fn pixel_to_degree(shift: f64, x: &mut f64, y: &mut f64) {
     let b = shift / 2.0;
     *x = ((*x - b) / shift) * 360.0;
-    let g = (*y - b) / -(shift * 0.5 / PI) / DEGREE_TO_RAD;
-    *y = y_to_lat(g).0;
+    let normalized_y = *y / shift;
+    let lat_rad = std::f64::consts::PI * (1.0 - 2.0 * normalized_y);
+    *y = y_to_lat(lat_rad.to_degrees()).0;
 }
 
 pub fn degree_to_pixel_lon(lon: FloatLongitude, zoom: u32) -> f64 {
@@ -128,10 +124,10 @@ mod tests {
     use std::f64::EPSILON;
 
     const TEST_COORDINATES: [(f64, f64); 4] = [
-        (0.0, 0.0),     // Äquator/Nullmeridian
+        (0.0, 0.0),     // equator
         (51.0, 13.0),   // Dresden
         (-33.9, 151.2), // Sydney
-        (85.0, 180.0),  // Polnähe
+        (85.0, 180.0),  // near pole
     ];
 
     #[test]
@@ -165,7 +161,7 @@ mod tests {
 
     #[test]
     fn test_latitude_bounds() {
-        // Test Latitude-Begrenzung
+        // Test latitude clamping
         let max_lat = FloatLatitude(90.0);
         let min_lat = FloatLatitude(-90.0);
 
@@ -175,7 +171,7 @@ mod tests {
 
     #[test]
     fn test_pixel_coordinates() {
-        // Test für Zoom Level 0
+        // Test for zoom level 0
         let center = FloatCoordinate {
             lat: FloatLatitude(0.0),
             lon: FloatLongitude(0.0),
@@ -219,6 +215,167 @@ mod tests {
                 exact,
                 approx
             );
+        }
+    }
+
+    #[test]
+    fn test_coordinate_clamping() {
+        // Test Latitude Clamping
+        let test_cases_lat = [
+            (-90.0, -EPSG3857_MAX_LATITUDE),
+            (-86.0, -85.051_128_779_806_59),
+            (0.0, 0.0),
+            (85.0, 85.0),
+            (90.0, EPSG3857_MAX_LATITUDE),
+        ];
+
+        for (input, expected) in test_cases_lat {
+            let lat = FloatLatitude(input);
+            let clamped = lat.clamp();
+            assert!(
+                (clamped.0 - expected).abs() < EPSILON,
+                "Latitude clamping failed for {}: expected {}, got {}",
+                input,
+                expected,
+                clamped.0
+            );
+        }
+
+        // Test Longitude Clamping
+        let test_cases_lon = [
+            (-200.0, -180.0),
+            (-180.0, -180.0),
+            (0.0, 0.0),
+            (180.0, 180.0),
+            (200.0, 180.0),
+        ];
+
+        for (input, expected) in test_cases_lon {
+            let lon = FloatLongitude(input);
+            let clamped = lon.clamp();
+            assert!(
+                (clamped.0 - expected).abs() < EPSILON,
+                "Longitude clamping failed for {}: expected {}, got {}",
+                input,
+                expected,
+                clamped.0
+            );
+        }
+    }
+
+    #[test]
+    fn test_pixel_to_degree() {
+        let test_cases = [
+            // shift,    x_in,   y_in,    x_out,  y_out
+            (256.0, 128.0, 128.0, 0.0, 0.0),     // center at zoom 0
+            (512.0, 256.0, 256.0, 0.0, 0.0),     // center at zoom 1
+            (256.0, 0.0, 0.0, -180.0, 85.0),     // northwest corner
+            (256.0, 256.0, 256.0, 180.0, -85.0), // southeast corner
+        ];
+
+        for (shift, x_in, y_in, x_expected, y_expected) in test_cases {
+            let mut x = x_in;
+            let mut y = y_in;
+            pixel_to_degree(shift, &mut x, &mut y);
+
+            assert!(
+                (x - x_expected).abs() < 1e-10,
+                "x-coordinate wrong, shift={}: expected={}, result={}",
+                shift,
+                x_expected,
+                x
+            );
+
+            assert!(
+                (y - y_expected).abs() < 1.0,
+                "y-coordinate wrong, shift={}: expected={}, result={}",
+                shift,
+                y_expected,
+                y
+            );
+        }
+
+        // test roundtrip with degree_to_pixel_*
+        for &(lat, lon) in TEST_COORDINATES.iter() {
+            let zoom = 1u32;
+            let shift = (1 << zoom) as f64 * TILE_SIZE;
+
+            let orig_lat = FloatLatitude(lat);
+            let orig_lon = FloatLongitude(lon);
+
+            let px_x = degree_to_pixel_lon(orig_lon, zoom);
+            let px_y = degree_to_pixel_lat(orig_lat, zoom);
+
+            let mut x = px_x;
+            let mut y = px_y;
+            pixel_to_degree(shift, &mut x, &mut y);
+
+            assert!(
+                (x - lon).abs() < 1e-10,
+                "Longitude roundtrip failed: {} -> ({}, {}) -> {}",
+                lon,
+                px_x,
+                px_y,
+                x
+            );
+
+            assert!(
+                (y - lat).abs() < 1.0,
+                "Latitude roundtrip failed: {} -> ({}, {}) -> {}",
+                lat,
+                px_x,
+                px_y,
+                y
+            );
+        }
+    }
+
+    #[test]
+    fn test_degree_to_pixel_lat_zoom_levels() {
+        let test_coordinates = [
+            FloatLatitude(0.0),   // equator
+            FloatLatitude(51.0),  // Frankfurt
+            FloatLatitude(-33.9), // Sydney
+            FloatLatitude(85.0),  // near pole
+        ];
+
+        for zoom in 0..=18 {
+            let shift = (1 << zoom) as f64 * TILE_SIZE;
+            let center = shift / 2.0;
+
+            for &lat in &test_coordinates {
+                let px = degree_to_pixel_lat(lat, zoom);
+
+                // equator should be centered
+                if lat.0 == 0.0 {
+                    assert!(
+                        (px - center).abs() < EPSILON,
+                        "equator not centered at zoom {zoom}: expected={center}, result={px}"
+                    );
+                }
+
+                // Pixel-Koordinaten müssen im gültigen Bereich liegen
+                assert!(
+                    px >= 0.0 && px <= shift,
+                    "Pixel-Koordinate außerhalb des gültigen Bereichs bei Zoom {}: lat={}, px={}",
+                    zoom,
+                    lat.0,
+                    px
+                );
+
+                // roundtrip test
+                let mut x = 0.0;
+                let mut y = px;
+                pixel_to_degree(shift, &mut x, &mut y);
+                assert!(
+                    (y - lat.0).abs() < 1.0,
+                    "Roundtrip failed at zoom {}: {} -> {} -> {}",
+                    zoom,
+                    lat.0,
+                    px,
+                    y
+                );
+            }
         }
     }
 }
