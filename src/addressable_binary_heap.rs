@@ -234,7 +234,7 @@ impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Da
 
 #[cfg(test)]
 mod tests {
-    use rand::{prelude::StdRng, Rng, SeedableRng};
+    use rand::{Rng, SeedableRng, prelude::StdRng};
 
     use crate::addressable_binary_heap::AddressableHeap;
     type Heap = AddressableHeap<i32, i32, i32>;

@@ -7,12 +7,12 @@ use itertools::Itertools;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info};
 use rayon::prelude::*;
-use std::sync::{atomic::AtomicI32, Arc};
+use std::sync::{Arc, atomic::AtomicI32};
 use toolbox_rs::geometry::primitives::FPCoordinate;
 use toolbox_rs::io;
 use toolbox_rs::unsafe_slice::UnsafeSlice;
 use toolbox_rs::{
-    inertial_flow::{self, flow_cmp, Flow},
+    inertial_flow::{self, Flow, flow_cmp},
     partition::PartitionID,
 };
 use {command_line::Arguments, serialize::write_results};

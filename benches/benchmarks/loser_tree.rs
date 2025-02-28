@@ -1,5 +1,5 @@
-use criterion::{black_box, criterion_group, BenchmarkId, Criterion};
-use rand::{rng, Rng};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group};
+use rand::{Rng, rng};
 use toolbox_rs::{loser_tree::LoserTree, merge_entry::MergeEntry, merge_tree::MergeTree};
 
 /// Creates k sorted sequences of random numbers for benchmarking

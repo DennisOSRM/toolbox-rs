@@ -1,6 +1,6 @@
 use std::{fs::File, io::BufWriter};
 
-use geojson::{feature::Id, Feature, FeatureWriter, Geometry, Value};
+use geojson::{Feature, FeatureWriter, Geometry, Value, feature::Id};
 use itertools::Itertools;
 use toolbox_rs::{
     bounding_box::BoundingBox, geometry::primitives::FPCoordinate, partition::PartitionID,

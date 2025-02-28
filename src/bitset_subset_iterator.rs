@@ -1,4 +1,4 @@
-use num::{traits::WrappingSub, Integer};
+use num::{Integer, traits::WrappingSub};
 
 /// Iterate all bitset subsets of a given bitset
 /// Implements what is known as Carry-Rippler trick

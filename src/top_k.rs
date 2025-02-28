@@ -19,7 +19,9 @@ macro_rules! cv {
     };
 }
 
-invoke_macro_for_types!(cv, u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
+invoke_macro_for_types!(
+    cv, u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize
+);
 
 pub fn top_k<T: ComparisonValue + Copy + std::cmp::Ord>(
     input: impl IntoIterator<Item = T>,
