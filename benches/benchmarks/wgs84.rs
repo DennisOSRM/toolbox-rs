@@ -1,6 +1,6 @@
-use criterion::{black_box, criterion_group, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group};
 use rand::Rng;
-use toolbox_rs::wgs84::{lat_to_y, lat_to_y_approx, FloatLatitude};
+use toolbox_rs::wgs84::{FloatLatitude, lat_to_y, lat_to_y_approx};
 
 pub fn lat_to_y_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("lat_to_y_sizes");
