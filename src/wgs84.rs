@@ -6,11 +6,13 @@ const EPSG3857_MAX_LATITUDE: f64 = 85.051_128_779_806_59;
 const MAX_LONGITUDE: f64 = 180.0;
 const TILE_SIZE: f64 = 256.0;
 
+// TODO: develop into properly initialized struct, perhaps move to separate module
 #[derive(Debug, Clone, Copy)]
-pub struct FloatLatitude(f64);
+pub struct FloatLatitude(pub f64);
 
+// TODO: develop into properly initialized struct, perhaps move to separate module
 #[derive(Debug, Clone, Copy)]
-pub struct FloatLongitude(f64);
+pub struct FloatLongitude(pub f64);
 
 #[derive(Debug, Clone, Copy)]
 pub struct FloatCoordinate {
