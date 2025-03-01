@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4](https://github.com/DennisOSRM/toolbox-rs/compare/v0.2.3...v0.2.4) - 2025-03-01
+
+### Other
+
+- Implement web mercator utilities ([#477](https://github.com/DennisOSRM/toolbox-rs/pull/477))
+- Migrate to 2024 edition ([#474](https://github.com/DennisOSRM/toolbox-rs/pull/474))
+- Implement horner polynom evaluation scheme ([#475](https://github.com/DennisOSRM/toolbox-rs/pull/475))
+
 ## [0.2.3](https://github.com/DennisOSRM/toolbox-rs/compare/v0.2.2...v0.2.3) - 2025-02-19
 
 ### Other
