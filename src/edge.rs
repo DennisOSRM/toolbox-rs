@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use bincode::{Decode, Encode};
 
 use crate::graph::NodeID;
 use core::mem::swap;
@@ -17,7 +17,7 @@ pub trait EdgeData {
 pub trait EdgeWithData: Edge<ID = usize> + EdgeData<DATA = i32> {}
 impl EdgeWithData for InputEdge<i32> {}
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, bincode::Decode, bincode::Encode)]
 pub struct TrivialEdge {
     pub source: usize,
     pub target: usize,
@@ -33,7 +33,7 @@ impl Edge for TrivialEdge {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialOrd, Ord, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialOrd, Ord, PartialEq, Decode, Encode)]
 pub struct InputEdge<EdgeDataT: Eq> {
     pub source: NodeID,
     pub target: NodeID,

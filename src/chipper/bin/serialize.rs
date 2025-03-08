@@ -1,4 +1,4 @@
-use bincode::serialize_into;
+use bincode::encode_into_std_write;
 use log::info;
 use std::{
     fs::File,
@@ -82,7 +82,8 @@ pub fn assignment_csv(filename: &str, partition_ids: &[PartitionID], coordinates
 
 pub fn binary_partition_file(partition_file: &str, partition_ids: &[PartitionID]) {
     let mut f = BufWriter::new(File::create(partition_file).unwrap());
-    serialize_into(&mut f, &partition_ids).unwrap();
+    let config = bincode::config::standard();
+    encode_into_std_write(partition_ids, &mut f, config).unwrap();
 }
 
 pub fn write_results(

@@ -1,5 +1,6 @@
+use bincode::Decode;
+use bincode::Encode;
 use core::cmp::max;
-use serde::{Deserialize, Serialize};
 use std::{
     fmt::Display,
     hash::Hash,
@@ -9,7 +10,7 @@ use std::{
 /// represents the hiearchical partition id scheme. The root id has ID 1 and
 /// children are shifted to the left by one and plus 0/1. The parent child
 /// relationship can thus be queried in constant time.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Encode, Decode)]
 pub struct PartitionID(u32);
 
 impl PartitionID {
@@ -286,8 +287,8 @@ mod tests {
     #[test]
     fn parent_at_level() {
         let id = PartitionID::new(0xffff_ffff);
-        let levels = vec![0, 3, 9, 15, 20];
-        let results = vec![
+        let levels = [0, 3, 9, 15, 20];
+        let results = [
             PartitionID::new(0b11111111111111111111111111111111),
             PartitionID::new(0b11111111111111111111111111111000),
             PartitionID::new(0b11111111111111111111111000000000),
@@ -305,8 +306,8 @@ mod tests {
     #[test]
     fn binary_trait() {
         let id = PartitionID::new(0xffff_ffff);
-        let levels = vec![0, 3, 9, 15, 20];
-        let results = vec![
+        let levels = [0, 3, 9, 15, 20];
+        let results = [
             "0b11111111111111111111111111111111",
             "0b11111111111111111111111111111000",
             "0b11111111111111111111111000000000",

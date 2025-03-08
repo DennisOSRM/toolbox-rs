@@ -285,7 +285,7 @@ mod tests {
         assert_eq!(result.len(), 4);
 
         for r in &result {
-            let r = r.as_ref().clone().expect("error should not happen");
+            let r = r.as_ref().expect("error should not happen");
             assert_eq!(r.flow, 1);
             assert_eq!(r.balance, 0.5);
             assert_eq!(r.left_ids.len(), 3);
