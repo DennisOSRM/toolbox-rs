@@ -214,7 +214,7 @@ mod tests {
         ];
         let graph = Graph::new(edges);
 
-        let mut scc = PathBasedScc::new();
+        let mut scc = PathBasedScc::default();
         assert_eq!(
             vec![6, 7, 9, 8, 7, 10, 11, 11, 11, 11, 11, 11],
             scc.run(&graph)
