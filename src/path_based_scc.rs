@@ -1,16 +1,16 @@
-/* 
+/*
  * Path-based SCC algorithm (Gabow's Algorithm)
- * 
+ *
  * The algorithm numbers SCCs in reverse order of their discovery:
  * - Initially, component counter starts at n (number of vertices)
  * - Each time an SCC is found, counter is decremented
  * - Final numbering is from n-1 down to 0
- * 
+ *
  * This approach serves multiple purposes:
  * 1. Avoids conflicts with temporary stack indices during processing
  * 2. Creates a reverse topological ordering of SCCs
  * 3. Ensures each SCC gets a unique, consecutive number
- * 
+ *
  * Example: In a graph with 5 vertices and 3 SCCs:
  * - First discovered SCC gets number 4
  * - Second SCC gets number 3
@@ -21,8 +21,8 @@ use crate::graph::Graph;
 
 #[derive(Clone, Copy)]
 enum DfsState {
-    Visit(usize),             // Knoten zum ersten Mal besuchen
-    ProcessNeighbors(usize),  // Nachbarn verarbeiten
+    Visit(usize),            // Knoten zum ersten Mal besuchen
+    ProcessNeighbors(usize), // Nachbarn verarbeiten
     Finalize(usize),         // SCC finalisieren
 }
 
@@ -215,6 +215,9 @@ mod tests {
         let graph = Graph::new(edges);
 
         let mut scc = PathBasedScc::new();
-        assert_eq!(vec![6, 7, 9, 8, 7, 10, 11, 11, 11, 11, 11, 11], scc.run(&graph));
+        assert_eq!(
+            vec![6, 7, 9, 8, 7, 10, 11, 11, 11, 11, 11, 11],
+            scc.run(&graph)
+        );
     }
 }
