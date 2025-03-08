@@ -1,7 +1,7 @@
 mod command_line;
 use std::{fs::File, io::BufWriter};
 
-use bincode::serialize_into;
+use bincode::encode_into_std_write;
 use env_logger::Env;
 use log::info;
 
@@ -35,13 +35,15 @@ fn main() {
         InputFormat::Metis => metis::read_coordinates(&args.coordinates),
     };
 
+    let config = bincode::config::standard();
+
     info!("writing edges into intermediate format");
     let mut f = BufWriter::new(File::create(args.graph + ".toolbox").unwrap());
-    serialize_into(&mut f, &edges).unwrap();
+    encode_into_std_write(&edges, &mut f, config).unwrap();
 
     info!("writing coordinates into intermediate format");
     let mut f = BufWriter::new(File::create(args.coordinates + ".toolbox").unwrap());
-    serialize_into(&mut f, &coordinates).unwrap();
+    encode_into_std_write(&coordinates, &mut f, config).unwrap();
 
     info!("done.");
 }

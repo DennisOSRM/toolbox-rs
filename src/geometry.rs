@@ -1,11 +1,9 @@
 pub mod primitives {
     use std::fmt::Display;
 
-    use serde::{Deserialize, Serialize};
-
     use crate::great_circle::distance::haversine;
 
-    #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+    #[derive(Clone, Copy, Debug, Eq, PartialEq, bincode::Decode, bincode::Encode)]
     pub struct FPCoordinate {
         pub lat: i32,
         pub lon: i32,

@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use bincode::deserialize_from;
+use bincode::{config, decode_from_std_read};
 use itertools::Itertools;
 
 use crate::edge::{InputEdge, TrivialEdge};
@@ -20,9 +20,10 @@ where
 }
 
 pub fn read_graph_into_trivial_edges(filename: &str) -> Vec<TrivialEdge> {
-    let reader = BufReader::new(File::open(filename).unwrap());
+    let mut reader = BufReader::new(File::open(filename).unwrap());
+    let config = config::standard();
 
-    let input_edges: Vec<InputEdge<usize>> = deserialize_from(reader).unwrap();
+    let input_edges: Vec<InputEdge<usize>> = decode_from_std_read(&mut reader, config).unwrap();
     let edges = input_edges
         .iter()
         .map(|edge| TrivialEdge {
@@ -34,15 +35,15 @@ pub fn read_graph_into_trivial_edges(filename: &str) -> Vec<TrivialEdge> {
     edges
 }
 
-pub fn read_vec_from_file<T: serde::de::DeserializeOwned>(filename: &str) -> Vec<T> {
-    let reader = BufReader::new(File::open(filename).unwrap());
-    deserialize_from(reader).unwrap()
+pub fn read_vec_from_file<T: bincode::Decode<()>>(filename: &str) -> Vec<T> {
+    let mut reader = BufReader::new(File::open(filename).unwrap());
+    let config = config::standard();
+    decode_from_std_read(&mut reader, config).unwrap()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde::{Deserialize, Serialize};
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -74,29 +75,30 @@ mod tests {
     #[test]
     fn test_read_graph_into_trivial_edges() {
         // Define test input edges
-        #[derive(Serialize)]
+        #[derive(bincode::Encode)]
         struct TestEdge {
             source: usize,
             target: usize,
-            weight: f64,
+            weight: usize,
         }
 
         let input_edges = vec![
             TestEdge {
                 source: 1,
                 target: 2,
-                weight: 1.0,
+                weight: 10,
             },
             TestEdge {
                 source: 2,
                 target: 3,
-                weight: 2.0,
+                weight: 20,
             },
         ];
 
         // Serialize the input edges to a temporary file
         let mut file = NamedTempFile::new().unwrap();
-        bincode::serialize_into(&mut file, &input_edges).unwrap();
+        let config = config::standard();
+        bincode::encode_into_std_write(&input_edges, &mut file, config).unwrap();
 
         // Read the graph into trivial edges
         let trivial_edges = read_graph_into_trivial_edges(file.path().to_str().unwrap());
@@ -124,7 +126,8 @@ mod tests {
 
         // Serialize the test data to a temporary file
         let mut file = NamedTempFile::new().unwrap();
-        bincode::serialize_into(&mut file, &test_data).unwrap();
+        let config = config::standard();
+        bincode::encode_into_std_write(&test_data, &mut file, config).unwrap();
 
         // Read the vector from the file
         let result: Vec<i32> = read_vec_from_file(file.path().to_str().unwrap());
@@ -137,7 +140,7 @@ mod tests {
     #[test]
     fn test_read_vec_from_file_with_custom_struct() {
         // Define a custom struct for testing
-        #[derive(Serialize, Deserialize, Debug, PartialEq)]
+        #[derive(Debug, PartialEq, bincode::Encode, bincode::Decode)]
         struct TestStruct {
             id: u64,
             name: String,
@@ -156,7 +159,8 @@ mod tests {
 
         // Serialize the test data to a temporary file
         let mut file = NamedTempFile::new().unwrap();
-        bincode::serialize_into(&mut file, &test_data).unwrap();
+        let config = config::standard();
+        bincode::encode_into_std_write(&test_data, &mut file, config).unwrap();
 
         // Read the vector from the file
         let result: Vec<TestStruct> = read_vec_from_file(file.path().to_str().unwrap());
