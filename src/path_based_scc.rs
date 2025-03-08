@@ -19,11 +19,24 @@
 
 use crate::graph::Graph;
 
+#[derive(Clone, Copy)]
+enum DfsState {
+    Visit(usize),             // Knoten zum ersten Mal besuchen
+    ProcessNeighbors(usize),  // Nachbarn verarbeiten
+    Finalize(usize),         // SCC finalisieren
+}
+
 pub struct PathBasedScc {
     scc: Vec<usize>,
     stack: Vec<usize>,  // Stack S
     bounds: Vec<usize>, // Stack B
     component: usize,
+}
+
+impl Default for PathBasedScc {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PathBasedScc {
@@ -46,44 +59,63 @@ impl PathBasedScc {
         // main loop
         for v in graph.node_range() {
             if self.scc[v] == usize::MAX {
-                self.dfs(v, graph);
+                self.dfs_iterative(v, graph);
             }
         }
 
         self.scc.clone()
     }
 
-    fn dfs<T>(&mut self, v: usize, graph: &(impl Graph<T> + 'static)) {
-        // step 1: push v onto S
-        self.stack.push(v);
-        self.scc[v] = self.stack.len() - 1;
-        self.bounds.push(self.scc[v]);
+    fn dfs_iterative<T>(&mut self, start: usize, graph: &(impl Graph<T> + 'static)) {
+        let mut dfs_stack = vec![DfsState::Visit(start)];
+        let mut edge_indices = vec![0usize; graph.number_of_nodes()];
 
-        // steps 2 and 3: visit all neighbors
-        for e in graph.edge_range(v) {
-            let w = graph.target(e);
-            if self.scc[w] == usize::MAX {
-                self.dfs(w, graph);
-            } else {
-                // step 4: contract if necessary
-                while let Some(&bound) = self.bounds.last() {
-                    if self.scc[w] < bound {
-                        self.bounds.pop();
+        while let Some(state) = dfs_stack.pop() {
+            match state {
+                DfsState::Visit(v) => {
+                    // step 1: push v onto S
+                    self.stack.push(v);
+                    self.scc[v] = self.stack.len() - 1;
+                    self.bounds.push(self.scc[v]);
+                    dfs_stack.push(DfsState::ProcessNeighbors(v));
+                }
+
+                DfsState::ProcessNeighbors(v) => {
+                    let edges: Vec<_> = graph.edge_range(v).collect();
+                    if edge_indices[v] < edges.len() {
+                        let e = edges[edge_indices[v]];
+                        edge_indices[v] += 1;
+                        dfs_stack.push(DfsState::ProcessNeighbors(v));
+
+                        let w = graph.target(e);
+                        if self.scc[w] == usize::MAX {
+                            dfs_stack.push(DfsState::Visit(w));
+                        } else {
+                            // contract if necessary
+                            while let Some(&bound) = self.bounds.last() {
+                                if self.scc[w] < bound {
+                                    self.bounds.pop();
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
                     } else {
-                        break;
+                        dfs_stack.push(DfsState::Finalize(v));
                     }
                 }
-            }
-        }
 
-        // steps 5, 6, and 7: assign the SCC index
-        if Some(&self.scc[v]) == self.bounds.last() {
-            self.bounds.pop();
-            self.component -= 1;
-            while let Some(u) = self.stack.pop() {
-                self.scc[u] = self.component;
-                if u == v {
-                    break;
+                DfsState::Finalize(v) => {
+                    if Some(&self.scc[v]) == self.bounds.last() {
+                        self.bounds.pop();
+                        self.component -= 1;
+                        while let Some(u) = self.stack.pop() {
+                            self.scc[u] = self.component;
+                            if u == v {
+                                break;
+                            }
+                        }
+                    }
                 }
             }
         }
