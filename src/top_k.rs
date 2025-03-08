@@ -85,7 +85,7 @@ mod test {
             Hit { score: 20 },
         ];
         let output = top_k(input, 3);
-        let expected = vec![Hit { score: 1 }, Hit { score: 5 }, Hit { score: 8 }];
+        let expected = [Hit { score: 1 }, Hit { score: 5 }, Hit { score: 8 }];
 
         output.iter().zip(expected.iter()).for_each(|(a, b)| {
             assert_eq!(a.value(), b.value());

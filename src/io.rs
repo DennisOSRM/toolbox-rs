@@ -24,15 +24,14 @@ pub fn read_graph_into_trivial_edges(filename: &str) -> Vec<TrivialEdge> {
     let config = config::standard();
 
     let input_edges: Vec<InputEdge<usize>> = decode_from_std_read(&mut reader, config).unwrap();
-    let edges = input_edges
+
+    input_edges
         .iter()
         .map(|edge| TrivialEdge {
             source: edge.source,
             target: edge.target,
         })
-        .collect_vec();
-
-    edges
+        .collect_vec()
 }
 
 pub fn read_vec_from_file<T: bincode::Decode<()>>(filename: &str) -> Vec<T> {

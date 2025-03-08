@@ -89,24 +89,24 @@ mod test {
     #[test]
     fn creation_push_peek_pop() {
         let mut list = super::SingleLinkedList::new();
-        assert_eq!(list.is_empty(), true);
+        assert!(list.is_empty());
         list.push_front(1);
         list.push_front(2);
         list.push_front(3);
-        assert_eq!(list.is_empty(), false);
+        assert!(!list.is_empty());
         assert_eq!(list.peek_front(), Some(&3));
         assert_eq!(list.peek_front_mut(), Some(&mut 3));
         assert_eq!(list.pop_front(), Some(3));
         assert_eq!(list.pop_front(), Some(2));
         assert_eq!(list.pop_front(), Some(1));
         assert_eq!(list.pop_front(), None);
-        assert_eq!(list.is_empty(), true);
+        assert!(list.is_empty());
     }
 
     #[test]
     fn find_not_less() {
         let mut list = super::SingleLinkedList::new();
-        assert_eq!(list.is_empty(), true);
+        assert!(list.is_empty());
         assert!(list.is_sorted());
         list.push_front(8);
         list.push_front(5);
@@ -125,7 +125,7 @@ mod test {
     #[test]
     fn unsorted() {
         let mut list = super::SingleLinkedList::default();
-        assert_eq!(list.is_empty(), true);
+        assert!(list.is_empty());
         assert!(list.is_sorted());
         list.push_front(5);
         list.push_front(8);

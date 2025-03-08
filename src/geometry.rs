@@ -212,14 +212,14 @@ mod tests {
 
     #[test]
     fn println_truncated() {
-        let input = FPCoordinate::new_from_lat_lon(33.359699123456789, -114.945064127454);
+        let input = FPCoordinate::new_from_lat_lon(33.359_699_123_456_79, -114.945064127454);
         let output = format!("{input}");
         assert_eq!(output, "33.359699, -114.945064");
     }
 
     #[test]
     fn to_lon_lat_pair_vec_equivalent() {
-        let input = FPCoordinate::new_from_lat_lon(33.359699123456789, -114.945064127454);
+        let input = FPCoordinate::new_from_lat_lon(33.359_699_123_456_79, -114.945064127454);
         let output1 = input.to_lon_lat_pair();
         let output2 = input.to_lon_lat_vec();
 
