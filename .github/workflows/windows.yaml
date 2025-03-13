@@ -29,7 +29,7 @@ jobs:
     - name: checkout
       uses: actions/checkout@v4
 
-    - name Install protoc
+    - name: Install protoc
       run: choco install protoc
 
       # Run build
