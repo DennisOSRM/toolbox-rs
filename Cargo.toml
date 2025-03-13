@@ -23,7 +23,12 @@ path = "src/scaffold/bin/main.rs"
 name = "graph_plier"
 path = "src/graph_plier/bin/main.rs"
 
+[[bin]]
+name = "tile_server"
+path = "src/tile_server/bin/main.rs"
+
 [dependencies]
+actix-web = "4.10.2"
 bincode = "2.0.0"
 bitvec = "1.0.1"
 clap = { version = "4.5.27", features = ["derive"] }
