@@ -1,4 +1,4 @@
-use actix_web::{web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{App, HttpResponse, HttpServer, Responder, web};
 use std::error::Error;
 
 const INDEX_HTML: &str = include_str!("../client/index.html");
@@ -6,7 +6,7 @@ const INDEX_HTML: &str = include_str!("../client/index.html");
 // Tile request handler
 async fn get_tile(path: web::Path<(String, u32, u32, u32)>) -> impl Responder {
     let (tileset_id, zoom, x, y) = path.into_inner();
-    
+
     // TODO: Implement actual tile fetching logic here
     // For now, just return a placeholder response
     println!("Requesting tile: {tileset_id} at z={zoom} x={x} y={y}");
