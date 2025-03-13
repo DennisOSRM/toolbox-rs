@@ -27,7 +27,12 @@ path = "src/graph_plier/bin/main.rs"
 name = "solver"
 path = "src/solver/bin/main.rs"
 
+[[bin]]
+name = "tile_server"
+path = "src/tile_server/bin/main.rs"
+
 [dependencies]
+actix-web = "4.11.0"
 rkyv = "0.8.15"
 bitvec = "1.0.1"
 clap = { version = "4.5.38", features = ["derive"] }
@@ -38,6 +43,7 @@ indicatif = "0.18.0"
 itertools = "0.15.0"
 log = "0.4.27"
 num = "0.4.3"
+prost = "0.13.5"
 rand = "0.10.0"
 rayon = "1.10.0"
 tempfile = "3.20.0"
@@ -46,6 +52,9 @@ xxhash-rust = {version = "0.8.15", features = ["xxh3"] }
 
 [target.'cfg(unix)'.dependencies]
 jemallocator = "0.5.4"
+
+[build-dependencies]
+prost-build = "0.13.5"
 
 [dev-dependencies]
 criterion = "0.8.2"
