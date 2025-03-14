@@ -47,13 +47,59 @@ pub fn non_zero_lsb_index<T: Integer + PrimInt>(n: T) -> u32 {
     n.trailing_zeros()
 }
 
+/// Evaluates a polynomial using Horner's method.
+///
+/// Given a polynomial in the form a₀xⁿ + a₁xⁿ⁻¹ + ... + aₙ₋₁x + aₙ,
+/// the coefficients should be provided in reverse order: [a₀, a₁, ..., aₙ].
+///
+/// # Arguments
+///
+/// * `x` - The value at which to evaluate the polynomial
+/// * `coefficients` - The coefficients of the polynomial in descending order of degree
+///
+/// # Examples
+///
+/// ```
+/// use toolbox_rs::math::horner;
+///
+/// // Evaluate 2x² + 3x + 1 at x = 2
+/// let coefficients = [2.0, 3.0, 1.0];
+/// assert_eq!(horner(2.0, &coefficients), 15.0);
+///
+/// // Evaluate constant polynomial f(x) = 5
+/// assert_eq!(horner(42.0, &[5.0]), 5.0);
+///
+/// // Empty coefficient array represents the zero polynomial
+/// assert_eq!(horner(1.0, &[]), 0.0);
+/// ```
 pub fn horner(x: f64, coefficients: &[f64]) -> f64 {
     coefficients.iter().fold(0.0, |acc, &coeff| acc * x + coeff)
 }
 
+/// Encodes a signed integer into an unsigned integer using zigzag encoding.
+///
+/// ZigZag encoding maps signed integers to unsigned integers in a way that preserves
+/// magnitude ordering while using fewer bits for small negative values.
+///
+/// # Examples
+///
+/// ```
+/// use toolbox_rs::math::zigzag_encode;
+///
+/// assert_eq!(zigzag_encode(0i32), 0u32);
+/// assert_eq!(zigzag_encode(-1i32), 1u32);
+/// assert_eq!(zigzag_encode(1i32), 2u32);
+/// assert_eq!(zigzag_encode(-2i32), 3u32);
+/// ```
+pub fn zigzag_encode(value: i32) -> u32 {
+    ((value << 1) ^ (value >> 31)) as u32
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::math::{choose, horner, lsb_index, non_zero_lsb_index, prev_power_of_two};
+    use crate::math::{
+        choose, horner, lsb_index, non_zero_lsb_index, prev_power_of_two, zigzag_encode,
+    };
 
     #[test]
     fn some_well_known_n_choose_k_values() {
@@ -129,5 +175,14 @@ mod tests {
     fn test_horner4() {
         // Test of constant polynom
         assert_eq!(horner(42.0, &[5.0]), 5.0);
+    }
+
+    #[test]
+    fn test_zigzag_encode() {
+        assert_eq!(zigzag_encode(0), 0);
+        assert_eq!(zigzag_encode(-1), 1);
+        assert_eq!(zigzag_encode(1), 2);
+        assert_eq!(zigzag_encode(-2), 3);
+        assert_eq!(zigzag_encode(i32::MIN), u32::MAX);
     }
 }
