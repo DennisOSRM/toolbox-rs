@@ -34,15 +34,15 @@ bitvec = "1.0.1"
 clap = { version = "4.5.32", features = ["derive"] }
 env_logger = "0.11.7"
 fxhash = "0.2.1"
-geojson = "0.24.1"
+geojson = "0.24.2"
 indicatif = "0.17.11"
 itertools = "0.14.0"
 log = "0.4.26"
 num = "0.4.3"
-prost = "0.12"
+prost = "0.13.5"
 rand = "0.9.0"
 rayon = "1.10.0"
-tempfile = "3.16.0"
+tempfile = "3.19.0"
 xxhash-rust = {version = "0.8.15", features = ["xxh3"] }
 
 [build-dependencies]
