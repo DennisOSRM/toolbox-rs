@@ -9,5 +9,5 @@ criterion_main!(
     benchmarks::k_way_merge_iterator::k_way_merge,
     benchmarks::loser_tree::loser_tree,
     benchmarks::polyline::polyline,
-    benchmarks::wgs84::wgs_benches,
+    benchmarks::mercator::mercator_benches,
 );
