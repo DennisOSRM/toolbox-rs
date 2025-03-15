@@ -30,7 +30,7 @@ use std::f64::consts::PI;
 
 use crate::{
     math::horner,
-    wgs84::{EARTH_RADIUS_KM, FloatLatitude, FloatLongitude},
+    wgs84::{EARTH_RADIUS_KM, FloatCoordinate, FloatLatitude, FloatLongitude},
 };
 
 /// Converts a y-coordinate in Web Mercator projection back to latitude in degrees
@@ -117,9 +117,39 @@ pub fn lat_to_y_approx(latitude: FloatLatitude) -> f64 {
     horner(latitude.0, &num_coeffs) / horner(latitude.0, &den_coeffs)
 }
 
+/// Converts WGS84 coordinates to Web Mercator projection
+///
+/// # Arguments
+/// * `wgs84_coordinate` - Coordinate pair in WGS84 (latitude, longitude)
+pub fn from_wgs84(wgs84_coordinate: FloatCoordinate) -> (f64, f64) {
+    (
+        wgs84_coordinate.lon.0,
+        lat_to_y_approx(wgs84_coordinate.lat),
+    )
+}
+
+/// Converts Web Mercator coordinates back to WGS84
+///
+/// # Arguments
+/// * `mercator_coordinate` - Coordinate pair in Web Mercator projection
+pub fn to_wgs84(mercator_coordinate: (f64, f64)) -> FloatCoordinate {
+    FloatCoordinate {
+        lon: FloatLongitude(mercator_coordinate.0),
+        lat: y_to_lat(mercator_coordinate.1),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::f64::EPSILON;
+
+    const TEST_COORDINATES: [(f64, f64); 4] = [
+        (0.0, 0.0),     // equator
+        (51.0, 13.0),   // Dresden
+        (-33.9, 151.2), // Sydney
+        (85.0, 180.0),  // near pole
+    ];
     const ALLOWED_ERROR: f64 = 0.0000000000001;
     // Allowed error in IEEE-754-based projection math.
     // Note that this is way below a centimeter of error
@@ -223,6 +253,69 @@ mod tests {
                 lon,
                 lon,
                 lon_result
+            );
+        }
+    }
+
+    #[test]
+    fn test_wgs84_roundtrip() {
+        for &(lat, lon) in TEST_COORDINATES.iter() {
+            let wgs84 = FloatCoordinate {
+                lat: FloatLatitude(lat),
+                lon: FloatLongitude(lon),
+            };
+
+            let mercator = from_wgs84(wgs84);
+            let roundtrip = to_wgs84(mercator);
+
+            assert!(
+                (roundtrip.lat.0 - wgs84.lat.0).abs() < 1e-10,
+                "Latitude roundtrip failed: {} -> {} -> {}",
+                wgs84.lat.0,
+                mercator.0,
+                roundtrip.lat.0
+            );
+
+            assert!(
+                (roundtrip.lon.0 - wgs84.lon.0).abs() < EPSILON,
+                "Longitude roundtrip failed: {} -> {} -> {}",
+                wgs84.lon.0,
+                mercator.0,
+                roundtrip.lon.0
+            );
+        }
+    }
+
+    #[test]
+    fn test_y_lat_conversion() {
+        for &(lat, _) in TEST_COORDINATES.iter() {
+            let latitude = FloatLatitude(lat);
+            let y = lat_to_y(latitude);
+            let roundtrip = y_to_lat(y);
+
+            assert!(
+                (roundtrip.0 - latitude.0).abs() < 1e-10,
+                "y/lat conversion failed: {} -> {} -> {}",
+                latitude.0,
+                y,
+                roundtrip.0
+            );
+        }
+    }
+
+    #[test]
+    fn test_approximation_accuracy() {
+        for &(lat, _) in TEST_COORDINATES.iter() {
+            let latitude = FloatLatitude(lat);
+            let exact = lat_to_y(latitude);
+            let approx = lat_to_y_approx(latitude);
+
+            assert!(
+                (exact - approx).abs() < 1e-10,
+                "Approximation too inaccurate at {}: exact={}, approx={}",
+                lat,
+                exact,
+                approx
             );
         }
     }
