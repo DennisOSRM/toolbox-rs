@@ -34,6 +34,7 @@ pub mod loser_tree;
 pub mod lru;
 pub mod math;
 pub mod max_flow;
+pub mod mercator;
 pub mod merge_entry;
 pub mod merge_tree;
 pub mod metis;
@@ -42,7 +43,6 @@ pub mod one_to_many_dijkstra;
 pub mod partition;
 pub mod path_based_scc;
 pub mod polyline;
-pub mod projection;
 pub mod rdx_sort;
 pub mod renumbering_table;
 pub mod run_iterator;
@@ -55,6 +55,7 @@ pub mod top_k;
 pub mod unidirectional_dijkstra;
 pub mod union_find;
 pub mod unsafe_slice;
+pub mod vector_tile;
 pub mod wgs84;
 
 #[macro_export]
