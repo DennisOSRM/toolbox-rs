@@ -30,7 +30,7 @@ use std::f64::consts::PI;
 
 use crate::{
     math::horner,
-    wgs84::{FloatLatitude, FloatLongitude, EARTH_RADIUS_KM},
+    wgs84::{EARTH_RADIUS_KM, FloatLatitude, FloatLongitude},
 };
 
 /// Converts a y-coordinate in Web Mercator projection back to latitude in degrees
