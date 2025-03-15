@@ -52,7 +52,7 @@ use crate::{
 };
 
 /// Size of a map tile in pixels
-const TILE_SIZE: f64 = 256.0;
+const TILE_SIZE: usize = 4096;
 
 /// Converts longitude in degrees to pixel x-coordinate
 ///
@@ -60,8 +60,8 @@ const TILE_SIZE: f64 = 256.0;
 /// * `lon` - Longitude in degrees
 /// * `zoom` - Zoom level
 pub fn degree_to_pixel_lon(lon: FloatLongitude, zoom: u32) -> f64 {
-    let shift = (1 << zoom) as f64 * TILE_SIZE;
-    let b = shift / 2.0;
+    let shift = (1 << zoom) * TILE_SIZE;
+    let b = shift as f64 / 2.0;
     b * (1.0 + lon.0 / 180.0)
 }
 
@@ -71,8 +71,8 @@ pub fn degree_to_pixel_lon(lon: FloatLongitude, zoom: u32) -> f64 {
 /// * `lat` - Latitude in degrees
 /// * `zoom` - Zoom level
 pub fn degree_to_pixel_lat(lat: FloatLatitude, zoom: u32) -> f64 {
-    let shift = (1 << zoom) as f64 * TILE_SIZE;
-    let b = shift / 2.0;
+    let shift = (1 << zoom) * TILE_SIZE;
+    let b = shift as f64 / 2.0;
     b * (1.0 - lat_to_y(lat) / 180.0)
 }
 
@@ -82,10 +82,10 @@ pub fn degree_to_pixel_lat(lat: FloatLatitude, zoom: u32) -> f64 {
 /// * `shift` - Pixel shift based on zoom level (2^zoom * TILE_SIZE)
 /// * `x` - x-coordinate in pixels (modified in place)
 /// * `y` - y-coordinate in pixels (modified in place)
-pub fn pixel_to_degree(shift: f64, x: &mut f64, y: &mut f64) {
-    let b = shift / 2.0;
-    *x = ((*x - b) / shift) * 360.0;
-    let normalized_y = *y / shift;
+pub fn pixel_to_degree(shift: usize, x: &mut f64, y: &mut f64) {
+    let b = shift as f64 / 2.0;
+    *x = ((*x - b) / shift as f64) * 360.0;
+    let normalized_y = *y / shift as f64;
     let lat_rad = std::f64::consts::PI * (1.0 - 2.0 * normalized_y);
     *y = y_to_lat(lat_rad.to_degrees()).0;
 }
@@ -116,18 +116,18 @@ mod tests {
         let px_lat = degree_to_pixel_lat(center.lat, 0);
         let px_lon = degree_to_pixel_lon(center.lon, 0);
 
-        assert!((px_lat - TILE_SIZE / 2.0).abs() < EPSILON);
-        assert!((px_lon - TILE_SIZE / 2.0).abs() < EPSILON);
+        assert!((px_lat - TILE_SIZE as f64 / 2.0).abs() < EPSILON);
+        assert!((px_lon - TILE_SIZE as f64 / 2.0).abs() < EPSILON);
     }
 
     #[test]
     fn test_pixel_to_degree() {
         let test_cases = [
             // shift,    x_in,   y_in,    x_out,  y_out
-            (256.0, 128.0, 128.0, 0.0, 0.0),     // center at zoom 0
-            (512.0, 256.0, 256.0, 0.0, 0.0),     // center at zoom 1
-            (256.0, 0.0, 0.0, -180.0, 85.0),     // northwest corner
-            (256.0, 256.0, 256.0, 180.0, -85.0), // southeast corner
+            (256, 128.0, 128.0, 0.0, 0.0),     // center at zoom 0
+            (512, 256.0, 256.0, 0.0, 0.0),     // center at zoom 1
+            (256, 0.0, 0.0, -180.0, 85.0),     // northwest corner
+            (256, 256.0, 256.0, 180.0, -85.0), // southeast corner
         ];
 
         for (shift, x_in, y_in, x_expected, y_expected) in test_cases {
@@ -155,7 +155,7 @@ mod tests {
         // test roundtrip with degree_to_pixel_*
         for &(lat, lon) in TEST_COORDINATES.iter() {
             let zoom = 1u32;
-            let shift = (1 << zoom) as f64 * TILE_SIZE;
+            let shift = (1 << zoom) * TILE_SIZE;
 
             let orig_lat = FloatLatitude(lat);
             let orig_lon = FloatLongitude(lon);
@@ -197,8 +197,8 @@ mod tests {
         ];
 
         for zoom in 0..=18 {
-            let shift = (1 << zoom) as f64 * TILE_SIZE;
-            let center = shift / 2.0;
+            let shift = (1 << zoom) * TILE_SIZE;
+            let center = shift as f64 / 2.0;
 
             for &lat in &test_coordinates {
                 let px = degree_to_pixel_lat(lat, zoom);
@@ -213,7 +213,7 @@ mod tests {
 
                 // Pixel-Koordinaten müssen im gültigen Bereich liegen
                 assert!(
-                    px >= 0.0 && px <= shift,
+                    px >= 0.0 && px <= shift as f64,
                     "Pixel-Koordinate außerhalb des gültigen Bereichs bei Zoom {}: lat={}, px={}",
                     zoom,
                     lat.0,
