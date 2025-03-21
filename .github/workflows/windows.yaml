@@ -40,11 +40,6 @@ jobs:
         rustup target add ${{ matrix.target }}
       shell: powershell
 
-    - name: Add mingw64 to path for x86_64-gnu
-      run: echo "C:\msys64\mingw64\bin" >> $GITHUB_PATH
-      if: matrix.target == 'x86_64-pc-windows-gnu' && matrix.channel == 'nightly'
-      shell: bash
-
     - name: Build and Test
       shell: cmd
       run: cargo test
