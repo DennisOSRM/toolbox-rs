@@ -70,8 +70,11 @@ impl BoundingBox {
         let c3 = FPCoordinate::new(c1.lat, c2.lon);
         let c4 = FPCoordinate::new(c2.lat, c1.lon);
 
-        let distance = c1.distance_to(coordinate).min(c2.distance_to(coordinate)).min(
-            c3.distance_to(coordinate)).min(c4.distance_to(coordinate));
+        let distance = c1
+            .distance_to(coordinate)
+            .min(c2.distance_to(coordinate))
+            .min(c3.distance_to(coordinate))
+            .min(c4.distance_to(coordinate));
         distance
     }
 
@@ -166,21 +169,17 @@ pub mod tests {
 
     #[test]
     fn extend_with_merge_two_valid() {
-        let mut b1 = BoundingBox::from_coordinates(&[
-            FPCoordinate::new(10, 10),
-            FPCoordinate::new(20, 20),
-        ]);
-        
-        let b2 = BoundingBox::from_coordinates(&[
-            FPCoordinate::new(15, 15),
-            FPCoordinate::new(25, 25),
-        ]);
+        let mut b1 =
+            BoundingBox::from_coordinates(&[FPCoordinate::new(10, 10), FPCoordinate::new(20, 20)]);
+
+        let b2 =
+            BoundingBox::from_coordinates(&[FPCoordinate::new(15, 15), FPCoordinate::new(25, 25)]);
 
         b1.extend_with(&b2);
 
         assert_eq!(b1.min, FPCoordinate::new(10, 10));
         assert_eq!(b1.max, FPCoordinate::new(25, 25));
-    
+
         println!("{:?}", b1);
 
         assert!(b1.is_valid());
@@ -202,25 +201,25 @@ pub mod tests {
     #[test]
     fn extend_with_longitude_extension() {
         let mut b1 = BoundingBox::from_coordinates(&[
-            FPCoordinate::new(10, -20),  // lat=10, lon=-20
-            FPCoordinate::new(15, -10),  // lat=15, lon=-10
+            FPCoordinate::new(10, -20), // lat=10, lon=-20
+            FPCoordinate::new(15, -10), // lat=15, lon=-10
         ]);
-        
+
         let b2 = BoundingBox::from_coordinates(&[
-            FPCoordinate::new(12, 0),    // lat=12, lon=0
-            FPCoordinate::new(14, 10),   // lat=14, lon=10
+            FPCoordinate::new(12, 0),  // lat=12, lon=0
+            FPCoordinate::new(14, 10), // lat=14, lon=10
         ]);
 
         // Initial checks
         assert_eq!(b1.max.lon, -10);
-        
+
         // Extend b1 with b2
         b1.extend_with(&b2);
 
         // Verify longitude extension
-        assert_eq!(b1.min.lon, -20);  // Should keep original western boundary
-        assert_eq!(b1.max.lon, 10);   // Should extend eastern boundary
-        
+        assert_eq!(b1.min.lon, -20); // Should keep original western boundary
+        assert_eq!(b1.max.lon, 10); // Should extend eastern boundary
+
         assert!(b1.is_valid());
     }
 }

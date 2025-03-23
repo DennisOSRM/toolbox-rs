@@ -72,7 +72,7 @@ pub fn main() {
             .collect();
 
         info!("sorting convex cell hulls by Z-order");
-        hulls.sort_by(|a, b| zorder_cmp(a.1.center(), b.1.center()));
+        hulls.sort_by(|a, b| zorder_cmp(&a.1.center(), &b.1.center()));
         info!("writing to {}", &args.convex_cells_geojson);
         serialize::convex_cell_hull_geojson(&hulls, &args.convex_cells_geojson);
     }
