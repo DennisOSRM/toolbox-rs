@@ -148,39 +148,39 @@ pub struct TileBounds {
     pub max_lat: FloatLatitude,
 }
 
-/// Berechnet die WGS84-Koordinaten der Grenzen einer Kachel (Tile)
+/// Calculates the WGS84 coordinate bounds of a map tile
 ///
-/// Jede Kachel wird durch ihre Position (x, y) und Zoomstufe definiert.
-/// Die zurückgegebenen Koordinaten beschreiben ein Rechteck in WGS84-Koordinaten,
-/// das die Kachel vollständig umschließt.
+/// Each tile is defined by its position (x, y) and zoom level.
+/// The returned coordinates describe a rectangle in WGS84 coordinates
+/// that fully encompasses the tile.
 ///
 /// # Arguments
-/// * `zoom` - Zoomstufe (0-20)
-/// * `x` - X-Koordinate der Kachel (0 bis 2^zoom - 1)
-/// * `y` - Y-Koordinate der Kachel (0 bis 2^zoom - 1)
+/// * `zoom` - Zoom level (0-20)
+/// * `x` - X coordinate of the tile (0 to 2^zoom - 1)
+/// * `y` - Y coordinate of the tile (0 to 2^zoom - 1)
 ///
 /// # Returns
-/// Ein `TileBounds`-Objekt mit den Grenzkoordinaten:
-/// - `min_lon`: Westliche Grenze
-/// - `min_lat`: Südliche Grenze
-/// - `max_lon`: Östliche Grenze
-/// - `max_lat`: Nördliche Grenze
+/// A `TileBounds` object containing the boundary coordinates:
+/// - `min_lon`: Western boundary
+/// - `min_lat`: Southern boundary
+/// - `max_lon`: Eastern boundary
+/// - `max_lat`: Northern boundary
 ///
 /// # Examples
 /// ```rust
 /// use toolbox_rs::vector_tile::get_tile_bounds;
 ///
-/// // Berlin Mitte bei Zoom 14
+/// // Central Berlin at zoom 14
 /// let bounds = get_tile_bounds(14, 8802, 5373);
 /// assert!(bounds.min_lon.0 >= 13.4033203125);
 /// assert!(bounds.max_lon.0 <= 13.42529296875);
 /// ```
 ///
-/// # Mathematische Details
-/// Die Berechnung basiert auf der Web-Mercator-Projektion:
-/// - Longitude: linear von -180° bis +180°
-/// - Latitude: nicht-linear aufgrund der Mercator-Projektion
-/// - Die Y-Koordinaten werden über arctan(sinh(π * (1-2y/2^zoom))) berechnet
+/// # Mathematical Details
+/// The calculation is based on the Web Mercator projection:
+/// - Longitude: linear from -180° to +180°
+/// - Latitude: non-linear due to Mercator projection
+/// - Y coordinates are calculated using arctan(sinh(π * (1-2y/2^zoom)))
 pub fn get_tile_bounds(zoom: u32, x: u32, y: u32) -> TileBounds {
     let n = (1u32 << zoom) as f64;
 
