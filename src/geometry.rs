@@ -268,17 +268,17 @@ mod tests {
 
     #[test]
     fn test_distance_to() {
-        let ny = FPCoordinate::new_from_lat_lon(40.730610, -73.935242);  // New York
+        let ny = FPCoordinate::new_from_lat_lon(40.730610, -73.935242); // New York
         let sf = FPCoordinate::new_from_lat_lon(37.773972, -122.431297); // San Francisco
-        
+
         // Test symmetry
         let d1 = ny.distance_to(&sf);
         let d2 = sf.distance_to(&ny);
         assert_eq!(d1, d2);
-        
+
         // Test known distance (approximately 4140km)
         assert_delta!(d1, 4140.175105689902, 0.0000001);
-        
+
         // Test zero distance to self
         assert_eq!(ny.distance_to(&ny), 0.0);
     }
