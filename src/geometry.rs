@@ -44,6 +44,25 @@ pub mod primitives {
             vec![lon, lat]
         }
 
+        /// Calculates the great circle distance between two coordinates using the Haversine formula
+        ///
+        /// The distance is returned in kilometers.
+        ///
+        /// # Examples
+        ///
+        /// ```
+        /// use toolbox_rs::geometry::primitives::FPCoordinate;
+        ///
+        /// // Distance between New York and San Francisco
+        /// let ny = FPCoordinate::new_from_lat_lon(40.730610, -73.935242);
+        /// let sf = FPCoordinate::new_from_lat_lon(37.773972, -122.431297);
+        ///
+        /// let distance = ny.distance_to(&sf);
+        /// assert!((distance - 4140.175).abs() < 0.001); // ~4140 km
+        ///
+        /// // Distance to self is always 0
+        /// assert_eq!(ny.distance_to(&ny), 0.0);
+        /// ```
         pub fn distance_to(&self, other: &FPCoordinate) -> f64 {
             distance(self, other)
         }
@@ -245,5 +264,22 @@ mod tests {
         let p1 = Point::default();
         let p2 = Point::new();
         assert_eq!(p1, p2);
+    }
+
+    #[test]
+    fn test_distance_to() {
+        let ny = FPCoordinate::new_from_lat_lon(40.730610, -73.935242);  // New York
+        let sf = FPCoordinate::new_from_lat_lon(37.773972, -122.431297); // San Francisco
+        
+        // Test symmetry
+        let d1 = ny.distance_to(&sf);
+        let d2 = sf.distance_to(&ny);
+        assert_eq!(d1, d2);
+        
+        // Test known distance (approximately 4140km)
+        assert_delta!(d1, 4140.175105689902, 0.0000001);
+        
+        // Test zero distance to self
+        assert_eq!(ny.distance_to(&ny), 0.0);
     }
 }
