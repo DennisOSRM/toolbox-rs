@@ -70,12 +70,10 @@ impl BoundingBox {
         let c3 = FPCoordinate::new(c1.lat, c2.lon);
         let c4 = FPCoordinate::new(c2.lat, c1.lon);
 
-        let distance = c1
-            .distance_to(coordinate)
+        c1.distance_to(coordinate)
             .min(c2.distance_to(coordinate))
             .min(c3.distance_to(coordinate))
-            .min(c4.distance_to(coordinate));
-        distance
+            .min(c4.distance_to(coordinate))
     }
 
     pub fn is_valid(&self) -> bool {
