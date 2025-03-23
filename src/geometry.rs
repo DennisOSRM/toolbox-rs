@@ -43,6 +43,10 @@ pub mod primitives {
             let (lon, lat) = self.to_lon_lat_pair();
             vec![lon, lat]
         }
+
+        pub fn distance_to(&self, other: &FPCoordinate) -> f64 {
+            distance(self, other)
+        }
     }
 
     impl Display for FPCoordinate {

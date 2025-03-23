@@ -44,7 +44,7 @@ use crate::geometry::primitives::FPCoordinate;
 /// let order = zorder_cmp(paris, london);
 /// assert!(order == Ordering::Less || order == Ordering::Equal || order == Ordering::Greater);
 /// ```
-pub fn zorder_cmp(lhs: FPCoordinate, rhs: FPCoordinate) -> std::cmp::Ordering {
+pub fn zorder_cmp(lhs: &FPCoordinate, rhs: &FPCoordinate) -> std::cmp::Ordering {
     let lat_xor = lhs.lat ^ rhs.lat;
     let lon_xor = lhs.lon ^ rhs.lon;
 
@@ -88,7 +88,7 @@ mod tests {
         let ny = FPCoordinate::new_from_lat_lon(40.730610, -73.935242);
         let sf = FPCoordinate::new_from_lat_lon(37.773972, -122.431297);
 
-        assert_eq!(std::cmp::Ordering::Greater, zorder_cmp(ny, sf));
+        assert_eq!(std::cmp::Ordering::Greater, zorder_cmp(&ny, &sf));
     }
 
     #[test]
@@ -96,12 +96,12 @@ mod tests {
         let ny = FPCoordinate::new_from_lat_lon(40.730610, -73.935242);
         let sf = FPCoordinate::new_from_lat_lon(37.773972, -122.431297);
 
-        assert_eq!(std::cmp::Ordering::Less, zorder_cmp(sf, ny));
+        assert_eq!(std::cmp::Ordering::Less, zorder_cmp(&sf, &ny));
     }
 
     #[test]
     fn compare_equal() {
         let ny = FPCoordinate::new_from_lat_lon(40.730610, -73.935242);
-        assert_eq!(std::cmp::Ordering::Equal, zorder_cmp(ny, ny));
+        assert_eq!(std::cmp::Ordering::Equal, zorder_cmp(&ny, &ny));
     }
 }
