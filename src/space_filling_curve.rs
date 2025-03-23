@@ -32,16 +32,16 @@ use crate::geometry::primitives::FPCoordinate;
 /// // Test total ordering properties
 ///
 /// // 1. Antisymmetry: if a ≤ b and b ≤ a then a = b
-/// assert_eq!(zorder_cmp(berlin, berlin), Ordering::Equal);
+/// assert_eq!(zorder_cmp(&berlin, &berlin), Ordering::Equal);
 ///
 /// // 2. Transitivity: if a ≤ b and b ≤ c then a ≤ c
-/// if zorder_cmp(paris, london) == Ordering::Less
-///    && zorder_cmp(london, berlin) == Ordering::Less {
-///     assert_eq!(zorder_cmp(paris, berlin), Ordering::Less);
+/// if zorder_cmp(&paris, &london) == Ordering::Less
+///    && zorder_cmp(&london, &berlin) == Ordering::Less {
+///     assert_eq!(zorder_cmp(&paris, &berlin), Ordering::Less);
 /// }
 ///
 /// // 3. Totality: either a ≤ b or b ≤ a must be true
-/// let order = zorder_cmp(paris, london);
+/// let order = zorder_cmp(&paris, &london);
 /// assert!(order == Ordering::Less || order == Ordering::Equal || order == Ordering::Greater);
 /// ```
 pub fn zorder_cmp(lhs: &FPCoordinate, rhs: &FPCoordinate) -> std::cmp::Ordering {
