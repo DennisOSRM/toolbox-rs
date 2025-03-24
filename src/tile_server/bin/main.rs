@@ -7,7 +7,10 @@ use log::info;
 use prost::Message;
 use std::error::Error;
 use tile::{Feature, GeomType, Layer, Value};
-use toolbox_rs::{geometry::primitives::FPCoordinate, io, math::zigzag_encode, partition::PartitionID, r_tree::RTree};
+use toolbox_rs::{
+    geometry::primitives::FPCoordinate, io, math::zigzag_encode, partition::PartitionID,
+    r_tree::RTree,
+};
 
 // Include the generated protobuf code
 include!(concat!(env!("OUT_DIR"), "/vector_tile.rs"));
@@ -88,7 +91,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // parse and print command line parameters
     let args = <Arguments as clap::Parser>::parse();
 
-
     let partition_ids = io::read_vec_from_file::<PartitionID>(&args.assignment);
     info!("loaded {} partition ids", partition_ids.len());
 
@@ -96,16 +98,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
     info!("loaded {} coordinates", coordinates.len());
 
     let mut min_dist = f64::MAX;
-    let mut minumum = (FPCoordinate::new_from_lat_lon(12., 12.), PartitionID::new(123));
-    (&coordinates).iter().zip(&partition_ids).for_each(|(c, p)| {
-        let dist = c.distance_to(&FPCoordinate::new_from_lat_lon(50.20731, 8.57747));
-        if dist < min_dist {
-            min_dist = dist;
-            minumum = (*c, *p);
-        }
-    });
+    let mut minumum = (
+        FPCoordinate::new_from_lat_lon(12., 12.),
+        PartitionID::new(123),
+    );
+    (&coordinates)
+        .iter()
+        .zip(&partition_ids)
+        .for_each(|(c, p)| {
+            let dist = c.distance_to(&FPCoordinate::new_from_lat_lon(50.20731, 8.57747));
+            if dist < min_dist {
+                min_dist = dist;
+                minumum = (*c, *p);
+            }
+        });
     println!("min dist: {}, coordinate: {:?}", min_dist, minumum);
-
 
     // create r-tree for fast lookup of coordinates
     let rtree = RTree::from_slices(&coordinates, &partition_ids);
