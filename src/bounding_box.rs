@@ -1,4 +1,4 @@
-use crate::geometry::primitives::FPCoordinate;
+use crate::geometry::FPCoordinate;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BoundingBox {
@@ -66,7 +66,7 @@ impl BoundingBox {
     ///
     /// # Examples
     /// ```rust
-    /// use toolbox_rs::geometry::primitives::FPCoordinate;
+    /// use toolbox_rs::geometry::FPCoordinate;
     /// use toolbox_rs::bounding_box::BoundingBox;
     ///
     /// let bbox = BoundingBox::from_coordinates(&[
@@ -98,7 +98,7 @@ impl BoundingBox {
     ///
     /// # Examples
     /// ```rust
-    /// use toolbox_rs::geometry::primitives::FPCoordinate;
+    /// use toolbox_rs::geometry::FPCoordinate;
     /// use toolbox_rs::bounding_box::BoundingBox;
     ///
     /// let bbox = BoundingBox::from_coordinates(&[
@@ -149,7 +149,7 @@ impl From<&BoundingBox> for geojson::Bbox {
 
 #[cfg(test)]
 mod tests {
-    use crate::{bounding_box::BoundingBox, geometry::primitives::FPCoordinate};
+    use crate::{bounding_box::BoundingBox, geometry::FPCoordinate};
 
     #[test]
     fn grid() {

@@ -6,7 +6,7 @@
 //! Note that the sorting order is lon/lat to make sure the x coordinate has
 //! higher precedence than the y coordinate -- an invariant of the algorithm.
 
-use crate::geometry::primitives::{FPCoordinate, is_clock_wise_turn};
+use crate::geometry::{FPCoordinate, is_clock_wise_turn};
 
 pub fn monotone_chain(input_coordinates: &[FPCoordinate]) -> Vec<FPCoordinate> {
     let n = input_coordinates.len();
@@ -50,7 +50,7 @@ pub fn monotone_chain(input_coordinates: &[FPCoordinate]) -> Vec<FPCoordinate> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{convex_hull::monotone_chain, geometry::primitives::FPCoordinate};
+    use crate::{convex_hull::monotone_chain, geometry::FPCoordinate};
 
     #[test]
     fn grid() {
