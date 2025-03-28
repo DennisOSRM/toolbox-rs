@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use log::info;
 
-use crate::{edge::InputEdge, geometry::primitives::FPCoordinate, graph::NodeID, io::read_lines};
+use crate::{edge::InputEdge, geometry::FPCoordinate, graph::NodeID, io::read_lines};
 
 pub enum WeightType {
     Unit,
