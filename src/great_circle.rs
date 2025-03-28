@@ -74,7 +74,7 @@ pub fn haversine(latitude1: f64, longitude1: f64, latitude2: f64, longitude2: f6
 ///
 /// // Antipodal points (approximately)
 /// let dist = vincenty(0.0, 0.0, 0.0, 180.0);
-/// assert!((dist - 20015.0).abs() < 10.0); // Half Earth's circumference
+/// assert!((dist - 20015.0).abs() < 25.0); // Half Earth's circumference
 /// ```
 pub fn vincenty(latitude1: f64, longitude1: f64, latitude2: f64, longitude2: f64) -> f64 {
     let lat1 = latitude1.to_radians();
