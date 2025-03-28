@@ -1,8 +1,6 @@
 pub mod primitives {
     use std::fmt::Display;
 
-    use crate::great_circle::distance::haversine;
-
     #[derive(Clone, Copy, Debug, Eq, PartialEq, bincode::Decode, bincode::Encode)]
     pub struct FPCoordinate {
         pub lat: i32,
@@ -93,33 +91,33 @@ pub mod primitives {
         first > second
     }
 
-    pub fn distance(first: &FPCoordinate, b: &FPCoordinate) -> f64 {
+    pub fn distance(first: &FPCoordinate, second: &FPCoordinate) -> f64 {
         let (lona, lata) = first.to_lon_lat_pair();
-        let (lonb, latb) = b.to_lon_lat_pair();
-        haversine(lata, lona, latb, lonb)
+        let (lonb, latb) = second.to_lon_lat_pair();
+        crate::great_circle::distance::haversine(lata, lona, latb, lonb)
     }
 
     #[derive(Clone, Copy, Debug, PartialEq)]
-    pub struct Point {
+    pub struct Point2D {
         pub x: f64,
         pub y: f64,
     }
 
-    impl Point {
+    impl Point2D {
         pub fn new() -> Self {
-            Point { x: 0., y: 0. }
+            Point2D { x: 0., y: 0. }
         }
     }
 
-    impl Default for Point {
+    impl Default for Point2D {
         fn default() -> Self {
             Self::new()
         }
     }
 
-    pub struct Segment(pub Point, pub Point);
+    pub struct Segment(pub Point2D, pub Point2D);
 
-    pub fn distance_to_segment(point: Point, segment: Segment) -> (f64, Point) {
+    pub fn distance_to_segment_2d(point: Point2D, segment: Segment) -> (f64, Point2D) {
         let mut dx = segment.1.x - segment.0.x;
         let mut dy = segment.1.y - segment.0.y;
 
@@ -141,14 +139,14 @@ pub mod primitives {
             dx = point.x - segment.0.x;
             dy = point.y - segment.0.y;
         } else if t > 1. {
-            closest = Point {
+            closest = Point2D {
                 x: segment.1.x,
                 y: segment.1.y,
             };
             dx = point.x - segment.1.x;
             dy = point.y - segment.1.y;
         } else {
-            closest = Point {
+            closest = Point2D {
                 x: segment.0.x + t * dx,
                 y: segment.0.y + t * dy,
             };
@@ -170,25 +168,25 @@ mod tests {
         };
     }
 
-    use super::primitives::{FPCoordinate, cross_product, distance};
-    use crate::geometry::primitives::{Point, Segment, distance_to_segment, is_clock_wise_turn};
+    use super::primitives::{cross_product, distance, FPCoordinate};
+    use crate::geometry::primitives::{distance_to_segment_2d, is_clock_wise_turn, Point2D, Segment};
 
     #[test]
     fn distance_one() {
-        let p = Point { x: 1., y: 2. };
-        let s = Segment(Point { x: 0., y: 0. }, Point { x: 0., y: 10. });
-        let (distance, location) = distance_to_segment(p, s);
+        let p = Point2D { x: 1., y: 2. };
+        let s = Segment(Point2D { x: 0., y: 0. }, Point2D { x: 0., y: 10. });
+        let (distance, location) = distance_to_segment_2d(p, s);
         assert_eq!(distance, 1.);
-        assert_eq!(location, Point { x: 0., y: 2. });
+        assert_eq!(location, Point2D { x: 0., y: 2. });
     }
 
     #[test]
     fn distance_on_line() {
-        let p = Point { x: 1., y: 2. };
-        let s = Segment(Point { x: 0., y: 0. }, Point { x: 0., y: 0. });
-        let (distance, location) = distance_to_segment(p, s);
+        let p = Point2D { x: 1., y: 2. };
+        let s = Segment(Point2D { x: 0., y: 0. }, Point2D { x: 0., y: 0. });
+        let (distance, location) = distance_to_segment_2d(p, s);
         assert_eq!(distance, 2.23606797749979);
-        assert_eq!(location, Point { x: 0., y: 0. });
+        assert_eq!(location, Point2D { x: 0., y: 0. });
     }
 
     #[test]
@@ -261,8 +259,8 @@ mod tests {
 
     #[test]
     fn point_self_new_equivalent() {
-        let p1 = Point::default();
-        let p2 = Point::new();
+        let p1 = Point2D::default();
+        let p2 = Point2D::new();
         assert_eq!(p1, p2);
     }
 
