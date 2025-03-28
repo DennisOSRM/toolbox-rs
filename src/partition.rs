@@ -11,7 +11,7 @@ use std::{
 /// children are shifted to the left by one and plus 0/1. The parent child
 /// relationship can thus be queried in constant time.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Encode, Decode)]
-pub struct PartitionID(u32);
+pub struct PartitionID(pub u32);
 
 impl PartitionID {
     /// Returns the root id

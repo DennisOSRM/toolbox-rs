@@ -33,16 +33,16 @@ async fn get_tile(path: web::Path<(String, u32, u32, u32)>) -> impl Responder {
                 r#type: Some(GeomType::Linestring.into()),
                 geometry: vec![
                     ((1 & 0x7) | (1 << 3)) as u32, // MoveTo (1) for 1 coordinate
-                    zigzag_encode(5) as u32,
-                    zigzag_encode(5) as u32,       // Move to (5,5)
+                    zigzag_encode(5),
+                    zigzag_encode(5),              // Move to (5,5)
                     ((2 & 0x7) | (3 << 3)) as u32, // LineTo (2) for 3 coordinates
-                    zigzag_encode(1) as u32,
-                    zigzag_encode(0) as u32, // Line to (6,5)
-                    zigzag_encode(0) as u32,
-                    zigzag_encode(1) as u32, // Line to (6,6)
-                    zigzag_encode(-1) as u32,
-                    zigzag_encode(0) as u32, // Line to (5,6)
-                    15,                      // ClosePath
+                    zigzag_encode(1),
+                    zigzag_encode(0), // Line to (6,5)
+                    zigzag_encode(0),
+                    zigzag_encode(1), // Line to (6,6)
+                    zigzag_encode(-1),
+                    zigzag_encode(0), // Line to (5,6)
+                    15,               // ClosePath
                 ],
                 tags: vec![0, 0, 1, 1, 2, 1],
             }],
@@ -102,16 +102,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         FPCoordinate::new_from_lat_lon(12., 12.),
         PartitionID::new(123),
     );
-    (&coordinates)
-        .iter()
-        .zip(&partition_ids)
-        .for_each(|(c, p)| {
-            let dist = c.distance_to(&FPCoordinate::new_from_lat_lon(50.20731, 8.57747));
-            if dist < min_dist {
-                min_dist = dist;
-                minumum = (*c, *p);
-            }
-        });
+    coordinates.iter().zip(&partition_ids).for_each(|(c, p)| {
+        let dist = c.distance_to(&FPCoordinate::new_from_lat_lon(50.20731, 8.57747));
+        if dist < min_dist {
+            min_dist = dist;
+            minumum = (*c, *p);
+        }
+    });
     println!("min dist: {}, coordinate: {:?}", min_dist, minumum);
 
     // create r-tree for fast lookup of coordinates
