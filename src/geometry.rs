@@ -1,7 +1,7 @@
 pub mod primitives {
     use std::fmt::Display;
 
-    use crate::great_circle::distance::haversine;
+    use crate::great_circle::haversine;
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq, bincode::Decode, bincode::Encode)]
     pub struct FPCoordinate {
