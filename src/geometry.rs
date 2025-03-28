@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::great_circle::distance::haversine;
+use crate::great_circle::haversine;
 
 /// A fixed-point coordinate representation for geographical locations.
 ///

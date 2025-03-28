@@ -1,5 +1,5 @@
 use rand::{Rng, distr::StandardUniform};
-use toolbox_rs::rdx_sort::radix::Sort;
+use toolbox_rs::rdx_sort::Sort;
 
 fn main() {
     let rng = rand::rng();

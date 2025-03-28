@@ -148,7 +148,7 @@ impl From<&BoundingBox> for geojson::Bbox {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use crate::{bounding_box::BoundingBox, geometry::FPCoordinate};
 
     #[test]
