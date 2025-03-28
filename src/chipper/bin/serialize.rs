@@ -4,7 +4,7 @@ use std::{
     fs::File,
     io::{BufWriter, Write},
 };
-use toolbox_rs::{edge::TrivialEdge, geometry::primitives::FPCoordinate, partition::PartitionID};
+use toolbox_rs::{edge::TrivialEdge, geometry::FPCoordinate, partition::PartitionID};
 
 use crate::command_line::Arguments;
 

@@ -1,4 +1,4 @@
-use crate::geometry::primitives::FPCoordinate;
+use crate::geometry::FPCoordinate;
 
 /// Provides a total order on fixed-point coordinates that corresponds to the
 /// well-known Z-order space-filling curve.
@@ -21,7 +21,7 @@ use crate::geometry::primitives::FPCoordinate;
 /// # Examples
 /// ```rust
 /// use std::cmp::Ordering;
-/// use toolbox_rs::geometry::primitives::FPCoordinate;
+/// use toolbox_rs::geometry::FPCoordinate;
 /// use toolbox_rs::space_filling_curve::zorder_cmp;
 ///
 /// // Create some test coordinates
@@ -81,7 +81,7 @@ pub fn zorder_cmp(lhs: &FPCoordinate, rhs: &FPCoordinate) -> std::cmp::Ordering 
 
 #[cfg(test)]
 mod tests {
-    use crate::{geometry::primitives::FPCoordinate, space_filling_curve::zorder_cmp};
+    use crate::{geometry::FPCoordinate, space_filling_curve::zorder_cmp};
 
     #[test]
     fn compare_greater() {
