@@ -182,7 +182,7 @@ pub const fn is_clock_wise_turn(o: &FPCoordinate, a: &FPCoordinate, b: &FPCoordi
 pub fn distance(first: &FPCoordinate, b: &FPCoordinate) -> f64 {
     let (lona, lata) = first.to_lon_lat_pair();
     let (lonb, latb) = b.to_lon_lat_pair();
-    crate::great_circle::distance::haversine(lata, lona, latb, lonb)
+    crate::great_circle::haversine(lata, lona, latb, lonb)
 }
 
 #[cfg(test)]
