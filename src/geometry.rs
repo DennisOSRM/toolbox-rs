@@ -63,7 +63,7 @@ impl FPCoordinate {
     pub fn distance(first: &FPCoordinate, second: &FPCoordinate) -> f64 {
         let (lona, lata) = first.to_lon_lat_pair();
         let (lonb, latb) = second.to_lon_lat_pair();
-        crate::great_circle::distance::haversine(lata, lona, latb, lonb)
+        crate::great_circle::haversine(lata, lona, latb, lonb)
     }
     pub fn to_lon_lat_vec(&self) -> Vec<f64> {
         let (lon, lat) = self.to_lon_lat_pair();
