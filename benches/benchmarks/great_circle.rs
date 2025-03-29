@@ -1,5 +1,5 @@
 use criterion::{Criterion, black_box, criterion_group};
-use toolbox_rs::great_circle::distance::*;
+use toolbox_rs::great_circle::*;
 
 pub fn haversine_benchmark(c: &mut Criterion) {
     c.bench_function("haversine", |b| {

@@ -9,8 +9,7 @@ use log::info;
 use rayon::prelude::*;
 use toolbox_rs::{
     bounding_box::BoundingBox, convex_hull::monotone_chain, edge::InputEdge,
-    geometry::primitives::FPCoordinate, io, partition::PartitionID,
-    space_filling_curve::zorder_cmp,
+    geometry::FPCoordinate, io, partition::PartitionID, space_filling_curve::zorder_cmp,
 };
 
 // TODO: tool to generate all the runtime data

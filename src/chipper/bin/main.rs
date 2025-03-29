@@ -8,7 +8,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info};
 use rayon::prelude::*;
 use std::sync::{Arc, atomic::AtomicI32};
-use toolbox_rs::geometry::primitives::FPCoordinate;
+use toolbox_rs::geometry::FPCoordinate;
 use toolbox_rs::io;
 use toolbox_rs::unsafe_slice::UnsafeSlice;
 use toolbox_rs::{

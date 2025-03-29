@@ -9,7 +9,7 @@ use log::debug;
 use crate::{
     dinic::Dinic,
     edge::{InputEdge, TrivialEdge},
-    geometry::primitives::FPCoordinate,
+    geometry::FPCoordinate,
     max_flow::{MaxFlow, ResidualEdgeData},
     renumbering_table::RenumberingTable,
 };
@@ -181,7 +181,7 @@ mod tests {
     use std::sync::{Arc, atomic::AtomicI32};
 
     use crate::{
-        geometry::primitives::FPCoordinate,
+        geometry::FPCoordinate,
         inertial_flow::{Flow, TrivialEdge, flow_cmp, sub_step},
     };
 
