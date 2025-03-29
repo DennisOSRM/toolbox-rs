@@ -1,7 +1,5 @@
 use std::fmt::Display;
 
-use crate::great_circle::haversine;
-
 /// A fixed-point coordinate representation for geographical locations.
 ///
 /// This struct stores latitude and longitude as fixed-point numbers
@@ -62,6 +60,11 @@ impl FPCoordinate {
         (self.lon as f64 / 1000000., self.lat as f64 / 1000000.)
     }
 
+    pub fn distance(first: &FPCoordinate, second: &FPCoordinate) -> f64 {
+        let (lona, lata) = first.to_lon_lat_pair();
+        let (lonb, latb) = second.to_lon_lat_pair();
+        crate::great_circle::haversine(lata, lona, latb, lonb)
+    }
     pub fn to_lon_lat_vec(&self) -> Vec<f64> {
         let (lon, lat) = self.to_lon_lat_pair();
         vec![lon, lat]
@@ -89,6 +92,66 @@ impl FPCoordinate {
     pub fn distance_to(&self, other: &FPCoordinate) -> f64 {
         distance(self, other)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Point2D {
+    pub x: f64,
+    pub y: f64,
+}
+
+impl Point2D {
+    pub fn new() -> Self {
+        Point2D { x: 0., y: 0. }
+    }
+}
+
+impl Default for Point2D {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct Segment(pub Point2D, pub Point2D);
+
+pub fn distance_to_segment_2d(point: &Point2D, segment: &Segment) -> (f64, Point2D) {
+    let mut dx = segment.1.x - segment.0.x;
+    let mut dy = segment.1.y - segment.0.y;
+
+    if (dx == 0.) && (dy == 0.) {
+        // It's a point not a line segment.
+        dx = point.x - segment.0.x;
+        dy = point.y - segment.0.y;
+        return ((dx * dx + dy * dy).sqrt(), segment.0);
+    }
+
+    // Calculate the t that minimizes the distance.
+    let t = ((point.x - segment.0.x) * dx + (point.y - segment.0.y) * dy) / (dx * dx + dy * dy);
+
+    // See if this represents one of the segment's
+    // end points or a point in the middle.
+    let closest;
+    if t < 0. {
+        closest = segment.0;
+        dx = point.x - segment.0.x;
+        dy = point.y - segment.0.y;
+    } else if t > 1. {
+        closest = Point2D {
+            x: segment.1.x,
+            y: segment.1.y,
+        };
+        dx = point.x - segment.1.x;
+        dy = point.y - segment.1.y;
+    } else {
+        closest = Point2D {
+            x: segment.0.x + t * dx,
+            y: segment.0.y + t * dy,
+        };
+        dx = point.x - closest.x;
+        dy = point.y - closest.y;
+    }
+
+    ((dx * dx + dy * dy).sqrt(), closest)
 }
 
 impl Display for FPCoordinate {
@@ -119,67 +182,7 @@ pub const fn is_clock_wise_turn(o: &FPCoordinate, a: &FPCoordinate, b: &FPCoordi
 pub fn distance(first: &FPCoordinate, b: &FPCoordinate) -> f64 {
     let (lona, lata) = first.to_lon_lat_pair();
     let (lonb, latb) = b.to_lon_lat_pair();
-    haversine(lata, lona, latb, lonb)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Point {
-    pub x: f64,
-    pub y: f64,
-}
-
-impl Point {
-    pub fn new() -> Self {
-        Point { x: 0., y: 0. }
-    }
-}
-
-impl Default for Point {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-pub struct Segment(pub Point, pub Point);
-
-pub fn distance_to_segment(point: &Point, segment: &Segment) -> (f64, Point) {
-    let mut dx = segment.1.x - segment.0.x;
-    let mut dy = segment.1.y - segment.0.y;
-
-    if (dx == 0.) && (dy == 0.) {
-        // It's a point not a line segment.
-        dx = point.x - segment.0.x;
-        dy = point.y - segment.0.y;
-        return ((dx * dx + dy * dy).sqrt(), segment.0);
-    }
-
-    // Calculate the t that minimizes the distance.
-    let t = ((point.x - segment.0.x) * dx + (point.y - segment.0.y) * dy) / (dx * dx + dy * dy);
-
-    // See if this represents one of the segment's
-    // end points or a point in the middle.
-    let closest;
-    if t < 0. {
-        closest = segment.0;
-        dx = point.x - segment.0.x;
-        dy = point.y - segment.0.y;
-    } else if t > 1. {
-        closest = Point {
-            x: segment.1.x,
-            y: segment.1.y,
-        };
-        dx = point.x - segment.1.x;
-        dy = point.y - segment.1.y;
-    } else {
-        closest = Point {
-            x: segment.0.x + t * dx,
-            y: segment.0.y + t * dy,
-        };
-        dx = point.x - closest.x;
-        dy = point.y - closest.y;
-    }
-
-    ((dx * dx + dy * dy).sqrt(), closest)
+    crate::great_circle::haversine(lata, lona, latb, lonb)
 }
 
 #[cfg(test)]
@@ -193,33 +196,33 @@ mod tests {
     }
 
     use super::{FPCoordinate, cross_product, distance};
-    use crate::geometry::{Point, Segment, distance_to_segment, is_clock_wise_turn};
+    use crate::geometry::{Point2D, Segment, distance_to_segment_2d, is_clock_wise_turn};
 
     #[test]
     fn distance_one() {
-        let p = Point { x: 1., y: 2. };
-        let s = Segment(Point { x: 0., y: 0. }, Point { x: 0., y: 10. });
-        let (distance, location) = distance_to_segment(&p, &s);
+        let p = Point2D { x: 1., y: 2. };
+        let s = Segment(Point2D { x: 0., y: 0. }, Point2D { x: 0., y: 10. });
+        let (distance, location) = distance_to_segment_2d(&p, &s);
         assert_eq!(distance, 1.);
-        assert_eq!(location, Point { x: 0., y: 2. });
+        assert_eq!(location, Point2D { x: 0., y: 2. });
     }
 
     #[test]
     fn distance_on_line() {
-        let p = Point { x: 1., y: 2. };
-        let s = Segment(Point { x: 0., y: 0. }, Point { x: 0., y: 0. });
-        let (distance, location) = distance_to_segment(&p, &s);
+        let p = Point2D { x: 1., y: 2. };
+        let s = Segment(Point2D { x: 0., y: 0. }, Point2D { x: 0., y: 0. });
+        let (distance, location) = distance_to_segment_2d(&p, &s);
         assert_eq!(distance, 2.23606797749979);
-        assert_eq!(location, Point { x: 0., y: 0. });
+        assert_eq!(location, Point2D { x: 0., y: 0. });
     }
 
     #[test]
     fn distance_to_zero_length_segment() {
-        let point = Point { x: 3.0, y: 4.0 };
-        let segment_point = Point { x: 0.0, y: 0.0 };
+        let point = Point2D { x: 3.0, y: 4.0 };
+        let segment_point = Point2D { x: 0.0, y: 0.0 };
         let segment = Segment(segment_point, segment_point); // Zero-length segment (point)
 
-        let (distance, closest) = distance_to_segment(&point, &segment);
+        let (distance, closest) = distance_to_segment_2d(&point, &segment);
 
         // Expected distance is 5.0 (using Pythagorean theorem: sqrt(3² + 4²))
         assert_eq!(distance, 5.0);
@@ -229,10 +232,10 @@ mod tests {
 
     #[test]
     fn distance_beyond_segment_end() {
-        let point = Point { x: 0.0, y: 3.0 };
-        let segment = Segment(Point { x: 0.0, y: 0.0 }, Point { x: 0.0, y: 2.0 });
+        let point = Point2D { x: 0.0, y: 3.0 };
+        let segment = Segment(Point2D { x: 0.0, y: 0.0 }, Point2D { x: 0.0, y: 2.0 });
 
-        let (distance, closest) = distance_to_segment(&point, &segment);
+        let (distance, closest) = distance_to_segment_2d(&point, &segment);
 
         // Point is 1 unit beyond the end of the segment
         assert_eq!(distance, 1.0);
@@ -242,10 +245,10 @@ mod tests {
 
     #[test]
     fn distance_beyond_diagonal_segment_end() {
-        let point = Point { x: 3.0, y: 3.0 };
-        let segment = Segment(Point { x: 0.0, y: 0.0 }, Point { x: 2.0, y: 2.0 });
+        let point = Point2D { x: 3.0, y: 3.0 };
+        let segment = Segment(Point2D { x: 0.0, y: 0.0 }, Point2D { x: 2.0, y: 2.0 });
 
-        let (distance, closest) = distance_to_segment(&point, &segment);
+        let (distance, closest) = distance_to_segment_2d(&point, &segment);
 
         // Point is (1,1) away from segment end at (2,2)
         assert_delta!(distance, 2_f64.sqrt(), 0.000001);
@@ -255,10 +258,10 @@ mod tests {
 
     #[test]
     fn distance_before_segment_start() {
-        let point = Point { x: -1.0, y: -1.0 };
-        let segment = Segment(Point { x: 0.0, y: 0.0 }, Point { x: 2.0, y: 2.0 });
+        let point = Point2D { x: -1.0, y: -1.0 };
+        let segment = Segment(Point2D { x: 0.0, y: 0.0 }, Point2D { x: 2.0, y: 2.0 });
 
-        let (distance, closest) = distance_to_segment(&point, &segment);
+        let (distance, closest) = distance_to_segment_2d(&point, &segment);
 
         // Point is (-1,-1) away from segment start at (0,0)
         assert_delta!(distance, 2_f64.sqrt(), 0.000001);
@@ -336,8 +339,8 @@ mod tests {
 
     #[test]
     fn point_self_new_equivalent() {
-        let p1 = Point::default();
-        let p2 = Point::new();
+        let p1 = Point2D::default();
+        let p2 = Point2D::new();
         assert_eq!(p1, p2);
     }
 
