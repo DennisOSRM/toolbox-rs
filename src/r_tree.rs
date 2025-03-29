@@ -1,23 +1,53 @@
 use log::{debug, info};
 use std::{cmp::Ordering, collections::BinaryHeap};
+use thiserror::Error;
 
 const BRANCHING_FACTOR: usize = 30;
 const LEAF_PACK_FACTOR: usize = 30;
 
 use crate::{
-    bounding_box::BoundingBox, geometry::primitives::FPCoordinate, partition::PartitionID,
+    bounding_box::BoundingBox, geometry::FPCoordinate, partition::PartitionID,
     space_filling_curve::zorder_cmp,
 };
 
+#[derive(Error, Debug)]
+pub enum RTreeError {
+    #[error("Empty tree")]
+    EmptyTree,
+}
+
+#[derive(Clone, Debug)]
 pub struct Leaf<T> {
     bbox: BoundingBox,
     elements: Vec<T>,
 }
 
-#[derive(Clone, Copy, Debug)]
+impl<T> Leaf<T> {
+    pub fn new(bbox: BoundingBox, elements: Vec<T>) -> Self {
+        Self { bbox, elements }
+    }
+
+    #[must_use]
+    pub fn bbox(&self) -> &BoundingBox {
+        &self.bbox
+    }
+
+    #[must_use]
+    pub fn elements(&self) -> &[T] {
+        &self.elements
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LeafNode {
     bbox: BoundingBox,
     index: usize,
+}
+
+impl LeafNode {
+    pub fn new(bbox: BoundingBox, index: usize) -> Self {
+        Self { bbox, index }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -30,11 +60,6 @@ pub struct TreeNode {
 enum SearchNode {
     LeafNode(LeafNode),
     TreeNode(TreeNode),
-}
-
-pub struct RTree {
-    leaf_nodes: Vec<Leaf<(FPCoordinate, PartitionID)>>,
-    search_nodes: Vec<SearchNode>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -88,6 +113,12 @@ impl Ord for QueueElement {
     }
 }
 
+#[derive(Debug)]
+pub struct RTree {
+    leaf_nodes: Vec<Leaf<(FPCoordinate, PartitionID)>>,
+    search_nodes: Vec<SearchNode>,
+}
+
 impl RTree {
     /// Creates a new R-tree from slices of coordinates and partition IDs.
     ///
@@ -106,6 +137,7 @@ impl RTree {
     /// 2. Creates leaf nodes with up to LEAF_PACK_FACTOR elements
     /// 3. Builds interior nodes with up to BRANCHING_FACTOR children
     /// 4. Constructs tree bottom-up level by level
+    #[must_use]
     pub fn from_slices(coordinates: &[FPCoordinate], partition_ids: &[PartitionID]) -> Self {
         info!("Creating RTree from slices");
         let mut elements: Vec<(FPCoordinate, PartitionID)> = coordinates
@@ -123,10 +155,7 @@ impl RTree {
                 let bbox = BoundingBox::from_coordinates(
                     &chunk.iter().map(|(coord, _)| *coord).collect::<Vec<_>>(),
                 );
-                Leaf {
-                    bbox,
-                    elements: chunk.to_vec(),
-                }
+                Leaf::new(bbox, chunk.to_vec())
             })
             .collect::<Vec<_>>();
 
@@ -138,13 +167,10 @@ impl RTree {
             .map(|(index, chunk)| {
                 let bbox = chunk.iter().fold(BoundingBox::invalid(), |acc, leaf| {
                     let mut bbox = acc;
-                    bbox.extend_with(&leaf.bbox);
+                    bbox.extend_with(leaf.bbox());
                     bbox
                 });
-                SearchNode::LeafNode(LeafNode {
-                    bbox,
-                    index: BRANCHING_FACTOR * index,
-                })
+                SearchNode::LeafNode(LeafNode::new(bbox, BRANCHING_FACTOR * index))
             })
             .collect();
 
@@ -220,12 +246,12 @@ impl RTree {
     /// 2. Maintains queue of nodes sorted by minimum possible distance
     /// 3. Explores most promising nodes first
     /// 4. Returns first found point that must be nearest neighbor
+    #[must_use]
     pub fn nearest(
         &self,
         input_coordinate: &FPCoordinate,
-    ) -> Option<((FPCoordinate, PartitionID), f64)> {
-        debug!("searching for nearest neighbor: {:?}", input_coordinate);
-        let root = *self.search_nodes.last().unwrap();
+    ) -> Result<((FPCoordinate, PartitionID), f64), RTreeError> {
+        let root = self.search_nodes.last().ok_or(RTreeError::EmptyTree)?;
 
         let (distance, child_start_index) = match root {
             SearchNode::TreeNode(tree) => (tree.bbox.min_distance(input_coordinate), tree.index),
@@ -282,7 +308,7 @@ impl RTree {
                 QueueNodeType::LeafNode => {
                     for index in 0..LEAF_PACK_FACTOR {
                         self.leaf_nodes[current_element.child_start_index + index]
-                            .elements
+                            .elements()
                             .iter()
                             .enumerate()
                             .for_each(|(offset, candidate)| {
@@ -298,7 +324,7 @@ impl RTree {
                 }
                 QueueNodeType::Candidate(offset) => {
                     let (candidate_coordinate, candidate_id) =
-                        self.leaf_nodes[current_element.child_start_index].elements[offset];
+                        self.leaf_nodes[current_element.child_start_index].elements()[offset];
                     debug!(
                         " searching candidate: {candidate_coordinate:?} with id {candidate_id:?}"
                     );
@@ -311,11 +337,11 @@ impl RTree {
                             "found nearest neighbor: {nearest:?} at distance {min_distance}, queue.len: {}",
                             queue.len()
                         );
-                        return nearest;
+                        return nearest.ok_or(RTreeError::EmptyTree);
                     }
                 }
             }
         }
-        nearest
+        nearest.ok_or(RTreeError::EmptyTree)
     }
 }

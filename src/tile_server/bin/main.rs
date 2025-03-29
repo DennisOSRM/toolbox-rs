@@ -1,6 +1,6 @@
 mod command_line;
 
-use actix_web::{App, HttpResponse, HttpServer, Responder, web};
+use actix_web::{web, App, HttpResponse, HttpServer, Responder};
 use command_line::Arguments;
 use env_logger::{Builder, Env};
 use log::info;
@@ -8,8 +8,7 @@ use prost::Message;
 use std::error::Error;
 use tile::{Feature, GeomType, Layer, Value};
 use toolbox_rs::{
-    geometry::primitives::FPCoordinate, io, math::zigzag_encode, partition::PartitionID,
-    r_tree::RTree,
+    geometry::FPCoordinate, io, math::zigzag_encode, partition::PartitionID, r_tree::RTree,
 };
 
 // Include the generated protobuf code
