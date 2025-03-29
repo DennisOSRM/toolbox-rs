@@ -1,6 +1,6 @@
 mod command_line;
 
-use actix_web::{web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{App, HttpResponse, HttpServer, Responder, web};
 use command_line::Arguments;
 use env_logger::{Builder, Env};
 use log::info;

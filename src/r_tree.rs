@@ -266,23 +266,8 @@ impl RTree {
             child_start_index,
             QueueNodeType::TreeNode,
         ));
-        struct Stats {
-            pushs: usize,
-            pops: usize,
-        }
-        let mut stats = Stats { pushs: 0, pops: 0 };
-        stats.pushs += 1;
 
         while let Some(current_element) = queue.pop() {
-            stats.pops += 1;
-            debug!(
-                "popped node: {:?} with index: {}, start_index: {}, distance {}",
-                current_element.node_type,
-                current_element.child_start_index,
-                current_element.child_start_index,
-                current_element.distance
-            );
-
             match current_element.node_type {
                 QueueNodeType::TreeNode => {
                     let number_of_children = BRANCHING_FACTOR
@@ -302,7 +287,6 @@ impl RTree {
                             ),
                         };
                         queue.push(QueueElement::new(distance, child_start_index, node_type));
-                        stats.pushs += 1;
                     });
                 }
                 QueueNodeType::LeafNode => {
@@ -318,25 +302,16 @@ impl RTree {
                                     current_element.child_start_index,
                                     QueueNodeType::Candidate(offset),
                                 ));
-                                stats.pushs += 1;
                             });
                     }
                 }
                 QueueNodeType::Candidate(offset) => {
                     let (candidate_coordinate, candidate_id) =
                         self.leaf_nodes[current_element.child_start_index].elements()[offset];
-                    debug!(
-                        " searching candidate: {candidate_coordinate:?} with id {candidate_id:?}"
-                    );
                     let distance = input_coordinate.distance_to(&candidate_coordinate);
                     if distance < min_distance {
                         min_distance = distance;
                         nearest = Some(((candidate_coordinate, candidate_id), min_distance));
-                        debug!("push: {}, pops: {}", stats.pushs, stats.pops);
-                        debug!(
-                            "found nearest neighbor: {nearest:?} at distance {min_distance}, queue.len: {}",
-                            queue.len()
-                        );
                         return nearest.ok_or(RTreeError::EmptyTree);
                     }
                 }
