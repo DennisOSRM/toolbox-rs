@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/DennisOSRM/toolbox-rs/compare/v0.3.0...v0.4.0) - 2025-03-29
+
+### Other
+
+- Rename struct Point to Point2D ([#494](https://github.com/DennisOSRM/toolbox-rs/pull/494))
+- Remove redundant pub mods ([#491](https://github.com/DennisOSRM/toolbox-rs/pull/491))
+- Cover geometry.rs by more tests ([#492](https://github.com/DennisOSRM/toolbox-rs/pull/492))
+
 ## [0.3.0](https://github.com/DennisOSRM/toolbox-rs/compare/v0.2.4...v0.3.0) - 2025-03-23
 
 ### Other
