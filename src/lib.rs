@@ -43,6 +43,7 @@ pub mod one_to_many_dijkstra;
 pub mod partition;
 pub mod path_based_scc;
 pub mod polyline;
+pub mod r_tree;
 pub mod rdx_sort;
 pub mod renumbering_table;
 pub mod run_iterator;
