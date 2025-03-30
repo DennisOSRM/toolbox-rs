@@ -297,7 +297,7 @@ impl<'a, T: RTreeElement> RTreeNearestIterator<'a, T> {
     }
 }
 
-impl<'a, T: RTreeElement + Clone> Iterator for RTreeNearestIterator<'a, T> {
+impl<T: RTreeElement + Clone> Iterator for RTreeNearestIterator<'_, T> {
     /// Returns the next nearest element and its distance from the query point.
     /// Elements are returned in ascending order of distance.
     ///
@@ -325,7 +325,7 @@ impl<'a, T: RTreeElement + Clone> Iterator for RTreeNearestIterator<'a, T> {
                                 QueueNodeType::LeafNode,
                             )),
                             SearchNode::TreeNode(node) => self.queue.push(QueueElement::new(
-                                node.bbox.min_distance(&self.input_coordinate),
+                                node.bbox.min_distance(self.input_coordinate),
                                 node.index,
                                 QueueNodeType::TreeNode,
                             )),
@@ -336,7 +336,7 @@ impl<'a, T: RTreeElement + Clone> Iterator for RTreeNearestIterator<'a, T> {
                     for leaf_idx in 0..LEAF_PACK_FACTOR {
                         let leaf = &self.tree.leaf_nodes[child_start_index + leaf_idx];
                         for (elem_idx, elem) in leaf.elements().iter().enumerate() {
-                            let dist = elem.distance_to(&self.input_coordinate);
+                            let dist = elem.distance_to(self.input_coordinate);
                             self.queue.push(QueueElement::new(
                                 dist,
                                 child_start_index,

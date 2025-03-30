@@ -367,7 +367,7 @@ mod tests {
 
         // Encode to bytes
         let encoded: Vec<u8> =
-            bincode::encode_to_vec(&original, bincode::config::standard()).unwrap();
+            bincode::encode_to_vec(original, bincode::config::standard()).unwrap();
 
         // Decode from bytes
         let decoded: FPCoordinate =
