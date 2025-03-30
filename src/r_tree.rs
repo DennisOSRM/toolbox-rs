@@ -1,4 +1,5 @@
 use log::{debug, info};
+use num::integer::Roots;
 use std::{cmp::Ordering, collections::BinaryHeap};
 use thiserror::Error;
 
@@ -253,70 +254,64 @@ impl RTree {
     ) -> Result<((FPCoordinate, PartitionID), f64), RTreeError> {
         let root = self.search_nodes.last().ok_or(RTreeError::EmptyTree)?;
 
-        let (distance, child_start_index) = match root {
+        let (root_distance, root_index) = match root {
             SearchNode::TreeNode(tree) => (tree.bbox.min_distance(input_coordinate), tree.index),
             _ => unreachable!("last entry of search nodes covers the whole tree"),
         };
-        let mut nearest = None;
-        let mut min_distance = f64::MAX;
 
-        let mut queue = BinaryHeap::<QueueElement>::new();
+        let mut queue =
+            BinaryHeap::with_capacity((self.leaf_nodes.len() * LEAF_PACK_FACTOR).sqrt());
         queue.push(QueueElement::new(
-            distance,
-            child_start_index,
+            root_distance,
+            root_index,
             QueueNodeType::TreeNode,
         ));
 
-        while let Some(current_element) = queue.pop() {
-            match current_element.node_type {
+        while let Some(QueueElement {
+            distance,
+            child_start_index,
+            node_type,
+        }) = queue.pop()
+        {
+            match node_type {
                 QueueNodeType::TreeNode => {
-                    let number_of_children = BRANCHING_FACTOR
-                        .min(self.search_nodes.len() - 1 - current_element.child_start_index);
-                    (0..number_of_children).for_each(|offset| {
-                        let child = &self.search_nodes[current_element.child_start_index + offset];
-                        let (node_type, distance, child_start_index) = match child {
-                            SearchNode::LeafNode(leaf_node) => (
+                    let children_count =
+                        BRANCHING_FACTOR.min(self.search_nodes.len() - 1 - child_start_index);
+                    for i in 0..children_count {
+                        match &self.search_nodes[child_start_index + i] {
+                            SearchNode::LeafNode(node) => queue.push(QueueElement::new(
+                                node.bbox.min_distance(input_coordinate),
+                                node.index,
                                 QueueNodeType::LeafNode,
-                                leaf_node.bbox.min_distance(input_coordinate),
-                                leaf_node.index,
-                            ),
-                            SearchNode::TreeNode(tree_node) => (
+                            )),
+                            SearchNode::TreeNode(node) => queue.push(QueueElement::new(
+                                node.bbox.min_distance(input_coordinate),
+                                node.index,
                                 QueueNodeType::TreeNode,
-                                tree_node.bbox.min_distance(input_coordinate),
-                                tree_node.index,
-                            ),
-                        };
-                        queue.push(QueueElement::new(distance, child_start_index, node_type));
-                    });
+                            )),
+                        }
+                    }
                 }
                 QueueNodeType::LeafNode => {
-                    for index in 0..LEAF_PACK_FACTOR {
-                        self.leaf_nodes[current_element.child_start_index + index]
-                            .elements()
-                            .iter()
-                            .enumerate()
-                            .for_each(|(offset, candidate)| {
-                                let distance = input_coordinate.distance_to(&candidate.0);
-                                queue.push(QueueElement::new(
-                                    distance,
-                                    current_element.child_start_index,
-                                    QueueNodeType::Candidate(offset),
-                                ));
-                            });
+                    for leaf_idx in 0..LEAF_PACK_FACTOR {
+                        let leaf = &self.leaf_nodes[child_start_index + leaf_idx];
+                        for (elem_idx, elem) in leaf.elements().iter().enumerate() {
+                            let dist = input_coordinate.distance_to(&elem.0);
+                            queue.push(QueueElement::new(
+                                dist,
+                                child_start_index,
+                                QueueNodeType::Candidate(elem_idx),
+                            ));
+                        }
                     }
                 }
                 QueueNodeType::Candidate(offset) => {
-                    let (candidate_coordinate, candidate_id) =
-                        self.leaf_nodes[current_element.child_start_index].elements()[offset];
-                    let distance = input_coordinate.distance_to(&candidate_coordinate);
-                    if distance < min_distance {
-                        min_distance = distance;
-                        nearest = Some(((candidate_coordinate, candidate_id), min_distance));
-                        return nearest.ok_or(RTreeError::EmptyTree);
-                    }
+                    let (coord, id) = self.leaf_nodes[child_start_index].elements()[offset];
+                    // Since queue is ordered by distance, first candidate is guaranteed to be nearest
+                    return Ok(((coord, id), distance));
                 }
             }
         }
-        nearest.ok_or(RTreeError::EmptyTree)
+        Err(RTreeError::EmptyTree)
     }
 }
