@@ -15,6 +15,10 @@ use crate::{
 pub enum RTreeError {
     #[error("Empty tree")]
     EmptyTree,
+    #[error("Invalid coordinate")]
+    InvalidCoordinate,
+    #[error("Node index out of bounds: {0}")]
+    InvalidNodeIndex(usize),
 }
 
 #[derive(Clone, Debug)]
