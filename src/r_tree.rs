@@ -159,6 +159,12 @@ impl<T: RTreeElement + std::clone::Clone> RTree<T> {
         let mut elements: Vec<_> = elements.into_iter().collect();
         elements.sort_by(|a, b| zorder_cmp(a.center(), b.center()));
 
+        let estimated_leaf_nodes = (elements.len() + LEAF_PACK_FACTOR - 1) / LEAF_PACK_FACTOR;
+        let estimated_search_nodes = estimated_leaf_nodes * 2; // Rough estimate for tree structure
+
+        let mut search_nodes = Vec::with_capacity(estimated_search_nodes);
+        let mut next = Vec::with_capacity(estimated_leaf_nodes);
+
         // Create leaf nodes
         let leaf_nodes = elements
             .chunks(LEAF_PACK_FACTOR)
@@ -171,18 +177,16 @@ impl<T: RTreeElement + std::clone::Clone> RTree<T> {
             })
             .collect::<Vec<_>>();
 
-        let mut search_nodes: Vec<_> = leaf_nodes
-            .chunks(BRANCHING_FACTOR)
-            .enumerate()
-            .map(|(index, chunk)| {
+        search_nodes.extend(leaf_nodes.chunks(BRANCHING_FACTOR).enumerate().map(
+            |(index, chunk)| {
                 let bbox = chunk.iter().fold(BoundingBox::invalid(), |acc, leaf| {
                     let mut bbox = acc;
                     bbox.extend_with(leaf.bbox());
                     bbox
                 });
                 SearchNode::LeafNode(LeafNode::new(bbox, BRANCHING_FACTOR * index))
-            })
-            .collect();
+            },
+        ));
 
         debug!("Created {} search nodes", search_nodes.len());
 
@@ -190,7 +194,6 @@ impl<T: RTreeElement + std::clone::Clone> RTree<T> {
         let mut end = search_nodes.len();
 
         let mut level = 0;
-        let mut next = Vec::new();
         debug!("Creating tree nodes, start {start}, end {end}");
         while start < end - 1 {
             debug!(
