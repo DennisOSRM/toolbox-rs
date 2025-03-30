@@ -112,7 +112,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // create r-tree for fast lookup of coordinates
     let rtree = RTree::from_elements(coordinates.into_iter().zip(partition_ids));
-    let mut nearest = rtree.nearest_iter(&FPCoordinate::new_from_lat_lon(50.20731, 8.57747));
+    let input_coordinate = FPCoordinate::new_from_lat_lon(50.20731, 8.57747);
+    let mut nearest = rtree.nearest_iter(&input_coordinate);
     println!("nearest: {:?}", nearest.next());
 
     println!("Starting tile server on http://127.0.0.1:5000");

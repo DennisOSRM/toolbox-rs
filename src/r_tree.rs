@@ -236,7 +236,7 @@ impl<T: RTreeElement + std::clone::Clone> RTree<T> {
     }
 
     /// Returns an iterator over elements in ascending order of distance from the given coordinate
-    pub fn nearest_iter(&self, coordinate: &FPCoordinate) -> RTreeNearestIterator<T> {
+    pub fn nearest_iter<'a>(&'a self, coordinate: &'a FPCoordinate) -> RTreeNearestIterator<'a, T> {
         RTreeNearestIterator::new(self, coordinate)
     }
 }
@@ -259,12 +259,12 @@ impl RTreeElement for (FPCoordinate, PartitionID) {
 #[derive(Debug)]
 pub struct RTreeNearestIterator<'a, T: RTreeElement> {
     tree: &'a RTree<T>,
-    input_coordinate: FPCoordinate,
+    input_coordinate: &'a FPCoordinate,
     queue: BinaryHeap<QueueElement>,
 }
 
-impl<'a, T: RTreeElement + Clone> RTreeNearestIterator<'a, T> {
-    fn new(tree: &'a RTree<T>, input_coordinate: &FPCoordinate) -> Self {
+impl<'a, T: RTreeElement> RTreeNearestIterator<'a, T> {
+    fn new(tree: &'a RTree<T>, input_coordinate: &'a FPCoordinate) -> Self {
         let capacity = (tree.leaf_nodes.len() * LEAF_PACK_FACTOR).sqrt();
         let mut queue = BinaryHeap::with_capacity(capacity);
 
@@ -279,7 +279,7 @@ impl<'a, T: RTreeElement + Clone> RTreeNearestIterator<'a, T> {
 
         Self {
             tree,
-            input_coordinate: *input_coordinate,
+            input_coordinate,
             queue,
         }
     }
