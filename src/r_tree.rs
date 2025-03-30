@@ -1,4 +1,4 @@
-use log::{debug, info};
+use log::debug;
 use num::integer::Roots;
 use std::{cmp::Ordering, collections::BinaryHeap};
 use thiserror::Error;
