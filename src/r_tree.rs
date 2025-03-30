@@ -157,10 +157,9 @@ impl<T: RTreeElement + std::clone::Clone> RTree<T> {
     where
         I: IntoIterator<Item = T>,
     {
-        info!("Creating RTree from elements");
-
-        info!("sorting by z-order");
         let mut elements: Vec<_> = elements.into_iter().collect();
+        debug!("Creating R-tree from {} elements", elements.len());
+        debug!("sorting by z-order");
         elements.sort_by(|a, b| zorder_cmp(a.center(), b.center()));
 
         let estimated_leaf_nodes = (elements.len() + LEAF_PACK_FACTOR - 1) / LEAF_PACK_FACTOR;
@@ -235,6 +234,12 @@ impl<T: RTreeElement + std::clone::Clone> RTree<T> {
         }
 
         debug!("Created {} search nodes", search_nodes.len());
+        debug!(
+            "Created tree with {} levels, {} leaf nodes, {} total nodes",
+            level,
+            leaf_nodes.len(),
+            search_nodes.len()
+        );
 
         RTree {
             leaf_nodes,
