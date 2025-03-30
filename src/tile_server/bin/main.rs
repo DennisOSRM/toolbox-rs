@@ -111,7 +111,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("min dist: {}, coordinate: {:?}", min_dist, minumum);
 
     // create r-tree for fast lookup of coordinates
-    let rtree = RTree::from_slices(&coordinates, &partition_ids);
+    let rtree = RTree::from_elements(coordinates.into_iter().zip(partition_ids));
     let nearest = rtree.nearest(&FPCoordinate::new_from_lat_lon(50.20731, 8.57747));
     println!("nearest: {:?}", nearest);
 

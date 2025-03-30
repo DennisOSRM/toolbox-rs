@@ -23,7 +23,7 @@ pub struct Leaf<T> {
     elements: Vec<T>,
 }
 
-impl<T> Leaf<T> {
+impl<T: RTreeElement> Leaf<T> {
     pub fn new(bbox: BoundingBox, elements: Vec<T>) -> Self {
         Self { bbox, elements }
     }
@@ -114,19 +114,30 @@ impl Ord for QueueElement {
     }
 }
 
+/// Trait for elements that can be stored in an RTree
+pub trait RTreeElement {
+    /// Returns the bounding box of this element
+    fn bbox(&self) -> BoundingBox;
+
+    /// Returns the distance from this element to the given coordinate
+    fn distance_to(&self, coordinate: &FPCoordinate) -> f64;
+
+    /// Returns the center coordinate of this element
+    fn center(&self) -> &FPCoordinate;
+}
+
 #[derive(Debug)]
-pub struct RTree {
-    leaf_nodes: Vec<Leaf<(FPCoordinate, PartitionID)>>,
+pub struct RTree<T: RTreeElement> {
+    leaf_nodes: Vec<Leaf<T>>,
     search_nodes: Vec<SearchNode>,
 }
 
-impl RTree {
-    /// Creates a new R-tree from slices of coordinates and partition IDs.
+impl<T: RTreeElement + std::clone::Clone> RTree<T> {
+    /// Creates a new R-tree from an iterator of elements.
     ///
     /// # Arguments
     ///
-    /// * `coordinates` - Slice of coordinates to build the tree from
-    /// * `partition_ids` - Slice of partition IDs corresponding to the coordinates
+    /// * `elements` - Iterator of elements to build the tree from
     ///
     /// # Returns
     ///
@@ -134,33 +145,31 @@ impl RTree {
     ///
     /// # Implementation Details
     ///
-    /// 1. Sorts elements by z-order curve for spatial locality
-    /// 2. Creates leaf nodes with up to LEAF_PACK_FACTOR elements
-    /// 3. Builds interior nodes with up to BRANCHING_FACTOR children
-    /// 4. Constructs tree bottom-up level by level
+    /// 1. Creates leaf nodes with up to LEAF_PACK_FACTOR elements
+    /// 2. Builds interior nodes with up to BRANCHING_FACTOR children
+    /// 3. Constructs tree bottom-up level by level
     #[must_use]
-    pub fn from_slices(coordinates: &[FPCoordinate], partition_ids: &[PartitionID]) -> Self {
-        info!("Creating RTree from slices");
-        let mut elements: Vec<(FPCoordinate, PartitionID)> = coordinates
-            .iter()
-            .zip(partition_ids.iter())
-            .map(|(coord, &id)| (*coord, id))
-            .collect();
-        info!("Sorting elements by z-order");
-        elements.sort_by(|a, b| zorder_cmp(&a.0, &b.0));
+    pub fn from_elements<I>(elements: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+    {
+        info!("Creating RTree from elements");
 
-        info!("Creating leaf nodes");
+        info!("sorting by z-order");
+        let mut elements: Vec<_> = elements.into_iter().collect();
+        elements.sort_by(|a, b| zorder_cmp(a.center(), b.center()));
+
+        // Create leaf nodes
         let leaf_nodes = elements
             .chunks(LEAF_PACK_FACTOR)
             .map(|chunk| {
-                let bbox = BoundingBox::from_coordinates(
-                    &chunk.iter().map(|(coord, _)| *coord).collect::<Vec<_>>(),
-                );
+                let bbox = chunk.iter().fold(BoundingBox::invalid(), |mut acc, elem| {
+                    acc.extend_with(&elem.bbox());
+                    acc
+                });
                 Leaf::new(bbox, chunk.to_vec())
             })
             .collect::<Vec<_>>();
-
-        debug!("Created {} leaf nodes", leaf_nodes.len());
 
         let mut search_nodes: Vec<_> = leaf_nodes
             .chunks(BRANCHING_FACTOR)
@@ -235,7 +244,7 @@ impl RTree {
     /// # Returns
     ///
     /// Option containing:
-    /// * The nearest coordinate and its partition ID
+    /// * The nearest element
     /// * The distance to the nearest neighbor
     ///
     /// Returns None if the tree is empty
@@ -247,11 +256,10 @@ impl RTree {
     /// 2. Maintains queue of nodes sorted by minimum possible distance
     /// 3. Explores most promising nodes first
     /// 4. Returns first found point that must be nearest neighbor
-    #[must_use]
-    pub fn nearest(
-        &self,
-        input_coordinate: &FPCoordinate,
-    ) -> Result<((FPCoordinate, PartitionID), f64), RTreeError> {
+    pub fn nearest(&self, input_coordinate: &FPCoordinate) -> Result<(T, f64), RTreeError>
+    where
+        T: Clone,
+    {
         let root = self.search_nodes.last().ok_or(RTreeError::EmptyTree)?;
 
         let (root_distance, root_index) = match root {
@@ -296,7 +304,7 @@ impl RTree {
                     for leaf_idx in 0..LEAF_PACK_FACTOR {
                         let leaf = &self.leaf_nodes[child_start_index + leaf_idx];
                         for (elem_idx, elem) in leaf.elements().iter().enumerate() {
-                            let dist = input_coordinate.distance_to(&elem.0);
+                            let dist = elem.distance_to(input_coordinate);
                             queue.push(QueueElement::new(
                                 dist,
                                 child_start_index,
@@ -306,12 +314,26 @@ impl RTree {
                     }
                 }
                 QueueNodeType::Candidate(offset) => {
-                    let (coord, id) = self.leaf_nodes[child_start_index].elements()[offset];
-                    // Since queue is ordered by distance, first candidate is guaranteed to be nearest
-                    return Ok(((coord, id), distance));
+                    let element = self.leaf_nodes[child_start_index].elements()[offset].clone();
+                    return Ok((element, distance));
                 }
             }
         }
         Err(RTreeError::EmptyTree)
+    }
+}
+
+// Implement RTreeElement for the original (FPCoordinate, PartitionID) tuple
+impl RTreeElement for (FPCoordinate, PartitionID) {
+    fn bbox(&self) -> BoundingBox {
+        BoundingBox::from_coordinate(&self.0)
+    }
+
+    fn distance_to(&self, coordinate: &FPCoordinate) -> f64 {
+        self.0.distance_to(coordinate)
+    }
+
+    fn center(&self) -> &FPCoordinate {
+        &self.0
     }
 }

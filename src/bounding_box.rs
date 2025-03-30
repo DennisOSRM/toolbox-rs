@@ -133,6 +133,13 @@ impl BoundingBox {
     pub fn is_valid(&self) -> bool {
         self.min.lat <= self.max.lat && self.min.lon <= self.max.lon
     }
+
+    pub fn from_coordinate(coordinate: &FPCoordinate) -> BoundingBox {
+        BoundingBox {
+            min: *coordinate,
+            max: *coordinate,
+        }
+    }
 }
 
 impl From<&BoundingBox> for geojson::Bbox {
@@ -317,5 +324,17 @@ mod tests {
             distance_east,
             FPCoordinate::new(20, 20).distance_to(&east_point)
         );
+    }
+
+    #[test]
+    fn test_from_coordinate() {
+        let coord = FPCoordinate::new(15, 25);
+        let bbox = BoundingBox::from_coordinate(&coord);
+
+        assert_eq!(bbox.min, coord);
+        assert_eq!(bbox.max, coord);
+        assert!(bbox.is_valid());
+        assert!(bbox.contains(&coord));
+        assert_eq!(bbox.min_distance(&coord), 0.0);
     }
 }
