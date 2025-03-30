@@ -289,6 +289,12 @@ impl<'a, T: RTreeElement> RTreeNearestIterator<'a, T> {
 }
 
 impl<'a, T: RTreeElement + Clone> Iterator for RTreeNearestIterator<'a, T> {
+    /// Returns the next nearest element and its distance from the query point.
+    /// Elements are returned in ascending order of distance.
+    ///
+    /// # Returns
+    /// * `Some((element, distance))` - The next nearest element and its distance
+    /// * `None` - When all elements have been visited
     type Item = (T, f64);
 
     fn next(&mut self) -> Option<Self::Item> {
