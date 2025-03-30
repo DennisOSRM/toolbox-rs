@@ -235,91 +235,9 @@ impl<T: RTreeElement + std::clone::Clone> RTree<T> {
         }
     }
 
-    /// Finds the nearest neighbor to the given coordinate in the R-tree.
-    ///
-    /// # Arguments
-    ///
-    /// * `input_coordinate` - The coordinate to find the nearest neighbor for
-    ///
-    /// # Returns
-    ///
-    /// Option containing:
-    /// * The nearest element
-    /// * The distance to the nearest neighbor
-    ///
-    /// Returns None if the tree is empty
-    ///
-    /// # Algorithm
-    ///
-    /// Uses a priority queue based branch-and-bound search:
-    /// 1. Starts from root node
-    /// 2. Maintains queue of nodes sorted by minimum possible distance
-    /// 3. Explores most promising nodes first
-    /// 4. Returns first found point that must be nearest neighbor
-    pub fn nearest(&self, input_coordinate: &FPCoordinate) -> Result<(T, f64), RTreeError>
-    where
-        T: Clone,
-    {
-        let root = self.search_nodes.last().ok_or(RTreeError::EmptyTree)?;
-
-        let (root_distance, root_index) = match root {
-            SearchNode::TreeNode(tree) => (tree.bbox.min_distance(input_coordinate), tree.index),
-            _ => unreachable!("last entry of search nodes covers the whole tree"),
-        };
-
-        let mut queue =
-            BinaryHeap::with_capacity((self.leaf_nodes.len() * LEAF_PACK_FACTOR).sqrt());
-        queue.push(QueueElement::new(
-            root_distance,
-            root_index,
-            QueueNodeType::TreeNode,
-        ));
-
-        while let Some(QueueElement {
-            distance,
-            child_start_index,
-            node_type,
-        }) = queue.pop()
-        {
-            match node_type {
-                QueueNodeType::TreeNode => {
-                    let children_count =
-                        BRANCHING_FACTOR.min(self.search_nodes.len() - 1 - child_start_index);
-                    for i in 0..children_count {
-                        match &self.search_nodes[child_start_index + i] {
-                            SearchNode::LeafNode(node) => queue.push(QueueElement::new(
-                                node.bbox.min_distance(input_coordinate),
-                                node.index,
-                                QueueNodeType::LeafNode,
-                            )),
-                            SearchNode::TreeNode(node) => queue.push(QueueElement::new(
-                                node.bbox.min_distance(input_coordinate),
-                                node.index,
-                                QueueNodeType::TreeNode,
-                            )),
-                        }
-                    }
-                }
-                QueueNodeType::LeafNode => {
-                    for leaf_idx in 0..LEAF_PACK_FACTOR {
-                        let leaf = &self.leaf_nodes[child_start_index + leaf_idx];
-                        for (elem_idx, elem) in leaf.elements().iter().enumerate() {
-                            let dist = elem.distance_to(input_coordinate);
-                            queue.push(QueueElement::new(
-                                dist,
-                                child_start_index,
-                                QueueNodeType::Candidate(elem_idx),
-                            ));
-                        }
-                    }
-                }
-                QueueNodeType::Candidate(offset) => {
-                    let element = self.leaf_nodes[child_start_index].elements()[offset].clone();
-                    return Ok((element, distance));
-                }
-            }
-        }
-        Err(RTreeError::EmptyTree)
+    /// Returns an iterator over elements in ascending order of distance from the given coordinate
+    pub fn nearest_iter(&self, coordinate: &FPCoordinate) -> RTreeNearestIterator<T> {
+        RTreeNearestIterator::new(self, coordinate)
     }
 }
 
@@ -335,5 +253,87 @@ impl RTreeElement for (FPCoordinate, PartitionID) {
 
     fn center(&self) -> &FPCoordinate {
         &self.0
+    }
+}
+
+#[derive(Debug)]
+pub struct RTreeNearestIterator<'a, T: RTreeElement> {
+    tree: &'a RTree<T>,
+    input_coordinate: FPCoordinate,
+    queue: BinaryHeap<QueueElement>,
+}
+
+impl<'a, T: RTreeElement + Clone> RTreeNearestIterator<'a, T> {
+    fn new(tree: &'a RTree<T>, input_coordinate: &FPCoordinate) -> Self {
+        let capacity = (tree.leaf_nodes.len() * LEAF_PACK_FACTOR).sqrt();
+        let mut queue = BinaryHeap::with_capacity(capacity);
+
+        // Initialize with root node if tree is not empty
+        if let Some(SearchNode::TreeNode(root)) = tree.search_nodes.last() {
+            queue.push(QueueElement::new(
+                root.bbox.min_distance(input_coordinate),
+                root.index,
+                QueueNodeType::TreeNode,
+            ));
+        }
+
+        Self {
+            tree,
+            input_coordinate: *input_coordinate,
+            queue,
+        }
+    }
+}
+
+impl<'a, T: RTreeElement + Clone> Iterator for RTreeNearestIterator<'a, T> {
+    type Item = (T, f64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(QueueElement {
+            distance,
+            child_start_index,
+            node_type,
+        }) = self.queue.pop()
+        {
+            match node_type {
+                QueueNodeType::TreeNode => {
+                    let children_count =
+                        BRANCHING_FACTOR.min(self.tree.search_nodes.len() - 1 - child_start_index);
+                    for i in 0..children_count {
+                        match &self.tree.search_nodes[child_start_index + i] {
+                            SearchNode::LeafNode(node) => self.queue.push(QueueElement::new(
+                                node.bbox.min_distance(&self.input_coordinate),
+                                node.index,
+                                QueueNodeType::LeafNode,
+                            )),
+                            SearchNode::TreeNode(node) => self.queue.push(QueueElement::new(
+                                node.bbox.min_distance(&self.input_coordinate),
+                                node.index,
+                                QueueNodeType::TreeNode,
+                            )),
+                        }
+                    }
+                }
+                QueueNodeType::LeafNode => {
+                    for leaf_idx in 0..LEAF_PACK_FACTOR {
+                        let leaf = &self.tree.leaf_nodes[child_start_index + leaf_idx];
+                        for (elem_idx, elem) in leaf.elements().iter().enumerate() {
+                            let dist = elem.distance_to(&self.input_coordinate);
+                            self.queue.push(QueueElement::new(
+                                dist,
+                                child_start_index,
+                                QueueNodeType::Candidate(elem_idx),
+                            ));
+                        }
+                    }
+                }
+                QueueNodeType::Candidate(offset) => {
+                    let element =
+                        self.tree.leaf_nodes[child_start_index].elements()[offset].clone();
+                    return Some((element, distance));
+                }
+            }
+        }
+        None
     }
 }
