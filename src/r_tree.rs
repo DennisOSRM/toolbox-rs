@@ -162,7 +162,7 @@ impl<T: RTreeElement + std::clone::Clone> RTree<T> {
         debug!("sorting by z-order");
         elements.sort_by(|a, b| zorder_cmp(a.center(), b.center()));
 
-        let estimated_leaf_nodes = (elements.len() + LEAF_PACK_FACTOR - 1) / LEAF_PACK_FACTOR;
+        let estimated_leaf_nodes = elements.len().div_ceil(LEAF_PACK_FACTOR);
         let estimated_search_nodes = estimated_leaf_nodes * 2; // Rough estimate for tree structure
 
         let mut search_nodes = Vec::with_capacity(estimated_search_nodes);
@@ -297,7 +297,7 @@ impl<'a, T: RTreeElement> RTreeNearestIterator<'a, T> {
     }
 }
 
-impl<'a, T: RTreeElement + Clone> Iterator for RTreeNearestIterator<'a, T> {
+impl<T: RTreeElement + Clone> Iterator for RTreeNearestIterator<'_, T> {
     /// Returns the next nearest element and its distance from the query point.
     /// Elements are returned in ascending order of distance.
     ///
@@ -320,12 +320,12 @@ impl<'a, T: RTreeElement + Clone> Iterator for RTreeNearestIterator<'a, T> {
                     for i in 0..children_count {
                         match &self.tree.search_nodes[child_start_index + i] {
                             SearchNode::LeafNode(node) => self.queue.push(QueueElement::new(
-                                node.bbox.min_distance(&self.input_coordinate),
+                                node.bbox.min_distance(self.input_coordinate),
                                 node.index,
                                 QueueNodeType::LeafNode,
                             )),
                             SearchNode::TreeNode(node) => self.queue.push(QueueElement::new(
-                                node.bbox.min_distance(&self.input_coordinate),
+                                node.bbox.min_distance(self.input_coordinate),
                                 node.index,
                                 QueueNodeType::TreeNode,
                             )),
@@ -336,7 +336,7 @@ impl<'a, T: RTreeElement + Clone> Iterator for RTreeNearestIterator<'a, T> {
                     for leaf_idx in 0..LEAF_PACK_FACTOR {
                         let leaf = &self.tree.leaf_nodes[child_start_index + leaf_idx];
                         for (elem_idx, elem) in leaf.elements().iter().enumerate() {
-                            let dist = elem.distance_to(&self.input_coordinate);
+                            let dist = elem.distance_to(self.input_coordinate);
                             self.queue.push(QueueElement::new(
                                 dist,
                                 child_start_index,
