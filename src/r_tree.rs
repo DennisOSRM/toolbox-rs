@@ -162,7 +162,7 @@ impl<T: RTreeElement + std::clone::Clone> RTree<T> {
         debug!("sorting by z-order");
         elements.sort_by(|a, b| zorder_cmp(a.center(), b.center()));
 
-        let estimated_leaf_nodes = (elements.len() + LEAF_PACK_FACTOR - 1) / LEAF_PACK_FACTOR;
+        let estimated_leaf_nodes = elements.len().div_ceil(LEAF_PACK_FACTOR);
         let estimated_search_nodes = estimated_leaf_nodes * 2; // Rough estimate for tree structure
 
         let mut search_nodes = Vec::with_capacity(estimated_search_nodes);
@@ -320,7 +320,7 @@ impl<T: RTreeElement + Clone> Iterator for RTreeNearestIterator<'_, T> {
                     for i in 0..children_count {
                         match &self.tree.search_nodes[child_start_index + i] {
                             SearchNode::LeafNode(node) => self.queue.push(QueueElement::new(
-                                node.bbox.min_distance(&self.input_coordinate),
+                                node.bbox.min_distance(self.input_coordinate),
                                 node.index,
                                 QueueNodeType::LeafNode,
                             )),
