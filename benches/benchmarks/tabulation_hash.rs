@@ -1,13 +1,18 @@
 use criterion::{Criterion, black_box, criterion_group};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use toolbox_rs::{tabulation_hash::TabulationHashTable, tiny_table::TinyTable};
 
 fn insert_sequential(c: &mut Criterion) {
     let mut group = c.benchmark_group("Insert Sequential");
 
+    // Prepare data structures
+    let mut table = TabulationHashTable::<u32, u32>::new();
+    let mut bmap = BTreeMap::new();
+    let mut tiny = TinyTable::new();
+    let mut hashmap = HashMap::new();
+
     group.bench_function("TabulationHashTable", |b| {
         b.iter(|| {
-            let mut table = TabulationHashTable::<u32, u32>::new();
             for i in 0..1000 {
                 *table.get_mut(black_box(i)) = i;
             }
@@ -16,18 +21,24 @@ fn insert_sequential(c: &mut Criterion) {
 
     group.bench_function("BTreeMap", |b| {
         b.iter(|| {
-            let mut map = BTreeMap::new();
             for i in 0..1000 {
-                map.insert(black_box(i), i);
+                bmap.insert(black_box(i), i);
             }
         })
     });
 
     group.bench_function("TinyTable", |b| {
         b.iter(|| {
-            let mut table = TinyTable::new();
             for i in 0..1000 {
-                table.insert(black_box(i), i);
+                tiny.insert(black_box(i), i);
+            }
+        })
+    });
+
+    group.bench_function("Hashmap", |b| {
+        b.iter(|| {
+            for i in 0..1000 {
+                hashmap.insert(black_box(i), i);
             }
         })
     });
@@ -40,13 +51,15 @@ fn lookup_random(c: &mut Criterion) {
 
     // Prepare data structures
     let mut table = TabulationHashTable::<u32, u32>::new();
-    let mut map = BTreeMap::new();
+    let mut bmap = BTreeMap::new();
     let mut tiny = TinyTable::new();
+    let mut hashmap = HashMap::new();
 
     for i in 0..1000 {
         *table.get_mut(i) = i;
-        map.insert(i, i);
+        bmap.insert(i, i);
         tiny.insert(i, i);
+        hashmap.insert(i, i);
     }
 
     group.bench_function("TabulationHashTable", |b| {
@@ -60,7 +73,7 @@ fn lookup_random(c: &mut Criterion) {
     group.bench_function("BTreeMap", |b| {
         b.iter(|| {
             for i in (0..1000).rev() {
-                black_box(map.get(&black_box(i)));
+                black_box(bmap.get(&black_box(i)));
             }
         })
     });
@@ -69,6 +82,14 @@ fn lookup_random(c: &mut Criterion) {
         b.iter(|| {
             for i in (0..1000).rev() {
                 black_box(tiny.find(black_box(&i)));
+            }
+        })
+    });
+
+    group.bench_function("Hashmap", |b| {
+        b.iter(|| {
+            for i in (0..1000).rev() {
+                black_box(hashmap.get(black_box(&i)));
             }
         })
     });
