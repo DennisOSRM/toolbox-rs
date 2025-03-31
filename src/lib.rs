@@ -49,6 +49,7 @@ pub mod run_iterator;
 pub mod single_linked_list;
 pub mod space_filling_curve;
 pub mod static_graph;
+pub mod tabulation_hash;
 pub mod tarjan;
 pub mod tiny_table;
 pub mod top_k;

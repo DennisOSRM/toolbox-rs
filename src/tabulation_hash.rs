@@ -71,47 +71,32 @@ impl TabulationHash {
     /// assert!(hash <= u16::MAX);
     /// ```
     #[inline]
-    pub fn hash(&self, value: u32) -> u16 {
-        let lsb = (value & 0xffff) as usize;
-        let msb = (value >> 16) as usize;
-
-        debug_assert!(
-            lsb < self.table1.len(),
-            "lsb: {}, table.len(): {}",
-            lsb,
-            self.table1.len()
-        );
-        debug_assert!(
-            msb < self.table2.len(),
-            "msb: {}, table.len(): {}",
-            msb,
-            self.table2.len()
-        );
+    pub fn hash(&self, key: u32) -> u16 {
+        let lsb = (key & 0xffff) as usize;
+        let msb = (key >> 16) as usize;
 
         self.table1[lsb] ^ self.table2[msb]
     }
 }
 
-/// A hash cell storing node ID, key and timestamp for collision resolution.
+/// A hash cell storing key, value, and timestamp for collision resolution.
 ///
 /// Used internally by TabulationHashTable to store elements and handle
 /// linear probing during collision resolution.
 #[derive(Debug, Clone)]
-pub struct HashCell<NodeID, Key> {
+pub struct HashCell<Key, Value> {
     /// Timestamp for marking cell validity
     time: u32,
-    /// Node identifier
-    id: NodeID,
-    /// Associated key/value
     key: Key,
+    value: Value,
 }
 
-impl<NodeID: Default, Key: Default> Default for HashCell<NodeID, Key> {
+impl<Key: Default, Value: Default> Default for HashCell<Key, Value> {
     fn default() -> Self {
         Self {
             time: u32::MAX,
-            id: NodeID::default(),
             key: Key::default(),
+            value: Value::default(),
         }
     }
 }
@@ -121,8 +106,8 @@ impl<NodeID: Default, Key: Default> Default for HashCell<NodeID, Key> {
 ///
 /// # Type Parameters
 ///
-/// * `NodeID` - Type of node identifiers (must be convertible to u32)
-/// * `Key` - Type of stored values
+/// * `Key` - Type of keys (must be convertible to u32)
+/// * `Value` - Type of stored values
 ///
 /// # Performance
 ///
@@ -130,16 +115,16 @@ impl<NodeID: Default, Key: Default> Default for HashCell<NodeID, Key> {
 /// - O(1) average case for clear operation using timestamp-based invalidation
 /// - Space complexity: O(MAX_ELEMENTS)
 #[derive(Debug)]
-pub struct TabulationHashTable<NodeID, Key> {
-    positions: Vec<HashCell<NodeID, Key>>,
+pub struct TabulationHashTable<Key, Value> {
+    positions: Vec<HashCell<Key, Value>>,
     hasher: TabulationHash,
     current_timestamp: Wrapping<u32>,
 }
 
-impl<NodeID, Key> TabulationHashTable<NodeID, Key>
+impl<Key, Value> TabulationHashTable<Key, Value>
 where
-    NodeID: Copy + Default + PartialEq + TryInto<u32>,
-    Key: Copy + Default,
+    Key: Copy + Default + PartialEq + TryInto<u32>,
+    Value: Copy + Default,
 {
     /// Creates a new hash table with capacity for MAX_ELEMENTS items.
     ///
@@ -156,17 +141,17 @@ where
         }
     }
 
-    /// Gets or creates a mutable reference to a hash cell for the given node.
+    /// Gets or creates a mutable reference to a hash cell for the given key.
     ///
     /// # Algorithm
     ///
     /// 1. Computes initial position using tabulation hash
     /// 2. Uses linear probing to handle collisions
-    /// 3. Updates timestamp and node ID on access
+    /// 3. Updates timestamp and key on access
     ///
     /// # Arguments
     ///
-    /// * `node` - Node identifier
+    /// * `key` - identifier
     ///
     /// # Returns
     ///
@@ -174,54 +159,55 @@ where
     ///
     /// # Panics
     ///
-    /// Panics if `NodeID` cannot be converted to `u32`
-    pub fn get_mut(&mut self, node: NodeID) -> &mut HashCell<NodeID, Key> {
-        let node_as_u32: u32 = node
+    /// Panics if `Key` cannot be converted to `u32`
+    #[inline]
+    pub fn get_mut(&mut self, key: Key) -> &mut Value {
+        let key_as_u32: u32 = key
             .try_into()
-            .unwrap_or_else(|_| panic!("NodeID must be convertible to u32"));
-        let mut position = self.hasher.hash(node_as_u32) as usize;
+            .unwrap_or_else(|_| panic!("Key must be convertible to u32"));
+        let mut position = self.hasher.hash(key_as_u32) as usize;
 
         while self.positions[position].time == self.current_timestamp.0
-            && self.positions[position].id != node
+            && self.positions[position].key != key
         {
             position = (position + 1) % MAX_ELEMENTS;
         }
 
         let cell = &mut self.positions[position];
         cell.time = self.current_timestamp.0;
-        cell.id = node;
+        cell.key = key;
 
-        cell
+        &mut cell.value
     }
 
-    /// Looks up the key associated with a node without modifying the timestamp.
+    /// Looks up the value associated with a key without modifying the timestamp.
     ///
     /// # Arguments
     ///
-    /// * `node` - Node identifier to look up
+    /// * `key` - key identifier to look up
     ///
     /// # Returns
     ///
-    /// * `Some(key)` - If the node exists in the current timestamp
-    /// * `None` - If the node doesn't exist or was cleared
+    /// * `Some(value)` - If the key exists in the current timestamp
+    /// * `None` - If the key doesn't exist or was cleared
     ///
     /// # Panics
     ///
-    /// Panics if `NodeID` cannot be converted to `u32`
-    pub fn peek_key(&self, node: NodeID) -> Option<Key> {
-        let node_as_u32: u32 = node
+    /// Panics if `Key` cannot be converted to `u32`
+    pub fn peek_value(&self, key: Key) -> Option<&Value> {
+        let key_as_u32: u32 = key
             .try_into()
-            .unwrap_or_else(|_| panic!("NodeID must be convertible to u32"));
-        let mut position = self.hasher.hash(node_as_u32) as usize;
+            .unwrap_or_else(|_| panic!("Key must be convertible to u32"));
+        let mut position = self.hasher.hash(key_as_u32) as usize;
 
         while self.positions[position].time == self.current_timestamp.0
-            && self.positions[position].id != node
+            && self.positions[position].key != key
         {
             position = (position + 1) % MAX_ELEMENTS;
         }
 
         if self.positions[position].time == self.current_timestamp.0 {
-            return Some(self.positions[position].key);
+            return Some(&self.positions[position].value);
         }
         None
     }
@@ -264,34 +250,34 @@ mod tests {
     fn test_hash_storage_basic() {
         let mut storage = TabulationHashTable::<u32, u32>::new();
 
-        // Insert and retrieve
-        storage.get_mut(1).key = 42;
-        assert_eq!(storage.peek_key(1), Some(42));
+        // Insert and retrieve using new API
+        *storage.get_mut(1) = 42;
+        assert_eq!(storage.peek_value(1), Some(&42));
 
         // Update existing
-        storage.get_mut(1).key = 43;
-        assert_eq!(storage.peek_key(1), Some(43));
+        *storage.get_mut(1) = 43;
+        assert_eq!(storage.peek_value(1), Some(&43));
     }
 
     #[test]
     fn test_hash_storage_collision() {
         let mut storage = TabulationHashTable::<u32, u32>::new();
 
-        // Insert two nodes that might collide
-        storage.get_mut(1).key = 42;
-        storage.get_mut(65537).key = 43; // Could hash to same position
+        // Insert two keys that might collide
+        *storage.get_mut(1) = 42;
+        *storage.get_mut(65537) = 43; // Could hash to same position
 
-        assert_eq!(storage.peek_key(1), Some(42));
-        assert_eq!(storage.peek_key(65537), Some(43));
+        assert_eq!(storage.peek_value(1), Some(&42));
+        assert_eq!(storage.peek_value(65537), Some(&43));
     }
 
     #[test]
     fn test_hash_storage_clear() {
         let mut storage = TabulationHashTable::<u32, u32>::new();
 
-        storage.get_mut(1).key = 42;
+        *storage.get_mut(1) = 42;
         storage.clear();
-        assert_eq!(storage.peek_key(1), None); // Default value after clear
+        assert_eq!(storage.peek_value(1), None); // Default value after clear
     }
 
     #[test]
@@ -299,72 +285,72 @@ mod tests {
         let mut storage = TabulationHashTable::<u32, u32>::new();
 
         // Create a sequence of values that will hash to the same position
-        let base_node = 42;
-        let colliding_nodes = [
-            base_node,
-            base_node + MAX_ELEMENTS as u32,
-            base_node + (2 * MAX_ELEMENTS) as u32,
+        let base_key = 42;
+        let colliding_keys = [
+            base_key,
+            base_key + MAX_ELEMENTS as u32,
+            base_key + (2 * MAX_ELEMENTS) as u32,
         ];
 
-        // Insert values in sequence to force linear probing
-        for (i, &node) in colliding_nodes.iter().enumerate() {
-            storage.get_mut(node).key = i as u32;
+        // Insert values using new API
+        for (i, &key) in colliding_keys.iter().enumerate() {
+            *storage.get_mut(key) = i as u32;
         }
 
         // Verify each value is still accessible and in the correct position
-        for (i, &node) in colliding_nodes.iter().enumerate() {
+        for (i, &key) in colliding_keys.iter().enumerate() {
             assert_eq!(
-                storage.peek_key(node),
-                Some(i as u32),
-                "Failed to retrieve value {} for node {} after linear probing",
+                storage.peek_value(key),
+                Some(&(i as u32)),
+                "Failed to retrieve value {} for key {} after linear probing",
                 i,
-                node
+                key
             );
         }
 
         // Update middle value and verify chain remains intact
-        storage.get_mut(colliding_nodes[1]).key = 42;
+        *storage.get_mut(colliding_keys[1]) = 42;
 
-        assert_eq!(storage.peek_key(colliding_nodes[0]), Some(0));
-        assert_eq!(storage.peek_key(colliding_nodes[1]), Some(42));
-        assert_eq!(storage.peek_key(colliding_nodes[2]), Some(2));
+        assert_eq!(storage.peek_value(colliding_keys[0]), Some(&0));
+        assert_eq!(storage.peek_value(colliding_keys[1]), Some(&42));
+        assert_eq!(storage.peek_value(colliding_keys[2]), Some(&2));
     }
 
     #[test]
     fn test_linear_probing_loop() {
         let mut storage = TabulationHashTable::<u32, u32>::new();
 
-        // First, find two nodes that hash to the same position
-        let base_node = 0u32;
-        let mut colliding_node = 1u32;
+        // First, find two keys that hash to the same position
+        let base_key = 0u32;
+        let mut colliding_key = 1u32;
 
-        while storage.hasher.hash(base_node) != storage.hasher.hash(colliding_node) {
-            colliding_node += 1;
+        while storage.hasher.hash(base_key) != storage.hasher.hash(colliding_key) {
+            colliding_key += 1;
         }
 
-        // Now we have two nodes that will definitely collide
-        storage.get_mut(base_node).key = 100;
-        storage.get_mut(colliding_node).key = 200;
+        // Now we have two keys that will definitely collide
+        *storage.get_mut(base_key) = 100;
+        *storage.get_mut(colliding_key) = 200;
 
-        // Find a third node that hashes to the same position
-        let mut third_node = colliding_node + 1;
-        while storage.hasher.hash(third_node) != storage.hasher.hash(base_node) {
-            third_node += 1;
+        // Find a third key that hashes to the same position
+        let mut third_key = colliding_key + 1;
+        while storage.hasher.hash(third_key) != storage.hasher.hash(base_key) {
+            third_key += 1;
         }
-        storage.get_mut(third_node).key = 300;
+        *storage.get_mut(third_key) = 300;
 
         // Verify the probing sequence
-        assert_eq!(storage.peek_key(base_node), Some(100));
-        assert_eq!(storage.peek_key(colliding_node), Some(200));
-        assert_eq!(storage.peek_key(third_node), Some(300));
+        assert_eq!(storage.peek_value(base_key), Some(&100));
+        assert_eq!(storage.peek_value(colliding_key), Some(&200));
+        assert_eq!(storage.peek_value(third_key), Some(&300));
 
-        // Update middle node to ensure probing still works
-        storage.get_mut(colliding_node).key = 250;
+        // Update middle key to ensure probing still works
+        *storage.get_mut(colliding_key) = 250;
 
         // Verify entire chain is intact
-        assert_eq!(storage.peek_key(base_node), Some(100));
-        assert_eq!(storage.peek_key(colliding_node), Some(250));
-        assert_eq!(storage.peek_key(third_node), Some(300));
+        assert_eq!(storage.peek_value(base_key), Some(&100));
+        assert_eq!(storage.peek_value(colliding_key), Some(&250));
+        assert_eq!(storage.peek_value(third_key), Some(&300));
     }
 
     #[test]
@@ -375,24 +361,24 @@ mod tests {
         storage.current_timestamp = Wrapping(u32::MAX - 1);
 
         // Insert some data
-        storage.get_mut(1).key = 42;
-        assert_eq!(storage.peek_key(1), Some(42));
+        *storage.get_mut(1) = 42;
+        assert_eq!(storage.peek_value(1), Some(&42));
 
         // First clear increments to MAX
         storage.clear();
 
         assert_eq!(storage.current_timestamp.0, u32::MAX);
         // Old data should still be accessible since we're still at a valid timestamp
-        assert_eq!(storage.peek_key(1), None);
+        assert_eq!(storage.peek_value(1), None);
 
         // Second clear should trigger overflow handling and reset
         storage.clear();
         assert_eq!(storage.current_timestamp.0, 0);
         // After reset, old data should be inaccessible
-        assert_eq!(storage.peek_key(1), None);
+        assert_eq!(storage.peek_value(1), None);
 
         // Verify we can insert new data
-        storage.get_mut(2).key = 43;
-        assert_eq!(storage.peek_key(2), Some(43));
+        *storage.get_mut(2) = 43;
+        assert_eq!(storage.peek_value(2), Some(&43));
     }
 }
