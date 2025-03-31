@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/DennisOSRM/toolbox-rs/compare/v0.2.4...v0.3.0) - 2025-03-23
+
+### Other
+
+- Fix Box extension  ([#490](https://github.com/DennisOSRM/toolbox-rs/pull/490))
+- Transate doctest comments to English ([#489](https://github.com/DennisOSRM/toolbox-rs/pull/489))
+- Remove redundant env variables from Windows CI build ([#488](https://github.com/DennisOSRM/toolbox-rs/pull/488))
+- Fix Z-order comparison function to be a total order ([#487](https://github.com/DennisOSRM/toolbox-rs/pull/487))
+- Implement more functionality for vector tile handling ([#486](https://github.com/DennisOSRM/toolbox-rs/pull/486))
+- Untangle web mercator, wgs84, vector tile implementations ([#485](https://github.com/DennisOSRM/toolbox-rs/pull/485))
+- Implement zigzag encoding ([#484](https://github.com/DennisOSRM/toolbox-rs/pull/484))
+- Update dependencies ([#482](https://github.com/DennisOSRM/toolbox-rs/pull/482))
+
 ## [0.2.4](https://github.com/DennisOSRM/toolbox-rs/compare/v0.2.3...v0.2.4) - 2025-03-08
 
 ### Other

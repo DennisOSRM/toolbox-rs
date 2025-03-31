@@ -2,7 +2,8 @@ use crate::linked_list::{LinkedList, ListCursor};
 use std::{collections::HashMap, fmt::Debug, hash::Hash};
 
 /// A simple LRU implementation for a fixed size data set that avoid reallocation memory
-/// Instead of using a standard linked list with stable iterators, it us
+/// Instead of using a standard linked list with stable iterators, it uses a list that
+/// stores elements in a sorted list.
 pub struct LRU<Key: Copy + Debug + Eq + Hash, Value> {
     lru_list: LinkedList<(Key, Value)>,
     access_map: HashMap<Key, ListCursor<(Key, Value)>>,
