@@ -1,5 +1,5 @@
 use rand::rngs::StdRng;
-use rand::{SeedableRng, seq::SliceRandom};
+use rand::{Rng, SeedableRng};
 use std::num::Wrapping;
 
 const MAX_ELEMENTS: usize = 65536;
@@ -20,9 +20,11 @@ pub struct TabulationHash {
 impl TabulationHash {
     /// Creates a new TabulationHash instance with shuffled tables.
     ///
-    /// The tables are initialized with values 0..MAX_ELEMENTS and then shuffled
-    /// using a deterministic RNG seeded with 0. This ensures consistent hashing
-    /// across program runs.
+    /// The tables are initialized with random values from 0..=u16::MAX by
+    /// using a seeded random number generator. The seed is set to 0 for
+    /// reproducibility. This means that the same input will always produce
+    /// the same hash value, making it suitable for applications where
+    /// consistent hashing is required.
     ///
     /// # Example
     ///
@@ -33,15 +35,16 @@ impl TabulationHash {
     pub fn new() -> Self {
         let mut rng = StdRng::seed_from_u64(0);
 
-        // Initialize and shuffle tables
-        let mut table1: Vec<u16> = (0..=u16::MAX).collect();
-        let mut table2: Vec<u16> = (0..=u16::MAX).collect();
+        // Initialize tables with random values
+        let table1: Vec<u16> = (0..MAX_ELEMENTS)
+            .map(|_| rng.random_range(0..=u16::MAX))
+            .collect();
+        let table2: Vec<u16> = (0..MAX_ELEMENTS)
+            .map(|_| rng.random_range(0..=u16::MAX))
+            .collect();
 
         debug_assert_eq!(table1.len(), 65_536);
         debug_assert_eq!(table2.len(), 65_536);
-
-        table1.shuffle(&mut rng);
-        table2.shuffle(&mut rng);
 
         Self { table1, table2 }
     }
