@@ -134,7 +134,7 @@ impl<Key, Value> Default for TabulationHashTable<Key, Value>
 where
     Key: Copy + Default + PartialEq + TryInto<u32>,
     Value: Copy + Default,
- {
+{
     fn default() -> Self {
         Self::new()
     }

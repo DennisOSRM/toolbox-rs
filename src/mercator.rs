@@ -142,7 +142,6 @@ pub fn to_wgs84(mercator_coordinate: (f64, f64)) -> FloatCoordinate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::f64::EPSILON;
 
     const TEST_COORDINATES: [(f64, f64); 4] = [
         (0.0, 0.0),     // equator
@@ -277,7 +276,7 @@ mod tests {
             );
 
             assert!(
-                (roundtrip.lon.0 - wgs84.lon.0).abs() < EPSILON,
+                (roundtrip.lon.0 - wgs84.lon.0).abs() < f64::EPSILON,
                 "Longitude roundtrip failed: {} -> {} -> {}",
                 wgs84.lon.0,
                 mercator.0,

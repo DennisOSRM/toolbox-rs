@@ -278,8 +278,6 @@ pub fn linestring_to_tile_coords(
 
 #[cfg(test)]
 mod tests {
-    use std::f64::EPSILON;
-
     use crate::wgs84::FloatCoordinate;
 
     use super::*;
@@ -302,8 +300,8 @@ mod tests {
         let px_lat = degree_to_pixel_lat(center.lat, 0);
         let px_lon = degree_to_pixel_lon(center.lon, 0);
 
-        assert!((px_lat - TILE_SIZE as f64 / 2.0).abs() < EPSILON);
-        assert!((px_lon - TILE_SIZE as f64 / 2.0).abs() < EPSILON);
+        assert!((px_lat - TILE_SIZE as f64 / 2.0).abs() < f64::EPSILON);
+        assert!((px_lon - TILE_SIZE as f64 / 2.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -390,9 +388,9 @@ mod tests {
                 let px = degree_to_pixel_lat(lat, zoom);
 
                 // equator should be centered
-                if (lat.0 - 0.0).abs() < EPSILON {
+                if (lat.0 - 0.0).abs() < f64::EPSILON {
                     assert!(
-                        (px - center).abs() < EPSILON,
+                        (px - center).abs() < f64::EPSILON,
                         "equator not centered at zoom {zoom}: expected={center}, result={px}"
                     );
                 }
