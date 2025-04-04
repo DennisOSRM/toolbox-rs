@@ -165,13 +165,13 @@ mod tests {
         let input = [1, 2, 3, 4];
         let result = [1, 3, 6, 10];
         let mut fenwick = Fenwick::with_size(4);
-        for i in 0..input.len() {
-            assert!(fenwick.update(i, input[i]).is_ok());
+        for (index, value) in input.into_iter().enumerate() {
+            assert!(fenwick.update(index, value).is_ok());
         }
         assert_eq!(fenwick.len(), 4);
-        for i in 0..input.len() {
+        (0..input.len()).for_each(|i| {
             assert_eq!(result[i], fenwick.rank(i).unwrap());
-        }
+        });
     }
 
     #[test]
@@ -180,26 +180,26 @@ mod tests {
         let result = [1, 3, 6, 10];
         let fenwick = Fenwick::from_values(&input);
         assert_eq!(fenwick.len(), 4);
-        for i in 0..input.len() {
+        (0..input.len()).for_each(|i| {
             assert_eq!(result[i], fenwick.rank(i).unwrap());
-        }
+        });
     }
 
     #[test]
     fn bulk_piecemeal_same() {
         let input = [19, 3, 27, 28, 263, 3897, -4, 27];
         let mut fenwick1 = Fenwick::with_size(input.len());
-        for i in 0..input.len() {
+        (0..input.len()).for_each(|i| {
             assert!(fenwick1.update(i, input[i]).is_ok());
-        }
+        });
         let fenwick1 = fenwick1;
 
         let fenwick2 = Fenwick::from_values(&input);
 
         assert_eq!(fenwick1.len(), fenwick2.len());
-        for i in 0..input.len() {
+        (0..input.len()).for_each(|i| {
             assert_eq!(fenwick1.rank(i), fenwick2.rank(i));
-        }
+        });
     }
 
     #[test]
