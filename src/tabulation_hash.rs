@@ -17,6 +17,12 @@ pub struct TabulationHash {
     table2: Vec<u16>,
 }
 
+impl Default for TabulationHash {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TabulationHash {
     /// Creates a new TabulationHash instance with shuffled tables.
     ///
@@ -122,6 +128,16 @@ pub struct TabulationHashTable<Key, Value> {
     positions: Vec<HashCell<Key, Value>>,
     hasher: TabulationHash,
     current_timestamp: Wrapping<u32>,
+}
+
+impl<Key, Value> Default for TabulationHashTable<Key, Value>
+where
+    Key: Copy + Default + PartialEq + TryInto<u32>,
+    Value: Copy + Default,
+ {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<Key, Value> TabulationHashTable<Key, Value>
@@ -383,5 +399,28 @@ mod tests {
         // Verify we can insert new data
         *storage.get_mut(2) = 43;
         assert_eq!(storage.peek_value(2), Some(&43));
+    }
+
+    #[test]
+    fn test_tabulation_hash_default() {
+        let default_hasher = TabulationHash::default();
+        let new_hasher = TabulationHash::new();
+
+        // Test that default gives same results as new()
+        assert_eq!(default_hasher.hash(42), new_hasher.hash(42));
+        assert_eq!(default_hasher.hash(100), new_hasher.hash(100));
+    }
+
+    #[test]
+    fn test_tabulation_hash_table_default() {
+        let mut default_table = TabulationHashTable::<u32, u32>::default();
+        let mut new_table = TabulationHashTable::<u32, u32>::new();
+
+        // Test that both tables behave the same way
+        *default_table.get_mut(1) = 42;
+        *new_table.get_mut(1) = 42;
+
+        assert_eq!(default_table.peek_value(1), new_table.peek_value(1));
+        assert_eq!(default_table.peek_value(1), Some(&42));
     }
 }
