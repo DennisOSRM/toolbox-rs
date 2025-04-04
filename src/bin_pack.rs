@@ -9,9 +9,9 @@
 ///
 /// # Examples
 /// ```
-/// use toolbox_rs::bin_pack::bin_pack;
+/// use toolbox_rs::bin_pack::bin_pack_next_fit;
 /// let items = vec![2, 5, 4, 7, 1, 3, 8];
-/// assert_eq!((3, vec![0, 0, 0, 1, 1, 1, 2]), bin_pack(&items, 11).unwrap());
+/// assert_eq!((3, vec![0, 0, 0, 1, 1, 1, 2]), bin_pack_next_fit(&items, 11).unwrap());
 /// ```
 // next-first heuristic for bin packing
 // runs in O(N) and yields a 2-approximation
