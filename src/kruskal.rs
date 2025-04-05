@@ -47,7 +47,7 @@ pub fn kruskal(input_edges: &[SimpleEdge]) -> (u32, Vec<SimpleEdge>) {
     let mut uf = UnionFind::new(number_of_nodes + 1);
     let mut mst_cost = 0;
 
-    while mst.len() < number_of_nodes && heap.len() > 0 {
+    while mst.len() < number_of_nodes && !heap.is_empty() {
         // pop the smallest edge
         // we use the index to avoid having to sort the edges
         // in the heap
@@ -127,7 +127,6 @@ mod tests {
         // Verify the expected edges in the MST
         let expected_edges: Vec<(usize, usize)> = vec![(2, 1), (4, 5), (4, 3), (0, 2), (2, 3)];
 
-        println!("Expected edges: {:?}", expected_edges);
         // Check if the MST contains the expected edges
         // Note: The order of edges in the MST may vary, so we check for presence
         // rather than exact order
