@@ -22,8 +22,8 @@ use std::collections::BinaryHeap;
 /// # Example
 ///
 /// ```
-/// use toolbox::edge::SimpleEdge;
-/// use toolbox::kruskal::kruskal;
+/// use toolbox_rs::edge::SimpleEdge;
+/// use toolbox_rs::kruskal::kruskal;
 ///
 /// let edges = vec![
 ///     SimpleEdge::new(0, 1, 7),
