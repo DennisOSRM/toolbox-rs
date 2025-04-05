@@ -97,13 +97,27 @@ impl<Key: Copy + Debug + Eq + Hash, Value> LRU<Key, Value> {
     /// ```
     pub fn push(&mut self, key: &Key, value: Value) {
         debug_assert!(self.lru_list.len() <= self.capacity);
-        if self.access_map.len() == self.capacity {
-            // evict an element
-            debug_assert!(!self.access_map.is_empty());
-            let evicted = self.lru_list.pop_back();
-            let evicted_key = &evicted.unwrap().0;
-            self.access_map.remove(evicted_key);
+
+        if let Some(handle) = self.access_map.get(key) {
+            // Key exists - move to front and update value
+            let handle = handle.clone();
+            self.lru_list.move_to_front(&handle);
+            // Update the value using a mutable reference
+            let front = self.lru_list.get_front_mut();
+            *front = (*key, value);
+            return;
         }
+
+        // Key doesn't exist - handle capacity and insert new entry
+        if self.access_map.len() == self.capacity {
+            // evict least recently used element
+            debug_assert!(!self.access_map.is_empty());
+            if let Some((evicted_key, _)) = self.lru_list.pop_back() {
+                self.access_map.remove(&evicted_key);
+            }
+        }
+
+        // Insert new entry
         let handle = self.lru_list.push_front((*key, value));
         self.access_map.insert(*key, handle);
     }
@@ -160,6 +174,64 @@ impl<Key: Copy + Debug + Eq + Hash, Value> LRU<Key, Value> {
             return Some(&self.lru_list.get_front().1);
         }
         None
+    }
+
+    /// Returns a reference to the most recently used (front) item in the cache.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Option<(&Key, &Value)>` - `Some` with references to the key and value if the cache
+    /// is not empty, or `None` if the cache is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use toolbox_rs::lru::LRU;
+    ///
+    /// let mut cache = LRU::new_with_capacity(2);
+    /// assert_eq!(cache.get_front(), None);
+    ///
+    /// cache.push(&1, "one");
+    /// cache.push(&2, "two");
+    /// assert_eq!(cache.get_front(), Some((&2, &"two")));
+    /// ```
+    pub fn get_front(&self) -> Option<(&Key, &Value)> {
+        if self.is_empty() {
+            None
+        } else {
+            let front = self.lru_list.get_front();
+            Some((&front.0, &front.1))
+        }
+    }
+
+    /// Returns a mutable reference to the most recently used (front) item in the cache.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Option<(&Key, &mut Value)>` - `Some` with a reference to the key and mutable reference
+    /// to the value if the cache is not empty, or `None` if the cache is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use toolbox_rs::lru::LRU;
+    ///
+    /// let mut cache = LRU::new_with_capacity(2);
+    /// cache.push(&1, String::from("one"));
+    /// cache.push(&2, String::from("two"));
+    ///
+    /// if let Some((_, value)) = cache.get_front_mut() {
+    ///     *value = String::from("TWO");
+    /// }
+    /// assert_eq!(cache.get(&2), Some(&String::from("TWO")));
+    /// ```
+    pub fn get_front_mut(&mut self) -> Option<(&Key, &mut Value)> {
+        if self.is_empty() {
+            None
+        } else {
+            let front = self.lru_list.get_front_mut();
+            Some((&front.0, &mut front.1))
+        }
     }
 
     /// Returns the maximum number of items the cache can hold.
@@ -357,5 +429,36 @@ mod tests {
             lru.push(&i, i.to_string());
         }
         assert_eq!(lru.len(), 5);
+    }
+
+    #[test]
+    fn test_get_front_mut() {
+        let mut lru = LRU::new_with_capacity(3);
+        assert_eq!(lru.get_front_mut(), None);
+
+        lru.push(&1, String::from("one"));
+        lru.push(&2, String::from("two"));
+
+        // Test mutating the front element
+        if let Some((key, value)) = lru.get_front_mut() {
+            assert_eq!(key, &2);
+            assert_eq!(value, "two");
+            *value = String::from("TWO");
+        }
+
+        // Verify the change was applied
+        assert_eq!(lru.get(&2), Some(&String::from("TWO")));
+
+        // Add another element and verify front changes
+        lru.push(&3, String::from("three"));
+        if let Some((key, value)) = lru.get_front_mut() {
+            assert_eq!(key, &3);
+            assert_eq!(value, "three");
+            *value = String::from("THREE");
+        }
+
+        // Verify both modified values are still correct
+        assert_eq!(lru.get(&2), Some(&String::from("TWO")));
+        assert_eq!(lru.get(&3), Some(&String::from("THREE")));
     }
 }
