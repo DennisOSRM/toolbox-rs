@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/DennisOSRM/toolbox-rs/compare/v0.3.0...v0.4.0) - 2025-04-05
+
+### Other
+
+- Allow updating existing key in LRU ([#502](https://github.com/DennisOSRM/toolbox-rs/pull/502))
+- Support disconnected graphs in Kruskal implementation ([#501](https://github.com/DennisOSRM/toolbox-rs/pull/501))
+- Apply several cargo clippy lint fixes ([#500](https://github.com/DennisOSRM/toolbox-rs/pull/500))
+- Fix bug bin pack implementation, add more documentation ([#499](https://github.com/DennisOSRM/toolbox-rs/pull/499))
+- Fix initialisation in tabular hash table ([#498](https://github.com/DennisOSRM/toolbox-rs/pull/498))
+- Implement tabulation hashing for sets << 65,536 ([#497](https://github.com/DennisOSRM/toolbox-rs/pull/497))
+- Update documentation for SingleLinkedList ([#496](https://github.com/DennisOSRM/toolbox-rs/pull/496))
+- Add generic R-tree implementation with nearest iterator ([#495](https://github.com/DennisOSRM/toolbox-rs/pull/495))
+- Rename struct Point to Point2D ([#494](https://github.com/DennisOSRM/toolbox-rs/pull/494))
+- Remove redundant pub mods ([#491](https://github.com/DennisOSRM/toolbox-rs/pull/491))
+- Cover geometry.rs by more tests ([#492](https://github.com/DennisOSRM/toolbox-rs/pull/492))
+
 ## [0.3.0](https://github.com/DennisOSRM/toolbox-rs/compare/v0.2.4...v0.3.0) - 2025-03-23
 
 ### Other
