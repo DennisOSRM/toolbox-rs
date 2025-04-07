@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/DennisOSRM/toolbox-rs/compare/v0.4.0...v0.4.1) - 2025-04-07
+
+### Other
+
+- Apply clippy fixes ([#503](https://github.com/DennisOSRM/toolbox-rs/pull/503))
+
 ## [0.4.0](https://github.com/DennisOSRM/toolbox-rs/compare/v0.3.0...v0.4.0) - 2025-04-05
 
 ### Other
