@@ -10,8 +10,8 @@ use std::collections::BinaryHeap;
 ///
 /// # Arguments
 ///
-/// * `input_edges` - A slice of `SimpleEdge`s representing the graph's edges.
-///                  Each edge contains source and target vertices and a weight.
+/// * `input_edges` - A slice of `SimpleEdge`s representing the graph's edge
+///  Each edge contains source and target vertices and a weight.
 ///
 /// # Returns
 ///
