@@ -100,7 +100,7 @@ impl<Key: Copy + Debug + Eq + Hash, Value> LRU<Key, Value> {
 
         if let Some(handle) = self.access_map.get(key) {
             // Key exists - move to front and update value
-            let handle = handle.clone();
+            let handle = *handle;
             self.lru_list.move_to_front(&handle);
             // Update the value using a mutable reference
             let front = self.lru_list.get_front_mut();
