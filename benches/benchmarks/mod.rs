@@ -5,3 +5,4 @@ pub mod loser_tree;
 pub mod mercator;
 pub mod polyline;
 pub mod radix_sort;
+pub mod tabulation_hash;

@@ -42,7 +42,6 @@ impl FloatLongitude {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::f64::EPSILON;
 
     #[test]
     fn test_latitude_bounds() {
@@ -50,8 +49,8 @@ mod tests {
         let max_lat = FloatLatitude(90.0);
         let min_lat = FloatLatitude(-90.0);
 
-        assert!((max_lat.clamp().0 - EPSG3857_MAX_LATITUDE).abs() < EPSILON);
-        assert!((min_lat.clamp().0 + EPSG3857_MAX_LATITUDE).abs() < EPSILON);
+        assert!((max_lat.clamp().0 - EPSG3857_MAX_LATITUDE).abs() < f64::EPSILON);
+        assert!((min_lat.clamp().0 + EPSG3857_MAX_LATITUDE).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -69,7 +68,7 @@ mod tests {
             let lat = FloatLatitude(input);
             let clamped = lat.clamp();
             assert!(
-                (clamped.0 - expected).abs() < EPSILON,
+                (clamped.0 - expected).abs() < f64::EPSILON,
                 "Latitude clamping failed for {}: expected {}, got {}",
                 input,
                 expected,
@@ -90,7 +89,7 @@ mod tests {
             let lon = FloatLongitude(input);
             let clamped = lon.clamp();
             assert!(
-                (clamped.0 - expected).abs() < EPSILON,
+                (clamped.0 - expected).abs() < f64::EPSILON,
                 "Longitude clamping failed for {}: expected {}, got {}",
                 input,
                 expected,

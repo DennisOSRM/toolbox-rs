@@ -151,6 +151,11 @@ impl<T> LinkedList<T> {
         // TODO: decide whether this returns a reference or a copy
         unsafe { &self.front.unwrap().as_ref().elem }
     }
+
+    pub fn get_front_mut(&mut self) -> &mut T {
+        // SAFETY: get_front() already ensures front exists and is valid
+        unsafe { &mut self.front.unwrap().as_mut().elem }
+    }
 }
 
 impl<T> Drop for LinkedList<T> {
@@ -272,5 +277,37 @@ mod test {
         }
 
         assert_eq!(result, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_get_front_mut_empty() {
+        let mut list: LinkedList<i32> = LinkedList::new();
+        let _result = list.get_front_mut(); // Should panic on empty list
+    }
+
+    #[test]
+    fn test_get_front_mut() {
+        let mut list = LinkedList::new();
+
+        // Test with one element
+        list.push_front(10);
+        {
+            let front = list.get_front_mut();
+            *front = 20;
+        }
+        assert_eq!(list.get_front(), &20);
+
+        // Test with multiple elements
+        list.push_front(30);
+        list.push_front(40);
+        {
+            let front = list.get_front_mut();
+            *front = 50;
+        }
+        assert_eq!(list.get_front(), &50);
+
+        // Verify other elements are unchanged
+        assert_eq!(list.pop_back(), Some(20));
     }
 }

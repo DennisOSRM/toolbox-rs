@@ -28,9 +28,9 @@ impl<K: Clone + Copy + PartialEq, V: Clone + Copy> TinyTable<K, V> {
         self.data.iter_mut().find(|x| x.0 == *k)
     }
 
-    pub fn insert(&mut self, k: &K, v: &V) -> bool {
-        let result = self.remove(k);
-        self.data.push((*k, *v));
+    pub fn insert(&mut self, k: K, v: V) -> bool {
+        let result = self.remove(&k);
+        self.data.push((k, v));
         result
     }
 
@@ -69,8 +69,8 @@ mod tests {
         let mut table = TinyTable::new();
         assert!(table.is_empty());
 
-        table.insert(&1, &999);
-        table.insert(&0, &31337);
+        table.insert(1, 999);
+        table.insert(0, 31337);
 
         assert_eq!(table.len(), 2);
         assert_eq!(table.find(&1), Some(&999));
@@ -87,7 +87,7 @@ mod tests {
         assert!(!table.contains(&1));
         assert!(!table.contains(&2));
 
-        table.insert(&7, &0xbeef);
+        table.insert(7, 0xbeef);
         assert_eq!(table.len(), 2);
         assert_eq!(table.find(&1), None);
         assert_eq!(table.find(&7), Some(&0xbeef));
@@ -106,8 +106,8 @@ mod tests {
         let mut table = TinySet::new();
         assert!(table.is_empty());
 
-        table.insert(&1, &());
-        table.insert(&0, &());
+        table.insert(1, ());
+        table.insert(0, ());
 
         assert_eq!(table.len(), 2);
         assert!(table.find(&1).is_some());
@@ -124,7 +124,7 @@ mod tests {
         assert!(!table.contains(&1));
         assert!(!table.contains(&2));
 
-        table.insert(&7, &());
+        table.insert(7, ());
         assert_eq!(table.len(), 2);
         assert!(table.find(&1).is_none());
         assert!(table.find(&7).is_some());
@@ -143,8 +143,8 @@ mod tests {
         let mut table = TinyTable::<i32, i32>::default();
         assert!(table.is_empty());
 
-        table.insert(&1, &1);
-        table.insert(&0, &2);
+        table.insert(1, 1);
+        table.insert(0, 2);
 
         assert_eq!(table.find(&0), Some(&2));
         if let Some(entry) = table.find_mut(&0) {
