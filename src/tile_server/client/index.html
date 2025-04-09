@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<!--
+    This viewer allows you to render the vector map tiles available
+    from osrm-routed at the /tile?x={x}&y={y}&z={z} URL.
+
+    Simply start OSRM at localhost on port 5000 and open this html
+    file in your browser.  Requires OSRM 4.9.2 or greater.
+-->
+<html>
+<head>
+    <meta charset='utf-8' />
+    <title></title>
+    <meta name='viewport' content='initial-scale=1,maximum-scale=1,user-scalable=no' />
+    <script src='https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js'></script>
+    <link href='https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css' rel='stylesheet' />
+    <style>
+        body { margin:0; padding:0; }
+        #map { position:absolute; top:0; bottom:0; width:100%; }
+        #legend { position: absolute; bottom: 0; left: 0; font-family: sans-serif;}
+        #legend div { display: inline-block; padding: 5px; margin: 0; }
+    </style>
+</head>
+<body>
+
+<div id='map'></div>
+<div id="legend">
+    <div style="color: white;">km/h:</div><div style="background: #5e4fa2">0-10</div><div style="background: #3288bd">10-20</div><div style="background: #66c2a5">20-30</div><div style="background: #abdda4">30-40</div><div style="background: #e6f598">40-50</div><div style="background: #fee08b">50-60</div><div style="background: #fdae61">60-70</div><div style="background: #f46d43">70-80</div><div style="background: #d53e4f">80-90</div><div style="background: #9e0142">90+</div>
+</div>
+<script>
+var simple = {
+    "version": 8,
+    "name": "OSRM debug",
+    "center": [-122.44315266116867, 37.78238285747459],
+    "zoom": 12.177865411775025,
+    "bearing": 0,
+    "pitch": 0,
+    "glyphs": "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+    "sources": {
+        "local-tiles": {
+            "type": "vector",
+            "tiles": ["http://127.0.0.1:5000/{tileset_id}/{z}/{x}/{y}.mvt"],
+            "minzoom": 12,
+            "maxzoom": 19
+        }
+    },
+    "layers": [
+        {
+            "id": "background",
+            "type": "background",
+            "paint": {
+                "background-color": "#111"
+            }
+        },
+        {
+            "minzoom": 12,
+            "layout": {
+                "visibility": "visible",
+                "line-cap": "round"
+            },
+            "filter": ["==", "$type", "LineString"],
+            "type": "line",
+            "source": "local-tiles",
+            "id": "speeds outline",
+            "paint": {
+                "line-width": {
+                    "base": 1.5,
+                    "stops": [[12.5, 4], [14, 6], [18, 24]]
+                },
+                "line-color": "hsl(0, 0%, 0%)",
+                "line-offset": {
+                    "base": 1.5,
+                    "stops": [[12.5, 0.25], [14, 1], [18, 9]]
+                }
+            },
+            "source-layer": "speeds"
+        },
+        {
+            "minzoom": 12,
+            "layout": {
+                "visibility": "visible",
+                "line-cap": "round"
+            },
+            "filter": [
+                "all",
+                [
+                    "==",
+                    "$type",
+                    "LineString"
+                ],
+                [
+                    "==",
+                    "is_small",
+                    true
+                ]
+            ],
+            "type": "line",
+            "source": "local-tiles",
+            "id": "speeds small components",
+            "paint": {
+                "line-width": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            6
+                        ],
+                        [
+                            14,
+                            8
+                        ],
+                        [
+                            18,
+                            28
+                        ]
+                    ]
+                },
+                "line-color": "#ff37ef",
+                "line-offset": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.25
+                        ],
+                        [
+                            14,
+                            1
+                        ],
+                        [
+                            18,
+                            9
+                        ]
+                    ]
+                }
+            },
+            "source-layer": "speeds",
+            "interactive": true
+        },
+        {
+            "interactive": true,
+            "minzoom": 12,
+            "layout": {
+                "visibility": "visible",
+                "line-cap": "round"
+            },
+            "filter": [
+                "all",
+                [
+                    "==",
+                    "$type",
+                    "LineString"
+                ],
+                [
+                    "<=",
+                    "speed",
+                    10
+                ]
+            ],
+            "type": "line",
+            "source": "local-tiles",
+            "id": "speeds < 10",
+            "paint": {
+                "line-color": "#5e4fa2",
+                "line-width": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.5
+                        ],
+                        [
+                            14,
+                            2
+                        ],
+                        [
+                            18,
+                            18
+                        ]
+                    ]
+                },
+                "line-offset": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.25
+                        ],
+                        [
+                            14,
+                            1
+                        ],
+                        [
+                            18,
+                            9
+                        ]
+                    ]
+                }
+            },
+            "source-layer": "speeds"
+        },
+        {
+            "interactive": true,
+            "minzoom": 12,
+            "layout": {
+                "line-cap": "round"
+            },
+            "filter": [
+                "all",
+                [
+                    "==",
+                    "$type",
+                    "LineString"
+                ],
+                [
+                    "all",
+                    [
+                        "<=",
+                        "speed",
+                        20
+                    ],
+                    [
+                        ">",
+                        "speed",
+                        10
+                    ]
+                ]
+            ],
+            "type": "line",
+            "source": "local-tiles",
+            "id": "speeds 10-20",
+            "paint": {
+                "line-color": "#3288bd",
+                "line-width": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.5
+                        ],
+                        [
+                            14,
+                            2
+                        ],
+                        [
+                            18,
+                            18
+                        ]
+                    ]
+                },
+                "line-offset": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.25
+                        ],
+                        [
+                            14,
+                            1
+                        ],
+                        [
+                            18,
+                            9
+                        ]
+                    ]
+                }
+            },
+            "source-layer": "speeds"
+        },
+        {
+            "interactive": true,
+            "minzoom": 12,
+            "layout": {
+                "line-cap": "round"
+            },
+            "filter": [
+                "all",
+                [
+                    "==",
+                    "$type",
+                    "LineString"
+                ],
+                [
+                    "all",
+                    [
+                        "<=",
+                        "speed",
+                        30
+                    ],
+                    [
+                        ">",
+                        "speed",
+                        20
+                    ]
+                ]
+            ],
+            "type": "line",
+            "source": "local-tiles",
+            "id": "speeds 20-30",
+            "paint": {
+                "line-color": "#66c2a5",
+                "line-width": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.5
+                        ],
+                        [
+                            14,
+                            2
+                        ],
+                        [
+                            18,
+                            18
+                        ]
+                    ]
+                },
+                "line-offset": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.25
+                        ],
+                        [
+                            14,
+                            1
+                        ],
+                        [
+                            18,
+                            9
+                        ]
+                    ]
+                }
+            },
+            "source-layer": "speeds"
+        },
+        {
+            "interactive": true,
+            "minzoom": 12,
+            "layout": {
+                "line-cap": "round"
+            },
+            "filter": [
+                "all",
+                [
+                    "==",
+                    "$type",
+                    "LineString"
+                ],
+                [
+                    "all",
+                    [
+                        "<=",
+                        "speed",
+                        40
+                    ],
+                    [
+                        ">",
+                        "speed",
+                        30
+                    ]
+                ]
+            ],
+            "type": "line",
+            "source": "local-tiles",
+            "id": "speeds 30-40",
+            "paint": {
+                "line-color": "#abdda4",
+                "line-width": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.5
+                        ],
+                        [
+                            14,
+                            2
+                        ],
+                        [
+                            18,
+                            18
+                        ]
+                    ]
+                },
+                "line-offset": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.25
+                        ],
+                        [
+                            14,
+                            1
+                        ],
+                        [
+                            18,
+                            9
+                        ]
+                    ]
+                }
+            },
+            "source-layer": "speeds"
+        },
+        {
+            "interactive": true,
+            "minzoom": 12,
+            "layout": {
+                "line-cap": "round"
+            },
+            "filter": [
+                "all",
+                [
+                    "==",
+                    "$type",
+                    "LineString"
+                ],
+                [
+                    "all",
+                    [
+                        "<=",
+                        "speed",
+                        50
+                    ],
+                    [
+                        ">",
+                        "speed",
+                        40
+                    ]
+                ]
+            ],
+            "type": "line",
+            "source": "local-tiles",
+            "id": "speeds 40-50",
+            "paint": {
+                "line-color": "#e6f598",
+                "line-width": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.5
+                        ],
+                        [
+                            14,
+                            2
+                        ],
+                        [
+                            18,
+                            18
+                        ]
+                    ]
+                },
+                "line-offset": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.25
+                        ],
+                        [
+                            14,
+                            1
+                        ],
+                        [
+                            18,
+                            9
+                        ]
+                    ]
+                }
+            },
+            "source-layer": "speeds"
+        },
+        {
+            "interactive": true,
+            "minzoom": 12,
+            "layout": {
+                "line-cap": "round"
+            },
+            "filter": [
+                "all",
+                [
+                    "==",
+                    "$type",
+                    "LineString"
+                ],
+                [
+                    "all",
+                    [
+                        "<=",
+                        "speed",
+                        60
+                    ],
+                    [
+                        ">",
+                        "speed",
+                        50
+                    ]
+                ]
+            ],
+            "type": "line",
+            "source": "local-tiles",
+            "id": "speeds 50-60",
+            "paint": {
+                "line-color": "#fee08b",
+                "line-width": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.5
+                        ],
+                        [
+                            14,
+                            2
+                        ],
+                        [
+                            18,
+                            18
+                        ]
+                    ]
+                },
+                "line-offset": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.25
+                        ],
+                        [
+                            14,
+                            1
+                        ],
+                        [
+                            18,
+                            9
+                        ]
+                    ]
+                }
+            },
+            "source-layer": "speeds"
+        },
+        {
+            "interactive": true,
+            "minzoom": 12,
+            "layout": {
+                "line-cap": "round"
+            },
+            "filter": [
+                "all",
+                [
+                    "==",
+                    "$type",
+                    "LineString"
+                ],
+                [
+                    "all",
+                    [
+                        "<=",
+                        "speed",
+                        70
+                    ],
+                    [
+                        ">",
+                        "speed",
+                        60
+                    ]
+                ]
+            ],
+            "type": "line",
+            "source": "local-tiles",
+            "id": "speeds 60-70",
+            "paint": {
+                "line-color": "#fdae61",
+                "line-width": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.5
+                        ],
+                        [
+                            14,
+                            2
+                        ],
+                        [
+                            18,
+                            18
+                        ]
+                    ]
+                },
+                "line-offset": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.25
+                        ],
+                        [
+                            14,
+                            1
+                        ],
+                        [
+                            18,
+                            9
+                        ]
+                    ]
+                }
+            },
+            "source-layer": "speeds"
+        },
+        {
+            "interactive": true,
+            "minzoom": 12,
+            "layout": {
+                "line-cap": "round"
+            },
+            "filter": [
+                "all",
+                [
+                    "==",
+                    "$type",
+                    "LineString"
+                ],
+                [
+                    "all",
+                    [
+                        "<=",
+                        "speed",
+                        80
+                    ],
+                    [
+                        ">",
+                        "speed",
+                        70
+                    ]
+                ]
+            ],
+            "type": "line",
+            "source": "local-tiles",
+            "id": "speeds 70-80",
+            "paint": {
+                "line-color": "#f46d43",
+                "line-width": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.5
+                        ],
+                        [
+                            14,
+                            2
+                        ],
+                        [
+                            18,
+                            18
+                        ]
+                    ]
+                },
+                "line-offset": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.25
+                        ],
+                        [
+                            14,
+                            1
+                        ],
+                        [
+                            18,
+                            9
+                        ]
+                    ]
+                }
+            },
+            "source-layer": "speeds"
+        },
+        {
+            "interactive": true,
+            "minzoom": 12,
+            "layout": {
+                "line-cap": "round"
+            },
+            "filter": [
+                "all",
+                [
+                    "==",
+                    "$type",
+                    "LineString"
+                ],
+                [
+                    "all",
+                    [
+                        "<=",
+                        "speed",
+                        90
+                    ],
+                    [
+                        ">",
+                        "speed",
+                        80
+                    ]
+                ]
+            ],
+            "type": "line",
+            "source": "local-tiles",
+            "id": "speeds 80-90",
+            "paint": {
+                "line-color": "#d53e4f",
+                "line-width": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.5
+                        ],
+                        [
+                            14,
+                            2
+                        ],
+                        [
+                            18,
+                            18
+                        ]
+                    ]
+                },
+                "line-offset": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.25
+                        ],
+                        [
+                            14,
+                            1
+                        ],
+                        [
+                            18,
+                            9
+                        ]
+                    ]
+                }
+            },
+            "source-layer": "speeds"
+        },
+        {
+            "interactive": true,
+            "minzoom": 12,
+            "layout": {
+                "line-cap": "round"
+            },
+            "filter": [
+                "all",
+                [
+                    "==",
+                    "$type",
+                    "LineString"
+                ],
+                [
+                    ">",
+                    "speed",
+                    90
+                ]
+            ],
+            "type": "line",
+            "source": "local-tiles",
+            "id": "speeds 90+",
+            "paint": {
+                "line-color": "#9e0142",
+                "line-width": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.5
+                        ],
+                        [
+                            14,
+                            2
+                        ],
+                        [
+                            18,
+                            18
+                        ]
+                    ]
+                },
+                "line-offset": {
+                    "base": 1.5,
+                    "stops": [
+                        [
+                            12.5,
+                            0.25
+                        ],
+                        [
+                            14,
+                            1
+                        ],
+                        [
+                            18,
+                            9
+                        ]
+                    ]
+                }
+            },
+            "source-layer": "speeds"
+        },
+        {
+            "minzoom": 12,
+            "layout": {
+                "text-size": {
+                    "base": 1,
+                    "stops": [
+                        [
+                            10,
+                            8
+                        ],
+                        [
+                            18,
+                            11
+                        ]
+                    ]
+                },
+                "text-allow-overlap": true,
+                "symbol-avoid-edges": false,
+                "text-ignore-placement": true,
+                "symbol-spacing": 5,
+                "text-font": [
+                    "Open Sans Regular",
+                    "Arial Unicode MS Regular"
+                ],
+                "symbol-placement": "line",
+                "text-justify": "center",
+                "text-padding": 1,
+                "text-offset": [
+                    0,
+                    1
+                ],
+                "text-rotation-alignment": "map",
+                "text-anchor": "center",
+                "text-keep-upright": false,
+                "text-field": "{speed} km/h ➜"
+            },
+            "filter": [
+                "==",
+                "$type",
+                "LineString"
+            ],
+            "type": "symbol",
+            "source": "local-tiles",
+            "id": "speeds labels",
+            "paint": {
+                "text-color": "#fff",
+                "text-halo-width": 1,
+                "text-halo-color": "#000",
+                "text-halo-blur": 0
+            },
+            "source-layer": "speeds",
+            "interactive": true
+        },
+        {
+         "id": "osrm-0", "type": "symbol", "source": "local-tiles", "source-layer": "turns",
+         "layout": { "icon-image": "0", "icon-offset": {stops: [[15,[10,0]],[18,[20,0]]]}, "icon-allow-overlap": true, "icon-rotate": { property: "bearing_in", stops: [[0, 0], [360, 360]] },
+                    "text-field": "{cost}", "text-offset": {"base": 1, stops: [[15,[0.2,0.0]],[18,[3,0]]]}, "text-allow-overlap": true, "text-rotate": { property: "bearing_in", stops: [[0, 0], [360, 360]] } ,
+                     "text-size": { "base": 1, "stops": [ [ 10, 8 ], [ 18, 11 ] ] }, "text-font": [ "Lato Bold" ], "symbol-avoid-edges": false},
+         "paint": { "icon-color" : "#ffffff", "icon-halo-color" : "#ffffff", "icon-halo-width" : 2,
+            "text-color": "hsl(0, 0%, 100%)", "text-halo-width": 1, "text-halo-color": "hsl(0, 0%, 0%)", "text-halo-blur": 0},
+         "filter": ["all",[">=","turn_angle",-22.5],["<","turn_angle",22.5]]
+        },
+        {
+         "id": "osrm-45", "type": "symbol", "source": "local-tiles", "source-layer": "turns",
+         "layout": { "icon-image": "45", "icon-offset": {stops: [[15,[15,15]],[18,[30,30]]]}, "icon-allow-overlap": true, "icon-rotate": { property: "bearing_in", stops: [[0, 0], [360, 360]] },
+                    "text-field": "{cost}", "text-offset": {"base": 1, stops: [[15,[0.2,0.2]],[18,[3,3]]]}, "text-allow-overlap": true, "text-rotate": { property: "bearing_in", stops: [[0, 0], [360, 360]] } ,
+                     "text-size": { "base": 1, "stops": [ [ 10, 8 ], [ 18, 11 ] ] }, "text-font": [ "Lato Bold" ], "symbol-avoid-edges": false},
+         "paint": { "icon-color" : "#ffffff", "icon-halo-color" : "#ffffff", "icon-halo-width" : 2,
+            "text-color": "hsl(0, 0%, 100%)", "text-halo-width": 1, "text-halo-color": "hsl(0, 0%, 0%)", "text-halo-blur": 0},
+         "filter": ["all",[">=","turn_angle",22.5],["<","turn_angle",67.5]]
+        },
+        {
+         "id": "osrm-90", "type": "symbol", "source": "local-tiles", "source-layer": "turns",
+         "layout": { "icon-image": "90", "icon-offset": {stops: [[15,[15,15]],[18,[30,30]]]}, "icon-allow-overlap": true, "icon-rotate": { property: "bearing_in", stops: [[0, 0], [360, 360]] },
+                    "text-field": "{cost}", "text-offset": {"base": 1, stops: [[15,[0.2,0.2]],[18,[3,3]]]}, "text-allow-overlap": true, "text-rotate": { property: "bearing_in", stops: [[0, 0], [360, 360]] } ,
+                     "text-size": { "base": 1, "stops": [ [ 10, 8 ], [ 18, 11 ] ] }, "text-font": [ "Lato Bold" ], "symbol-avoid-edges": false},
+         "paint": { "icon-color" : "#ffffff", "icon-halo-color" : "#ffffff", "icon-halo-width" : 2,
+            "text-color": "hsl(0, 0%, 100%)", "text-halo-width": 1, "text-halo-color": "hsl(0, 0%, 0%)", "text-halo-blur": 0},
+         "filter": ["all",[">=","turn_angle",67.5],["<","turn_angle",115.5]]
+        },
+        {
+         "id": "osrm-135", "type": "symbol", "source": "local-tiles", "source-layer": "turns",
+         "layout": { "icon-image": "135", "icon-offset": {stops: [[15,[15,15]],[18,[30,30]]]}, "icon-allow-overlap": true, "icon-rotate": { property: "bearing_in", stops: [[0, 0], [360, 360]] },
+                    "text-field": "{cost}", "text-offset": {"base": 1, stops: [[15,[0.2,0.2]],[18,[3,3]]]}, "text-allow-overlap": true, "text-rotate": { property: "bearing_in", stops: [[0, 0], [360, 360]] } ,
+                     "text-size": { "base": 1, "stops": [ [ 10, 8 ], [ 18, 11 ] ] }, "text-font": [ "Lato Bold" ], "symbol-avoid-edges": false},
+         "paint": { "icon-color" : "#ffffff", "icon-halo-color" : "#ffffff", "icon-halo-width" : 2,
+            "text-color": "hsl(0, 0%, 100%)", "text-halo-width": 1, "text-halo-color": "hsl(0, 0%, 0%)", "text-halo-blur": 0},
+         "filter": ["all",[">=","turn_angle",115.5],["<=","turn_angle",180]]
+        },
+        {
+         "id": "osrm-n45", "type": "symbol", "source": "local-tiles", "source-layer": "turns",
+         "layout": { "icon-image": "n45", "icon-offset": {stops: [[15,[15,30]],[18,[30,60]]]}, "icon-allow-overlap": true, "icon-rotate": { property: "bearing_in", stops: [[0, 0], [360, 360]] },
+                    "text-field": "{cost}", "text-offset": {"base": 1, stops: [[15,[0.15,0.4]],[18,[2.5,6]]]}, "text-allow-overlap": true, "text-rotate": { property: "bearing_in", stops: [[0, 0], [360, 360]] } ,
+                     "text-size": { "base": 1, "stops": [ [ 10, 8 ], [ 18, 11 ] ] }, "text-font": [ "Lato Bold" ], "symbol-avoid-edges": false},
+         "paint": { "icon-color" : "#ffffff", "icon-halo-color" : "#ffffff", "icon-halo-width" : 2,
+            "text-color": "hsl(0, 0%, 100%)", "text-halo-width": 1, "text-halo-color": "hsl(0, 0%, 0%)", "text-halo-blur": 0},
+         "filter": ["all",[">=","turn_angle",-67.5],["<","turn_angle",-22.5]]
+        },
+        {
+         "id": "osrm-n90", "type": "symbol", "source": "local-tiles", "source-layer": "turns",
+         "layout": { "icon-image": "n90", "icon-offset": {stops: [[15,[15,30]],[18,[30,60]]]}, "icon-allow-overlap": true, "icon-rotate": { property: "bearing_in", stops: [[0, 0], [360, 360]] },
+                    "text-field": "{cost}", "text-offset": {"base": 1, stops: [[15,[0.15,0.4]],[18,[2.5,6]]]}, "text-allow-overlap": true, "text-rotate": { property: "bearing_in", stops: [[0, 0], [360, 360]] } ,
+                     "text-size": { "base": 1, "stops": [ [ 10, 8 ], [ 18, 11 ] ] }, "text-font": [ "Lato Bold" ], "symbol-avoid-edges": false},
+         "paint": { "icon-color" : "#ffffff", "icon-halo-color" : "#ffffff", "icon-halo-width" : 2,
+            "text-color": "hsl(0, 0%, 100%)", "text-halo-width": 1, "text-halo-color": "hsl(0, 0%, 0%)", "text-halo-blur": 0},
+         "filter": ["all",["<=","turn_angle",-67.5],[">","turn_angle",-115.5]]
+        },
+        {
+         "id": "osrm-n135", "type": "symbol", "source": "local-tiles", "source-layer": "turns",
+         "layout": { "icon-image": "n135", "icon-offset": {stops: [[15,[15,30]],[18,[30,60]]]}, "icon-allow-overlap": true, "icon-rotate": { property: "bearing_in", stops: [[0, 0], [360, 360]] },
+                    "text-field": "{cost}", "text-offset": {"base": 1, stops: [[15,[0.15,0.4]],[18,[2.5,6]]]}, "text-allow-overlap": true, "text-rotate": { property: "bearing_in", stops: [[0, 0], [360, 360]] } ,
+                     "text-size": { "base": 1, "stops": [ [ 10, 8 ], [ 18, 11 ] ] }, "text-font": [ "Lato Bold" ], "symbol-avoid-edges": false},
+         "paint": { "icon-color" : "#ffffff", "icon-halo-color" : "#ffffff", "icon-halo-width" : 2,
+            "text-color": "hsl(0, 0%, 100%)", "text-halo-width": 1, "text-halo-color": "hsl(0, 0%, 0%)", "text-halo-blur": 0},
+         "filter": ["all",[">=","turn_angle",-180],["<","turn_angle",-115.5]]
+        }
+    ]
+};
+
+var map = new maplibregl.Map({
+    container: 'map',
+    style: simple,
+    zoom: 13,
+    hash: true,
+    center: [-77.0269,38.8995]
+});
+
+map.addControl(new maplibregl.NavigationControl());
+map.showTileBoundaries = true;
+</script>
+
+</body>
+</html>
