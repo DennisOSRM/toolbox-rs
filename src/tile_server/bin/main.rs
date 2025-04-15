@@ -8,7 +8,7 @@ use prost::Message;
 use std::error::Error;
 use tile::{Feature, GeomType, Layer, Value};
 use toolbox_rs::{
-    geometry::FPCoordinate, io, math::zigzag_encode, partition::PartitionID, r_tree::RTree,
+    geometry::FPCoordinate, io, math::zigzag_encode, partition::PartitionID, r_tree::RTree, run_iterator,
 };
 
 // Include the generated protobuf code
@@ -111,12 +111,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("min dist: {}, coordinate: {:?}", min_dist, minumum);
 
     // create r-tree for fast lookup of coordinates
-    let rtree = RTree::from_elements(coordinates.into_iter().zip(partition_ids));
+    let rtree = RTree::from_elements(coordinates.into_iter().zip(partition_ids.iter().cloned()));
     let input_coordinate = FPCoordinate::new_from_lat_lon(50.20731, 8.57747);
     let mut nearest = rtree.nearest_iter(&input_coordinate);
     println!("nearest: {:?}", nearest.next());
 
     println!("Starting tile server on http://127.0.0.1:5000");
+    println!("Press Ctrl+C to stop the server");
+
+    // Sort the partition ids by proxy in ascending order
+    let mut partition_id_proxy = (0..partition_ids.len()).collect::<Vec<_>>();
+    partition_id_proxy.sort_by_key(|&i| partition_ids[i]);
+    println!("first ten sorted parition ids:");
+    for i in 0..50 {
+        let index = partition_id_proxy[i];
+        println!("[{i}] partition_ids[{index}]={:?}", partition_ids[index]);
+    }
+    println!("first ten sorted partition id runs");
 
     HttpServer::new(|| {
         App::new()
