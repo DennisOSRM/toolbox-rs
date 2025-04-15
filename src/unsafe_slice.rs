@@ -30,6 +30,33 @@ impl<'a, T> UnsafeSlice<'a, T> {
         unsafe { &mut *self.slice[index].get() }
     }
 
+    /// Returns a shared reference to the element at the given index.
+    ///
+    /// This function is safe to call because it returns an immutable reference,
+    /// which can be shared between multiple threads. However, it's important to note
+    /// that this safety relies on the exclusive access guarantee provided by the
+    /// mutable reference passed to `UnsafeSlice::new()`.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - Position of the element to access
+    ///
+    /// # Returns
+    ///
+    /// Reference to the element at `index`
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index` is out of bounds
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use toolbox_rs::unsafe_slice::UnsafeSlice;
+    /// let mut data = vec![1, 2, 3];
+    /// let slice = UnsafeSlice::new(&mut data);
+    /// assert_eq!(*slice.get(0), 1);
+    /// ```
     pub fn get(&self, index: usize) -> &T {
         unsafe { &mut *self.slice[index].get() }
     }
