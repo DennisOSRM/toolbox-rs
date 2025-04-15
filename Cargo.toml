@@ -26,13 +26,13 @@ path = "src/graph_plier/bin/main.rs"
 [dependencies]
 bincode = "2.0.0"
 bitvec = "1.0.1"
-clap = { version = "4.5.32", features = ["derive"] }
-env_logger = "0.11.7"
+clap = { version = "4.5.36", features = ["derive"] }
+env_logger = "0.11.8"
 fxhash = "0.2.1"
 geojson = "0.24.1"
 indicatif = "0.17.11"
 itertools = "0.14.0"
-log = "0.4.25"
+log = "0.4.27"
 num = "0.4.3"
 rand = "0.9.0"
 rayon = "1.10.0"
