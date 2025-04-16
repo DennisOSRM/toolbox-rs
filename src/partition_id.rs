@@ -50,24 +50,24 @@ impl PartitionID {
     }
 
     /// Transform ID to its left-most descendant k levels down
-    pub fn inplace_leftmost_descendant(&mut self, k: usize) {
+    pub fn make_leftmost_descendant(&mut self, k: usize) {
         self.0 <<= k;
     }
 
     /// Transform ID to its right-most descendant k levels down
-    pub fn inplace_rightmost_descendant(&mut self, k: usize) {
-        self.inplace_leftmost_descendant(k);
+    pub fn make_rightmost_descendant(&mut self, k: usize) {
+        self.make_leftmost_descendant(k);
         self.0 += (1 << k) - 1;
     }
 
     /// Transform the ID into its left child
-    pub fn inplace_left_child(&mut self) {
-        self.inplace_leftmost_descendant(1);
+    pub fn make_left_child(&mut self) {
+        self.make_leftmost_descendant(1);
     }
 
     /// Transform the ID into its right child
-    pub fn inplace_right_child(&mut self) {
-        self.inplace_rightmost_descendant(1);
+    pub fn make_right_child(&mut self) {
+        self.make_rightmost_descendant(1);
     }
 
     /// Returns a new PartitionID from an u32
@@ -159,7 +159,7 @@ impl BitOr for PartitionID {
 #[cfg(test)]
 mod tests {
 
-    use crate::partition::PartitionID;
+    use crate::partition_id::PartitionID;
 
     #[test]
     fn parent_id() {
@@ -218,18 +218,18 @@ mod tests {
     }
 
     #[test]
-    fn inplace_left_child() {
+    fn make_left_child() {
         let mut id = PartitionID(12345);
         let (left_child, _) = id.children();
-        id.inplace_left_child();
+        id.make_left_child();
         assert_eq!(left_child, id);
     }
 
     #[test]
-    fn inplace_right_child() {
+    fn make_right_child() {
         let mut id = PartitionID(12345);
         let (_, right_child) = id.children();
-        id.inplace_right_child();
+        id.make_right_child();
         assert_eq!(right_child, id);
     }
 
@@ -241,24 +241,24 @@ mod tests {
     }
 
     #[test]
-    fn inplace_leftmost_descendant() {
+    fn make_leftmost_descendant() {
         let id = PartitionID(1);
         let mut current = id;
         for i in 1..30 {
             let mut id = id;
-            id.inplace_leftmost_descendant(i);
+            id.make_leftmost_descendant(i);
             assert_eq!(current.left_child(), id);
             current = current.left_child();
         }
     }
 
     #[test]
-    fn inplace_rightmost_descendant() {
+    fn make_rightmost_descendant() {
         let id = PartitionID(1);
         let mut current = id;
         for i in 1..30 {
             let mut id = id;
-            id.inplace_rightmost_descendant(i);
+            id.make_rightmost_descendant(i);
             assert_eq!(current.right_child(), id);
             current = current.right_child();
         }
@@ -368,5 +368,90 @@ mod tests {
         assert!(!a.extract_bit(7));
         assert!(a.extract_bit(11));
         assert!(!a.extract_bit(15));
+    }
+
+    #[test]
+    fn make_left_child_parent() {
+        let mut id = PartitionID(12345);
+        let original = id;
+        id.make_left_child();
+        assert_eq!(original, id.parent());
+        assert!(id.is_left_child());
+        assert!(!id.is_right_child());
+    }
+
+    #[test]
+    fn make_right_child_parent() {
+        let mut id = PartitionID(12345);
+        let original = id;
+        id.make_right_child();
+        assert_eq!(original, id.parent());
+        assert!(!id.is_left_child());
+        assert!(id.is_right_child());
+    }
+
+    #[test]
+    fn lowest_common_ancestor_comprehensive() {
+        // Test case 1: Same node - should return itself
+        let node = PartitionID(0b1000);
+        assert_eq!(node.lowest_common_ancestor(&node), node);
+
+        // Test case 2: Parent-child relationship
+        let parent = PartitionID(0b100);
+        let left_child = PartitionID(0b1000);
+        let right_child = PartitionID(0b1001);
+        assert_eq!(left_child.lowest_common_ancestor(&parent), parent);
+        assert_eq!(right_child.lowest_common_ancestor(&parent), parent);
+        assert_eq!(parent.lowest_common_ancestor(&left_child), parent);
+        assert_eq!(parent.lowest_common_ancestor(&right_child), parent);
+
+        // Test case 3: Siblings
+        assert_eq!(left_child.lowest_common_ancestor(&right_child), parent);
+        assert_eq!(right_child.lowest_common_ancestor(&left_child), parent);
+
+        // Test case 4: Nodes at very different levels
+        let deep_node = PartitionID(0b1000_0000); // Level 6
+        let shallow_node = PartitionID(0b10); // Level 1
+        let expected_ancestor = PartitionID(0b10); // Their LCA should be at level 1
+        assert_eq!(
+            deep_node.lowest_common_ancestor(&shallow_node),
+            expected_ancestor
+        );
+        assert_eq!(
+            shallow_node.lowest_common_ancestor(&deep_node),
+            expected_ancestor
+        );
+
+        // Test case 5: Root cases
+        let root = PartitionID::root();
+        let any_node = PartitionID(0b1111);
+        assert_eq!(root.lowest_common_ancestor(&any_node), root);
+        assert_eq!(any_node.lowest_common_ancestor(&root), root);
+        assert_eq!(root.lowest_common_ancestor(&root), root);
+
+        // Test case 6: Complex tree relationship
+        // Create a more complex scenario:
+        //           1
+        //         /   \
+        //       2       3
+        //      / \     / \
+        //     4   5   6   7
+        //    /
+        //   8
+        let node_1 = PartitionID::root(); // 1
+        let node_2 = PartitionID(0b10); // 2
+        let node_3 = PartitionID(0b11); // 3
+        let node_4 = PartitionID(0b100); // 4
+        let node_5 = PartitionID(0b101); // 5
+        let node_6 = PartitionID(0b110); // 6
+        let node_7 = PartitionID(0b111); // 7
+        let node_8 = PartitionID(0b1000); // 8
+
+        // Test various relationships
+        assert_eq!(node_4.lowest_common_ancestor(&node_5), node_2); // Siblings under 2
+        assert_eq!(node_6.lowest_common_ancestor(&node_7), node_3); // Siblings under 3
+        assert_eq!(node_4.lowest_common_ancestor(&node_6), node_1); // Cousins
+        assert_eq!(node_8.lowest_common_ancestor(&node_5), node_2); // Uncle relationship
+        assert_eq!(node_8.lowest_common_ancestor(&node_7), node_1); // Different subtrees
     }
 }

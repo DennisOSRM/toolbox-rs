@@ -7,7 +7,7 @@ const BRANCHING_FACTOR: usize = 30;
 const LEAF_PACK_FACTOR: usize = 30;
 
 use crate::{
-    bounding_box::BoundingBox, geometry::FPCoordinate, partition::PartitionID,
+    bounding_box::BoundingBox, geometry::FPCoordinate, partition_id::PartitionID,
     space_filling_curve::zorder_cmp,
 };
 
