@@ -2,7 +2,7 @@ use std::{fs::File, io::BufWriter};
 
 use geojson::{Feature, FeatureWriter, Geometry, Value, feature::Id};
 use itertools::Itertools;
-use toolbox_rs::{bounding_box::BoundingBox, geometry::FPCoordinate, partition::PartitionID};
+use toolbox_rs::{bounding_box::BoundingBox, geometry::FPCoordinate, partition_id::PartitionID};
 
 pub(crate) fn convex_cell_hull_geojson(
     hulls: &[(Vec<FPCoordinate>, BoundingBox, &PartitionID)],
