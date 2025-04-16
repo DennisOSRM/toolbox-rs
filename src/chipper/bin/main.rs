@@ -119,47 +119,35 @@ fn main() {
                 let (left_edges, right_edges): (Vec<_>, Vec<_>) = job
                     .0
                     .iter()
-                    .filter(|edge| partition_ids.get(edge.source) == partition_ids.get(edge.target))
                     .partition(|edge| partition_ids.get(edge.source).is_left_child());
                 debug!("generating next level ids");
 
-                let left_len = result.left_ids.len();
-
-                // iterate on both halves
+                // iterate on left half if larger than the minimum cell size
                 let mut next_jobs = Vec::new();
                 if result.left_ids.len() > args.minimum_cell_size {
                     next_jobs.push((left_edges, result.left_ids));
                 } else {
-                    println!(
-                        "[left ids: {}], right ids: {}",
-                        left_len,
-                        result.right_ids.len()
-                    );
-                    //     let level_difference = (args.recursion_depth - current_level - 1) as usize;
-                    //     for i in &result.left_ids {
-                    //         unsafe {
-                    //             partition_ids
-                    //                 .get_mut(*i)
-                    //                 .inplace_leftmost_descendant(level_difference);
-                    //         }
-                    // }
+                    let level_difference = (args.recursion_depth - current_level - 1) as usize;
+                    for i in &result.left_ids {
+                        unsafe {
+                            partition_ids
+                                .get_mut(*i)
+                                .inplace_leftmost_descendant(level_difference);
+                        }
+                    }
                 }
+                // iterate on right half if larger than the minimum cell size
                 if result.right_ids.len() > args.minimum_cell_size {
                     next_jobs.push((right_edges, result.right_ids));
                 } else {
-                    println!(
-                        "left ids: {}, [right ids: {}]",
-                        left_len,
-                        result.right_ids.len()
-                    );
-                    //     let level_difference = (args.recursion_depth - current_level - 1) as usize;
-                    //     for i in &result.right_ids {
-                    //         unsafe {
-                    //             partition_ids
-                    //                 .get_mut(*i)
-                    //                 .inplace_leftmost_descendant(level_difference);
-                    //         }
-                    //     }
+                    let level_difference = (args.recursion_depth - current_level - 1) as usize;
+                    for i in &result.right_ids {
+                        unsafe {
+                            partition_ids
+                                .get_mut(*i)
+                                .inplace_rightmost_descendant(level_difference);
+                        }
+                    }
                 }
                 next_jobs
             })
