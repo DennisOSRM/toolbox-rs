@@ -13,7 +13,7 @@ use toolbox_rs::io;
 use toolbox_rs::unsafe_slice::UnsafeSlice;
 use toolbox_rs::{
     inertial_flow::{self, Flow, flow_cmp},
-    partition::PartitionID,
+    partition_id::PartitionID,
 };
 use {command_line::Arguments, serialize::write_results};
 
@@ -107,10 +107,10 @@ fn main() {
                 debug!("partitioning and assigning ids for all nodes");
 
                 (result.left_ids).iter().for_each(|id| unsafe {
-                    partition_ids.get_mut(*id).inplace_left_child();
+                    partition_ids.get_mut(*id).make_left_child();
                 });
                 (result.right_ids).iter().for_each(|id| unsafe {
-                    partition_ids.get_mut(*id).inplace_right_child();
+                    partition_ids.get_mut(*id).make_right_child();
                 });
 
                 // partition edge and node id sets for the next iteration
@@ -132,7 +132,7 @@ fn main() {
                         unsafe {
                             partition_ids
                                 .get_mut(*i)
-                                .inplace_leftmost_descendant(level_difference);
+                                .make_leftmost_descendant(level_difference);
                         }
                     }
                 }
@@ -145,7 +145,7 @@ fn main() {
                         unsafe {
                             partition_ids
                                 .get_mut(*i)
-                                .inplace_rightmost_descendant(level_difference);
+                                .make_rightmost_descendant(level_difference);
                         }
                     }
                 }

@@ -40,7 +40,7 @@ pub mod merge_tree;
 pub mod metis;
 pub mod one_iterator;
 pub mod one_to_many_dijkstra;
-pub mod partition;
+pub mod partition_id;
 pub mod path_based_scc;
 pub mod polyline;
 pub mod r_tree;

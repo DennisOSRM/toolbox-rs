@@ -1,4 +1,4 @@
-use crate::partition::PartitionID;
+use crate::partition_id::PartitionID;
 
 /// Note: LevelDirectory is a poor naming choice.
 /// This struct encapsulates the logic to decide whether
