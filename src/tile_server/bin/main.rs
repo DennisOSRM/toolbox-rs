@@ -8,7 +8,7 @@ use prost::Message;
 use std::error::Error;
 use tile::{Feature, GeomType, Layer, Value};
 use toolbox_rs::{
-    geometry::FPCoordinate, io, math::zigzag_encode, partition::PartitionID, r_tree::RTree,
+    geometry::FPCoordinate, io, math::zigzag_encode, partition_id::PartitionID, r_tree::RTree,
 };
 
 // Include the generated protobuf code
