@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/DennisOSRM/toolbox-rs/compare/v0.4.0...v0.5.0) - 2025-04-16
+
+### Other
+
+- Refactor PartitionID interface to be more idiomatic ([#510](https://github.com/DennisOSRM/toolbox-rs/pull/510))
+- Fix numbering of partition IDs ([#509](https://github.com/DennisOSRM/toolbox-rs/pull/509))
+- Fix indentation in docs ([#508](https://github.com/DennisOSRM/toolbox-rs/pull/508))
+- Implement RunIterator that allows supplying a run predicate ([#507](https://github.com/DennisOSRM/toolbox-rs/pull/507))
+- Add safe get() and unsafe get_mut() to unsafe slice ([#506](https://github.com/DennisOSRM/toolbox-rs/pull/506))
+- Update dependencies ([#505](https://github.com/DennisOSRM/toolbox-rs/pull/505))
+- Apply clippy fixes ([#503](https://github.com/DennisOSRM/toolbox-rs/pull/503))
+
 ## [0.4.0](https://github.com/DennisOSRM/toolbox-rs/compare/v0.3.0...v0.4.0) - 2025-04-05
 
 ### Other
