@@ -2,13 +2,24 @@ mod command_line;
 
 use actix_web::{App, HttpResponse, HttpServer, Responder, web};
 use command_line::Arguments;
+use core::panic;
 use env_logger::{Builder, Env};
+use itertools::Itertools;
 use log::info;
 use prost::Message;
-use std::error::Error;
+use std::{collections::HashMap, error::Error};
 use tile::{Feature, GeomType, Layer, Value};
 use toolbox_rs::{
-    geometry::FPCoordinate, io, math::zigzag_encode, partition_id::PartitionID, r_tree::RTree,
+    edge::InputEdge,
+    geometry::FPCoordinate,
+    graph::Graph,
+    io,
+    math::zigzag_encode,
+    partition_id::PartitionID,
+    r_tree::RTree,
+    run_iterator::RunIterator,
+    static_graph::{self, StaticGraph},
+    unidirectional_dijkstra::UnidirectionalDijkstra,
 };
 
 // Include the generated protobuf code
@@ -90,11 +101,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // parse and print command line parameters
     let args = <Arguments as clap::Parser>::parse();
 
+    let edges = io::read_vec_from_file::<InputEdge<usize>>(&args.graph);
+    info!("loaded {} graph edges", edges.len());
+
     let partition_ids = io::read_vec_from_file::<PartitionID>(&args.assignment);
     info!("loaded {} partition ids", partition_ids.len());
 
     let coordinates = io::read_vec_from_file::<FPCoordinate>(&args.coordinates);
     info!("loaded {} coordinates", coordinates.len());
+
+    let static_graph = static_graph::StaticGraph::new(edges);
+    info!(
+        "loaded static graph with {} nodes and {} edges",
+        static_graph.number_of_nodes(),
+        static_graph.number_of_edges()
+    );
 
     let mut min_dist = f64::MAX;
     let mut minumum = (
@@ -111,7 +132,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("min dist: {}, coordinate: {:?}", min_dist, minumum);
 
     // create r-tree for fast lookup of coordinates
-    let rtree = RTree::from_elements(coordinates.into_iter().zip(partition_ids.iter().cloned()));
+    let rtree = RTree::from_elements(
+        coordinates
+            .iter()
+            .cloned()
+            .zip(partition_ids.iter().cloned()),
+    );
     let input_coordinate = FPCoordinate::new_from_lat_lon(50.20731, 8.57747);
     let mut nearest = rtree.nearest_iter(&input_coordinate);
     println!("nearest: {:?}", nearest.next());
@@ -122,12 +148,75 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Sort the partition ids by proxy in ascending order
     let mut partition_id_proxy = (0..partition_ids.len()).collect::<Vec<_>>();
     partition_id_proxy.sort_by_key(|&i| partition_ids[i]);
-    println!("first ten sorted parition ids:");
-    for i in 0..50 {
-        let index = partition_id_proxy[i];
-        println!("[{i}] partition_ids[{index}]={:?}", partition_ids[index]);
+
+    // Create a run iterator to find runs of equal partition ids
+    let mut cell_iterator = RunIterator::new_by(&partition_id_proxy, |&a, &b| {
+        partition_ids[a] == partition_ids[b]
+    });
+
+    let pb = indicatif::ProgressBar::new(273521);
+    let mut cell_index = 0;
+    let mut border_nodes = Vec::new();
+    let mut dijkstra = UnidirectionalDijkstra::new();
+
+    while let Some(run) = cell_iterator.next() {
+        border_nodes.clear();
+        pb.set_message(format!("cell #{cell_index}"));
+        cell_index += 1;
+        pb.inc(1);
+
+        // extract the edges of the subgraph
+        let source_partition_id = partition_ids[run[0]];
+        let mut subgraph_edges = Vec::new();
+        for &node_id in run {
+            for edge in static_graph.edge_range(node_id) {
+                let target = static_graph.target(edge);
+                let target_partition_id = partition_ids[target];
+
+                if target_partition_id == source_partition_id {
+                    let data = static_graph.data(edge);
+                    subgraph_edges.push(InputEdge::new(node_id, target, data.clone()));
+                } else {
+                    border_nodes.push(node_id);
+                }
+            }
+        }
+        border_nodes.sort_unstable();
+        border_nodes.dedup();
+
+        // renumber source and target nodes of edges to be zero-based
+        // TODO: faster hashmap implementation
+        let mut node_map = HashMap::new();
+        for node_id in &border_nodes {
+            node_map.insert(*node_id, node_map.len());
+        }
+
+        let subgraph_edges_len = subgraph_edges.len();
+        for edge in &mut subgraph_edges {
+            let current_len = node_map.len();
+            edge.source = *node_map.entry(edge.source).or_insert(current_len);
+
+            let current_len = node_map.len();
+            edge.target = *node_map.entry(edge.target).or_insert(current_len);
+            assert!(edge.source < 2 * subgraph_edges_len);
+            assert!(edge.target < 2 * subgraph_edges_len);
+        }
+        // TODO: find a way to avoid relocations
+        let cell_graph = StaticGraph::new(subgraph_edges);
+        let mut cell = vec![0; border_nodes.len() * border_nodes.len()];
+        for source in &border_nodes {
+            for target in &border_nodes {
+                if source == target {
+                    continue;
+                }
+                let source = node_map[source];
+                let target = node_map[target];
+
+                let distance = dijkstra.run(&cell_graph, source, target);
+                cell[source * border_nodes.len() + target] = distance;
+            }
+        }
     }
-    println!("first ten sorted partition id runs");
 
     HttpServer::new(|| {
         App::new()
