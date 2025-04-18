@@ -46,6 +46,7 @@ pub struct MediumSizeHashTable<Key, Value, Hash: FastHash> {
     positions: Vec<HashCell<Key, Value>>,
     hasher: Hash,
     current_timestamp: Wrapping<u32>,
+    length: usize,
 }
 
 impl<Key, Value, Hash: FastHash + Default> Default for MediumSizeHashTable<Key, Value, Hash>
@@ -75,6 +76,7 @@ where
             positions: vec![HashCell::default(); MAX_ELEMENTS],
             hasher: Hash::default(),
             current_timestamp: Wrapping(0),
+            length: 0,
         }
     }
 
@@ -111,6 +113,11 @@ where
         }
 
         let cell = &mut self.positions[position];
+        if cell.time != self.current_timestamp.0 {
+            // New cell, increment length
+            self.length += 1;
+        }
+        // Update timestamp and key
         cell.time = self.current_timestamp.0;
         cell.key = key;
 
@@ -273,10 +280,87 @@ where
     /// This provides an efficient O(1) clear operation in most cases.
     pub fn clear(&mut self) {
         self.current_timestamp += Wrapping(1);
+        self.length = 0;
 
         if self.current_timestamp.0 == 0 {
             self.positions = vec![HashCell::default(); MAX_ELEMENTS];
         }
+    }
+
+    /// Returns the number of elements currently in the hash table.
+    ///
+    /// This method returns the actual number of key-value pairs stored in the table,
+    /// not the capacity. The count is maintained efficiently during insertions and clear
+    /// operations.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use toolbox_rs::medium_size_hash_table::MediumSizeHashTable;
+    /// use toolbox_rs::tabulation_hash::TabulationHash;
+    ///
+    /// let mut table = MediumSizeHashTable::<u32, u32, TabulationHash>::new();
+    /// assert_eq!(table.len(), 0);
+    ///
+    /// table.insert(1, 42);
+    /// assert_eq!(table.len(), 1);
+    ///
+    /// // Update existing key doesn't change length
+    /// table.insert(1, 43);
+    /// assert_eq!(table.len(), 1);
+    ///
+    /// table.insert(2, 100);
+    /// assert_eq!(table.len(), 2);
+    ///
+    /// table.clear();
+    /// assert_eq!(table.len(), 0);
+    /// ```
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.length
+    }
+
+    /// Returns true if the hash table contains no elements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use toolbox_rs::medium_size_hash_table::MediumSizeHashTable;
+    /// use toolbox_rs::tabulation_hash::TabulationHash;
+    ///
+    /// let mut table = MediumSizeHashTable::<u32, u32, TabulationHash>::new();
+    /// assert!(table.is_empty());
+    ///
+    /// table.insert(1, 42);
+    /// assert!(!table.is_empty());
+    ///
+    /// table.clear();
+    /// assert!(table.is_empty());
+    /// ```
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.length == 0
+    }
+
+    /// Returns the total capacity of the hash table.
+    ///
+    /// The capacity is fixed at MAX_ELEMENTS (65536) and represents the maximum
+    /// number of elements that can be stored in the table. This is different from
+    /// `len()` which returns the current number of elements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use toolbox_rs::medium_size_hash_table::MediumSizeHashTable;
+    /// use toolbox_rs::tabulation_hash::TabulationHash;
+    ///
+    /// let table = MediumSizeHashTable::<u32, u32, TabulationHash>::new();
+    /// assert_eq!(table.capacity(), 65536);
+    /// assert!(table.capacity() >= table.len());
+    /// ```
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        MAX_ELEMENTS
     }
 }
 
@@ -548,5 +632,76 @@ mod test {
         assert_eq!(storage.peek_value(keys[0]), Some(&0));
         assert_eq!(storage.peek_value(keys[1]), Some(&99));
         assert_eq!(storage.peek_value(keys[2]), Some(&2));
+    }
+
+    #[test]
+    fn test_len() {
+        let mut storage = MediumSizeHashTable::<u32, u32, TabulationHash>::new();
+        assert_eq!(storage.len(), 0, "New table should have length 0");
+
+        *storage.get_mut(1) = 42;
+        assert_eq!(storage.len(), 1, "Length should be 1 after first insert");
+
+        // Update existing key - shouldn't change length
+        *storage.get_mut(1) = 43;
+        assert_eq!(
+            storage.len(),
+            1,
+            "Length shouldn't change when updating existing key"
+        );
+
+        *storage.get_mut(2) = 100;
+        assert_eq!(storage.len(), 2, "Length should increase with new key");
+
+        storage.clear();
+        assert_eq!(storage.len(), 0, "Length should be 0 after clear");
+    }
+
+    #[test]
+    fn test_is_empty() {
+        let mut storage = MediumSizeHashTable::<u32, u32, TabulationHash>::new();
+        assert!(storage.is_empty(), "New table should be empty");
+
+        *storage.get_mut(1) = 42;
+        assert!(
+            !storage.is_empty(),
+            "Table should not be empty after insert"
+        );
+
+        storage.clear();
+        assert!(storage.is_empty(), "Table should be empty after clear");
+
+        // Test empty after timestamp overflow
+        storage.current_timestamp = Wrapping(u32::MAX);
+        *storage.get_mut(1) = 42;
+        storage.clear(); // This will trigger timestamp overflow handling
+        assert!(
+            storage.is_empty(),
+            "Table should be empty after timestamp overflow clear"
+        );
+    }
+
+    #[test]
+    fn test_capacity() {
+        let storage = MediumSizeHashTable::<u32, u32, TabulationHash>::new();
+        assert_eq!(
+            storage.capacity(),
+            MAX_ELEMENTS,
+            "Capacity should be MAX_ELEMENTS"
+        );
+
+        let mut storage = MediumSizeHashTable::<u32, u32, TabulationHash>::new();
+        for i in 0..100 {
+            *storage.get_mut(i) = i;
+        }
+        assert_eq!(
+            storage.capacity(),
+            MAX_ELEMENTS,
+            "Capacity should remain constant regardless of content"
+        );
+        assert!(
+            storage.len() <= storage.capacity(),
+            "Length should never exceed capacity"
+        );
     }
 }
