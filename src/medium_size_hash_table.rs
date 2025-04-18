@@ -18,7 +18,7 @@ pub trait FastHash {
 /// - O(1) average case for insertions and lookups
 /// - O(1) average case for clear operation using timestamp-based invalidation
 /// - Space complexity: O(MAX_ELEMENTS)
-
+///
 /// A hash cell storing key, value, and timestamp for collision resolution.
 ///
 /// Used internally by TabulationHashTable to store elements and handle
@@ -117,6 +117,63 @@ where
         &mut cell.value
     }
 
+    /// Inserts a value into the hash table at the specified key.
+    ///
+    /// This is a convenience wrapper around `get_mut()` that handles the assignment.
+    /// It uses linear probing for collision resolution and automatically handles
+    /// timestamp-based cell invalidation.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to insert the value at
+    /// * `value` - The value to insert
+    ///
+    /// # Examples
+    ///
+    /// Basic insertion:
+    /// ```
+    /// use toolbox_rs::medium_size_hash_table::MediumSizeHashTable;
+    /// use toolbox_rs::tabulation_hash::TabulationHash;
+    ///
+    /// let mut table = MediumSizeHashTable::<u32, u32, TabulationHash>::new();
+    /// table.insert(1, 42);
+    /// assert_eq!(table.peek_value(1), Some(&42));
+    /// ```
+    ///
+    /// Updating existing values:
+    /// ```
+    /// use toolbox_rs::medium_size_hash_table::MediumSizeHashTable;
+    /// use toolbox_rs::tabulation_hash::TabulationHash;
+    ///
+    /// let mut table = MediumSizeHashTable::<u32, u32, TabulationHash>::new();
+    /// table.insert(1, 42);
+    /// table.insert(1, 43);  // Updates the existing value
+    /// assert_eq!(table.peek_value(1), Some(&43));
+    /// ```
+    ///
+    /// Multiple insertions:
+    /// ```
+    /// use toolbox_rs::medium_size_hash_table::MediumSizeHashTable;
+    /// use toolbox_rs::tabulation_hash::TabulationHash;
+    ///
+    /// let mut table = MediumSizeHashTable::<u32, u32, TabulationHash>::new();
+    /// table.insert(1, 10);
+    /// table.insert(2, 20);
+    /// table.insert(3, 30);
+    ///
+    /// assert_eq!(table.peek_value(1), Some(&10));
+    /// assert_eq!(table.peek_value(2), Some(&20));
+    /// assert_eq!(table.peek_value(3), Some(&30));
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `Key` cannot be converted to `u32`
+    #[inline]
+    pub fn insert(&mut self, key: Key, value: Value) {
+        *self.get_mut(key) = value;
+    }
+
     /// Looks up the value associated with a key without modifying the timestamp.
     ///
     /// # Arguments
@@ -147,6 +204,67 @@ where
             return Some(&self.positions[position].value);
         }
         None
+    }
+
+    /// Checks if a key exists in the hash table.
+    ///
+    /// This method performs a read-only lookup that doesn't modify the table's state.
+    /// It uses the same linear probing strategy as other operations but doesn't update
+    /// timestamps or modify any values.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to check for existence
+    ///
+    /// # Returns
+    ///
+    /// * `true` if the key exists in the current timestamp
+    /// * `false` if the key doesn't exist or was cleared
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    /// ```
+    /// use toolbox_rs::medium_size_hash_table::MediumSizeHashTable;
+    /// use toolbox_rs::tabulation_hash::TabulationHash;
+    ///
+    /// let mut table = MediumSizeHashTable::<u32, u32, TabulationHash>::new();
+    /// assert!(!table.contains_key(1), "Empty table should not contain any keys");
+    ///
+    /// *table.get_mut(1) = 42;
+    /// assert!(table.contains_key(1), "Key should exist after insertion");
+    /// ```
+    ///
+    /// Behavior after clear:
+    /// ```
+    /// use toolbox_rs::medium_size_hash_table::MediumSizeHashTable;
+    /// use toolbox_rs::tabulation_hash::TabulationHash;
+    ///
+    /// let mut table = MediumSizeHashTable::<u32, u32, TabulationHash>::new();
+    /// *table.get_mut(1) = 42;
+    /// table.clear();
+    /// assert!(!table.contains_key(1), "Key should not exist after clear");
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `Key` cannot be converted to `u32`
+    pub fn contains_key(&self, key: Key) -> bool {
+        let key_as_u32: u32 = key
+            .try_into()
+            .unwrap_or_else(|_| panic!("Key must be convertible to u32"));
+        let mut position = self.hasher.hash(key_as_u32) as usize;
+
+        while self.positions[position].time == self.current_timestamp.0
+            && self.positions[position].key != key
+        {
+            position = (position + 1) % MAX_ELEMENTS;
+        }
+
+        if self.positions[position].time == self.current_timestamp.0 {
+            return true;
+        }
+        false
     }
 
     /// Clears the hash table by incrementing the timestamp.
@@ -318,5 +436,117 @@ mod test {
 
         assert_eq!(default_table.peek_value(1), new_table.peek_value(1));
         assert_eq!(default_table.peek_value(1), Some(&42));
+    }
+
+    #[test]
+    fn test_contains_key_basic() {
+        let mut storage = MediumSizeHashTable::<u32, u32, TabulationHash>::new();
+
+        assert!(
+            !storage.contains_key(1),
+            "Empty table should not contain any keys"
+        );
+
+        *storage.get_mut(1) = 42;
+        assert!(storage.contains_key(1), "Key should exist after insertion");
+        assert!(
+            !storage.contains_key(2),
+            "Non-existent key should return false"
+        );
+
+        storage.clear();
+        assert!(!storage.contains_key(1), "Key should not exist after clear");
+    }
+
+    #[test]
+    fn test_contains_key_collisions() {
+        let mut storage = MediumSizeHashTable::<u32, u32, TabulationHash>::new();
+
+        // Insert two keys that will definitely collide
+        let base_key = 42;
+        let colliding_key = base_key + MAX_ELEMENTS as u32;
+
+        *storage.get_mut(base_key) = 100;
+        *storage.get_mut(colliding_key) = 200;
+
+        assert!(storage.contains_key(base_key), "First key should exist");
+        assert!(
+            storage.contains_key(colliding_key),
+            "Colliding key should exist"
+        );
+        assert!(
+            !storage.contains_key(base_key + 1),
+            "Non-existent key should not exist"
+        );
+    }
+
+    #[test]
+    fn test_insert_basic() {
+        let mut storage = MediumSizeHashTable::<u32, u32, TabulationHash>::new();
+
+        storage.insert(1, 42);
+        assert_eq!(
+            storage.peek_value(1),
+            Some(&42),
+            "Value should be inserted correctly"
+        );
+
+        // Update existing key
+        storage.insert(1, 43);
+        assert_eq!(
+            storage.peek_value(1),
+            Some(&43),
+            "Value should be updated correctly"
+        );
+
+        // Multiple inserts
+        storage.insert(2, 100);
+        storage.insert(3, 200);
+        assert_eq!(
+            storage.peek_value(2),
+            Some(&100),
+            "Second insert should work"
+        );
+        assert_eq!(
+            storage.peek_value(3),
+            Some(&200),
+            "Third insert should work"
+        );
+    }
+
+    #[test]
+    fn test_insert_collisions() {
+        let mut storage = MediumSizeHashTable::<u32, u32, TabulationHash>::new();
+
+        // Create keys that will collide
+        let base_key = 42;
+        let keys = [
+            base_key,
+            base_key + MAX_ELEMENTS as u32,
+            base_key + (2 * MAX_ELEMENTS) as u32,
+        ];
+
+        // Insert colliding values
+        for (i, &key) in keys.iter().enumerate() {
+            storage.insert(key, i as u32);
+        }
+
+        // Verify all values are stored correctly
+        for (i, &key) in keys.iter().enumerate() {
+            assert_eq!(
+                storage.peek_value(key),
+                Some(&(i as u32)),
+                "Value for key {} should be stored correctly despite collisions",
+                key
+            );
+        }
+
+        // Update middle value
+        storage.insert(keys[1], 99);
+
+        // Verify chain remains intact
+        assert_eq!(storage.peek_value(keys[0]), Some(&0));
+        assert_eq!(storage.peek_value(keys[1]), Some(&99));
+        assert_eq!(storage.peek_value(keys[2]), Some(&2));
     }
 }
