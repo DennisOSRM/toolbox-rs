@@ -2,12 +2,11 @@ mod command_line;
 
 use actix_web::{App, HttpResponse, HttpServer, Responder, web};
 use command_line::Arguments;
-use core::panic;
 use env_logger::{Builder, Env};
-use itertools::Itertools;
+use fxhash::FxHashMap;
 use log::info;
 use prost::Message;
-use std::{collections::HashMap, error::Error};
+use std::error::Error;
 use tile::{Feature, GeomType, Layer, Value};
 use toolbox_rs::{
     edge::InputEdge,
@@ -15,11 +14,12 @@ use toolbox_rs::{
     graph::Graph,
     io,
     math::zigzag_encode,
+    one_to_many_dijkstra::OneToManyDijkstra,
     partition_id::PartitionID,
     r_tree::RTree,
     run_iterator::RunIterator,
     static_graph::{self, StaticGraph},
-    unidirectional_dijkstra::UnidirectionalDijkstra,
+    // unidirectional_dijkstra::UnidirectionalDijkstra,
 };
 
 // Include the generated protobuf code
@@ -150,16 +150,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
     partition_id_proxy.sort_by_key(|&i| partition_ids[i]);
 
     // Create a run iterator to find runs of equal partition ids
-    let mut cell_iterator = RunIterator::new_by(&partition_id_proxy, |&a, &b| {
+    let cell_iterator = RunIterator::new_by(&partition_id_proxy, |&a, &b| {
         partition_ids[a] == partition_ids[b]
     });
 
     let pb = indicatif::ProgressBar::new(273521);
     let mut cell_index = 0;
     let mut border_nodes = Vec::new();
-    let mut dijkstra = UnidirectionalDijkstra::new();
+    // let mut dijkstra = UnidirectionalDijkstra::new();
+    let mut otm_dijkstra = OneToManyDijkstra::new();
 
-    while let Some(run) = cell_iterator.next() {
+    for run in cell_iterator {
         border_nodes.clear();
         pb.set_message(format!("cell #{cell_index}"));
         cell_index += 1;
@@ -175,7 +176,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                 if target_partition_id == source_partition_id {
                     let data = static_graph.data(edge);
-                    subgraph_edges.push(InputEdge::new(node_id, target, data.clone()));
+                    subgraph_edges.push(InputEdge::new(node_id, target, *data));
                 } else {
                     border_nodes.push(node_id);
                 }
@@ -185,8 +186,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         border_nodes.dedup();
 
         // renumber source and target nodes of edges to be zero-based
-        // TODO: faster hashmap implementation
-        let mut node_map = HashMap::new();
+        // TODO: faster hashmap implementation using tabhash or fibonacci hash
+        let mut node_map = FxHashMap::default();
         for node_id in &border_nodes {
             node_map.insert(*node_id, node_map.len());
         }
@@ -204,18 +205,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
         // TODO: find a way to avoid relocations
         let cell_graph = StaticGraph::new(subgraph_edges);
         let mut cell = vec![0; border_nodes.len() * border_nodes.len()];
-        for source in &border_nodes {
-            for target in &border_nodes {
-                if source == target {
-                    continue;
-                }
-                let source = node_map[source];
-                let target = node_map[target];
-
-                let distance = dijkstra.run(&cell_graph, source, target);
-                cell[source * border_nodes.len() + target] = distance;
+        let border_node_ids = (0..border_nodes.len()).collect::<Vec<_>>();
+        for source in &border_node_ids {
+            otm_dijkstra.run(&cell_graph, *source, &border_node_ids);
+            for target in &border_node_ids {
+                cell[source * border_nodes.len() + target] = otm_dijkstra.distance(*target);
             }
+            // TODO: if one-to-many search checks out to be fully correct and reliable.
+            // for target in &border_node_ids {
+            //     if source == target {
+            //         continue;
+            //     }
+
+            //     let distance = dijkstra.run(&cell_graph, *source, *target);
+            //     cell[source * border_nodes.len() + target] = distance;
+            // }
         }
+        // println!("cell: {:?}", cell);
+        // panic!("stop");
     }
 
     HttpServer::new(|| {
