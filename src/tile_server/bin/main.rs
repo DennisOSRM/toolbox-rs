@@ -1,6 +1,6 @@
 mod command_line;
 
-use actix_web::{App, HttpResponse, HttpServer, Responder, web};
+use actix_web::{web, App, HttpResponse, HttpServer, Responder};
 use command_line::Arguments;
 use env_logger::{Builder, Env};
 use fxhash::FxHashMap;
@@ -9,6 +9,7 @@ use prost::Message;
 use std::error::Error;
 use tile::{Feature, GeomType, Layer, Value};
 use toolbox_rs::{
+    cell::Cell,
     edge::InputEdge,
     geometry::FPCoordinate,
     graph::Graph,
@@ -18,8 +19,7 @@ use toolbox_rs::{
     partition_id::PartitionID,
     r_tree::RTree,
     run_iterator::RunIterator,
-    static_graph::{self, StaticGraph},
-    // unidirectional_dijkstra::UnidirectionalDijkstra,
+    static_graph::{self, StaticGraph}, // unidirectional_dijkstra::UnidirectionalDijkstra,
 };
 
 // Include the generated protobuf code
@@ -160,6 +160,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // let mut dijkstra = UnidirectionalDijkstra::new();
     let mut otm_dijkstra = OneToManyDijkstra::new();
 
+    let mut cells = Vec::new();
+
     for run in cell_iterator {
         border_nodes.clear();
         pb.set_message(format!("cell #{cell_index}"));
@@ -221,9 +223,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             //     cell[source * border_nodes.len() + target] = distance;
             // }
         }
+        cells.push(Cell::new(border_nodes.clone(), cell, cell_index));
         // println!("cell: {:?}", cell);
         // panic!("stop");
     }
+    println!("cells: {}", cells.len());
 
     HttpServer::new(|| {
         App::new()
