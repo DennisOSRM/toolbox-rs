@@ -12,7 +12,7 @@ impl Cell {
         Self {
             border_nodes,
             distance_matrix,
-            id
+            id,
         }
     }
 
