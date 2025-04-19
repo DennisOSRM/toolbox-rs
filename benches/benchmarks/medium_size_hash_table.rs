@@ -18,7 +18,7 @@ fn insert_sequential(c: &mut Criterion) {
     group.bench_function("TabulationHashTable", |b| {
         b.iter(|| {
             for i in 0..1000 {
-                *table.get_mut(black_box(i)) = i;
+                table.insert(black_box(i), i);
             }
         })
     });
@@ -26,7 +26,7 @@ fn insert_sequential(c: &mut Criterion) {
     group.bench_function("FibonacciHashTable", |b| {
         b.iter(|| {
             for i in 0..1000 {
-                *fibonacci.get_mut(black_box(i)) = i;
+                fibonacci.insert(black_box(i), i);
             }
         })
     });
@@ -69,8 +69,8 @@ fn lookup_random(c: &mut Criterion) {
     let mut hashmap = HashMap::new();
 
     for i in 0..1000 {
-        *fibonacci.get_mut(i) = i;
-        *table.get_mut(i) = i;
+        fibonacci.insert(i, i);
+        table.insert(i, i);
         bmap.insert(i, i);
         tiny.insert(i, i);
         hashmap.insert(i, i);
