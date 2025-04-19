@@ -29,6 +29,9 @@ jobs:
     - name: checkout
       uses: actions/checkout@v4
 
+    - name: Install protoc
+      run: choco install protoc
+
       # Run build
     - name: Install Rustup using win.rustup.rs
       run: |
