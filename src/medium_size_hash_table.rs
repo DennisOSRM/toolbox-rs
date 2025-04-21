@@ -1,9 +1,6 @@
 use std::num::Wrapping;
-pub const MAX_ELEMENTS: usize = 65536;
 
-pub trait FastHash {
-    fn hash(&self, key: u32) -> u16;
-}
+use crate::fast_hash_trait::{FastHash, MAX_ELEMENTS};
 
 /// A hash table using tabulation hashing for fast lookups with linear probing
 /// for collision resolution.
