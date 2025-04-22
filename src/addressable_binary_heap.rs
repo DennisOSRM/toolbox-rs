@@ -145,9 +145,44 @@ impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Da
         }
     }
 
+    /// Returns the node with minimum weight without removing it from the heap.
+    /// Panics if the heap is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use toolbox_rs::addressable_binary_heap::AddressableHeap;
+    /// let mut heap = AddressableHeap::new();
+    /// heap.insert(1, 1, 0);
+    /// heap.insert(2, 2, 0);
+    /// assert_eq!(heap.min(), 1);
+    /// ```
     pub fn min(&self) -> NodeID {
         let index = self.heap[1].index;
         self.inserted_nodes[index].node
+    }
+
+    /// Returns the node with minimum weight without removing it, or None if the heap is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use toolbox_rs::addressable_binary_heap::AddressableHeap;
+    /// let mut heap = AddressableHeap::new();
+    ///
+    /// assert_eq!(heap.pop(), None);  // Empty heap
+    ///
+    /// heap.insert(1, 1, 0);
+    /// heap.insert(2, 2, 0);
+    /// assert_eq!(heap.pop(), Some(1));  // Returns min without removing
+    /// assert_eq!(heap.pop(), Some(1));  // Still returns 1 as it wasn't removed
+    /// ```
+    #[inline]
+    pub fn pop(&mut self) -> Option<NodeID> {
+        if self.is_empty() {
+            return None;
+        }
+        Some(self.min())
     }
 
     pub fn delete_min(&mut self) -> NodeID {
@@ -549,5 +584,26 @@ mod tests {
             assert_eq!(removed, *i);
             assert!(!heap.contains(*i));
         }
+    }
+
+    #[test]
+    fn test_pop() {
+        let mut heap = Heap::new();
+
+        // Test empty heap
+        assert_eq!(heap.pop(), None);
+
+        // Test with multiple elements
+        heap.insert(3, 3, 0);
+        heap.insert(1, 1, 0);
+        heap.insert(2, 2, 0);
+
+        assert_eq!(heap.pop(), Some(1)); // Should return min without removing
+        assert_eq!(heap.len(), 3); // Length shouldn't change
+        assert_eq!(heap.pop(), Some(1)); // Should still return same min
+
+        heap.delete_min(); // Actually remove the minimum
+        assert_eq!(heap.pop(), Some(2)); // Should now return new minimum
+        assert_eq!(heap.len(), 2); // Length should be reduced
     }
 }
