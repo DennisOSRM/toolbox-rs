@@ -1,7 +1,8 @@
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use crate::medium_size_hash_table::{FastHash, MAX_ELEMENTS};
+use crate::fast_hash_trait::{FastHash, MAX_ELEMENTS};
+
 /// Implementation of Tabulation hashing with XOR operations.
 ///
 /// Properties:
@@ -74,7 +75,7 @@ impl FastHash for TabulationHash {
     /// # Example
     ///
     /// ```
-    /// use crate::toolbox_rs::medium_size_hash_table::FastHash;
+    /// use crate::toolbox_rs::fast_hash_trait::FastHash;
     /// use toolbox_rs::tabulation_hash::TabulationHash;
     /// let hasher = TabulationHash::new();
     /// let hash = hasher.hash(42);

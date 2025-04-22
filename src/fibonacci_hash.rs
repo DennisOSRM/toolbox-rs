@@ -1,4 +1,4 @@
-use crate::medium_size_hash_table::FastHash;
+use crate::fast_hash_trait::FastHash;
 
 /// A hash function implementation using the Fibonacci hashing technique.
 ///
@@ -11,7 +11,7 @@ use crate::medium_size_hash_table::FastHash;
 /// Basic usage:
 /// ```
 /// use toolbox_rs::fibonacci_hash::FibonacciHash;
-/// use toolbox_rs::medium_size_hash_table::FastHash;
+/// use toolbox_rs::fast_hash_trait::FastHash;
 ///
 /// let hasher = FibonacciHash::new();
 /// let hash = hasher.hash(42);
@@ -21,7 +21,7 @@ use crate::medium_size_hash_table::FastHash;
 /// Different inputs produce different hashes:
 /// ```
 /// use toolbox_rs::fibonacci_hash::FibonacciHash;
-/// use toolbox_rs::medium_size_hash_table::FastHash;
+/// use toolbox_rs::fast_hash_trait::FastHash;
 ///
 /// let hasher = FibonacciHash::new();
 /// let hash1 = hasher.hash(1);
@@ -70,7 +70,7 @@ impl FastHash for FibonacciHash {
     ///
     /// ```
     /// use toolbox_rs::fibonacci_hash::FibonacciHash;
-    /// use toolbox_rs::medium_size_hash_table::FastHash;
+    /// use toolbox_rs::fast_hash_trait::FastHash;
     ///
     /// let hasher = FibonacciHash::new();
     ///
