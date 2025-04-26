@@ -40,6 +40,9 @@ tempfile = "3.16.0"
 thiserror = "2.0.12"
 xxhash-rust = {version = "0.8.15", features = ["xxh3"] }
 
+[target.'cfg(unix)'.dependencies]
+jemallocator = "0.5.4"
+
 [dev-dependencies]
 criterion = "0.5.1"
 
