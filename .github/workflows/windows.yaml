@@ -40,16 +40,6 @@ jobs:
         rustup target add ${{ matrix.target }}
       shell: powershell
 
-    - name: Install Build Tools for Visual Studio
-      shell: cmd
-      run: |
-        choco install visualstudio2019buildtools -y
-        choco install visualstudio2019-workload-vctools -y
-
     - name: Build and Test
       shell: cmd
-      env:
-        CC: cl.exe
-        CXX: cl.exe
-        PATH: C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Tools\MSVC\14.29.30133\bin\Hostx64\x64;%PATH%
       run: cargo test

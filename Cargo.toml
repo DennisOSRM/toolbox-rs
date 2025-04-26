@@ -32,7 +32,6 @@ fxhash = "0.2.1"
 geojson = "0.24.1"
 indicatif = "0.17.11"
 itertools = "0.14.0"
-jemallocator = "0.5.4"
 log = "0.4.27"
 num = "0.4.3"
 rand = "0.9.1"
@@ -40,6 +39,9 @@ rayon = "1.10.0"
 tempfile = "3.16.0"
 thiserror = "2.0.12"
 xxhash-rust = {version = "0.8.15", features = ["xxh3"] }
+
+[target.'cfg(unix)'.dependencies]
+jemallocator = "0.5.4"
 
 [dev-dependencies]
 criterion = "0.5.1"
