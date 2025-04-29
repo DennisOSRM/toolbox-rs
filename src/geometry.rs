@@ -185,6 +185,31 @@ pub fn distance(first: &FPCoordinate, b: &FPCoordinate) -> f64 {
     crate::great_circle::haversine(lata, lona, latb, lonb)
 }
 
+/// A 2D point with integer coordinates, primarily used for TSP problems
+/// where distances need to be rounded to the nearest integer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IPoint2D {
+    pub x: i32,
+    pub y: i32,
+}
+
+impl IPoint2D {
+    pub fn new(x: i32, y: i32) -> Self {
+        Self { x, y }
+    }
+
+    /// Computes the Euclidean distance to another point, rounded to the nearest integer.
+    ///
+    /// This follows the TSPLIB standard for EUC_2D edge weight type:
+    /// dij = nint(sqrt(xd*xd + yd*yd)) where xd = xi-xj and yd = yi-yj
+    pub fn distance_to(&self, other: &IPoint2D) -> i32 {
+        let xd = self.x - other.x;
+        let yd = self.y - other.y;
+        let d = ((xd * xd + yd * yd) as f64).sqrt();
+        d.round() as i32
+    }
+}
+
 #[cfg(test)]
 mod tests {
     macro_rules! assert_delta {
@@ -196,7 +221,7 @@ mod tests {
     }
 
     use super::{FPCoordinate, cross_product, distance};
-    use crate::geometry::{Point2D, Segment, distance_to_segment_2d, is_clock_wise_turn};
+    use crate::geometry::{IPoint2D, Point2D, Segment, distance_to_segment_2d, is_clock_wise_turn};
 
     #[test]
     fn distance_one() {
@@ -384,5 +409,25 @@ mod tests {
         let (lon, lat) = decoded.to_lon_lat_pair();
         assert_delta!(lat, 40.730610, 0.000001);
         assert_delta!(lon, -73.935242, 0.000001);
+    }
+
+    #[test]
+    fn test_ipoint2d_distance() {
+        // Test cases from TSPLIB documentation examples
+        let cases = [
+            ((0, 0), (3, 0), 3), // Horizontal line
+            ((0, 0), (0, 4), 4), // Vertical line
+            ((0, 0), (3, 4), 5), // 3-4-5 triangle
+            ((1, 1), (4, 5), 5), // Diagonal with rounding
+            ((2, 2), (5, 6), 5), // Another diagonal
+        ];
+
+        for ((x1, y1), (x2, y2), expected) in cases {
+            let p1 = IPoint2D::new(x1, y1);
+            let p2 = IPoint2D::new(x2, y2);
+            assert_eq!(p1.distance_to(&p2), expected);
+            // Test symmetry
+            assert_eq!(p2.distance_to(&p1), expected);
+        }
     }
 }
