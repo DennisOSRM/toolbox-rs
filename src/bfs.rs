@@ -85,7 +85,7 @@ impl BFS {
                         debug!("setting target {}", self.target);
                         // check if we have found our target if it exists
                         let duration = start.elapsed();
-                        info!("D/BFS took: {:?} (done)", duration);
+                        info!("D/BFS took: {duration:?} (done)");
                         return true;
                     }
                 }
@@ -94,7 +94,7 @@ impl BFS {
         }
 
         let duration = start.elapsed();
-        info!("BFS took: {:?} (done)", duration);
+        info!("BFS took: {duration:?} (done)");
 
         // return true only if target set was empty
         self.empty_target_set

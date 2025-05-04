@@ -51,7 +51,7 @@ impl Dinic {
         self.queue.push_back(self.target);
 
         let duration = start.elapsed();
-        debug!("BFS init: {:?}", duration);
+        debug!("BFS init: {duration:?}");
 
         // label residual graph nodes in BFS order, but in reverse starting from the target
         while let Some(u) = self.queue.pop_front() {
@@ -93,7 +93,7 @@ impl Dinic {
         self.parents[self.source] = self.source;
 
         let duration = start.elapsed();
-        debug!(" DFS init: {:?}", duration);
+        debug!(" DFS init: {duration:?}");
         let mut blocking_flow = 0;
         while let Some((u, flow)) = self.stack.pop() {
             for edge in self.residual_graph.edge_range(u) {
@@ -115,7 +115,7 @@ impl Dinic {
                 let flow = min(flow, available_capacity);
                 if v == self.target {
                     let duration = start.elapsed();
-                    debug!(" reached target {}: {:?}", v, duration);
+                    debug!(" reached target {v}: {duration:?}");
                     // reached a target. Unpack path in reverse order, assign flow
                     let mut v = v; // mutable shadow
                     let mut closest_tail = u;
@@ -134,7 +134,7 @@ impl Dinic {
                         v = u;
                     }
                     let duration = start.elapsed();
-                    debug!(" augmentation took: {:?}", duration);
+                    debug!(" augmentation took: {duration:?}");
 
                     // unwind stack till tail node, then continue the search
                     let before = self.stack.len();
@@ -158,7 +158,7 @@ impl Dinic {
         }
 
         let duration = start.elapsed();
-        debug!("DFS took: {:?} (unsuccessful)", duration);
+        debug!("DFS took: {duration:?} (unsuccessful)");
         blocking_flow
     }
 }
