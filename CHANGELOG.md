@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/DennisOSRM/toolbox-rs/compare/v0.5.0...v0.6.0) - 2025-05-04
+
+### Other
+
+- Add TSP solver with nearest neighbor heuristic
+- Add abstraction for complete (or dense) graph based on adjacency matrix ([#521](https://github.com/DennisOSRM/toolbox-rs/pull/521))
+- Apply pedantic clippy fixes ([#520](https://github.com/DennisOSRM/toolbox-rs/pull/520))
+- Add TSPLIB EUC_2D instance parser ([#519](https://github.com/DennisOSRM/toolbox-rs/pull/519))
+- Add jemalloc to chipper binary on unix platforms ([#518](https://github.com/DennisOSRM/toolbox-rs/pull/518))
+- Implement MediumSizeHashSet ([#517](https://github.com/DennisOSRM/toolbox-rs/pull/517))
+- Refactor Cell implementation ([#516](https://github.com/DennisOSRM/toolbox-rs/pull/516))
+- Add pop() implementation to AddressableBinHeap ([#515](https://github.com/DennisOSRM/toolbox-rs/pull/515))
+- Improve interface of MedSizeTable to be aligned with std containers ([#513](https://github.com/DennisOSRM/toolbox-rs/pull/513))
+- Update dependencies ([#514](https://github.com/DennisOSRM/toolbox-rs/pull/514))
+- Untangle medium sized hash table from hash impl, add fibonacci hash ([#511](https://github.com/DennisOSRM/toolbox-rs/pull/511))
+
 ## [0.5.0](https://github.com/DennisOSRM/toolbox-rs/compare/v0.4.0...v0.5.0) - 2025-04-16
 
 ### Other
