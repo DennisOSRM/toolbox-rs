@@ -86,7 +86,7 @@ impl DFS {
                         debug!("setting target {}", self.target);
                         // check if we have found our target if it exists
                         let duration = start.elapsed();
-                        info!("D/DFS took: {:?} (done)", duration);
+                        info!("D/DFS took: {duration:?} (done)");
                         return true;
                     }
                 }
@@ -95,7 +95,7 @@ impl DFS {
         }
 
         let duration = start.elapsed();
-        info!("DFS took: {:?} (done)", duration);
+        info!("DFS took: {duration:?} (done)");
 
         // return true only if target set was empty
         self.empty_target_set

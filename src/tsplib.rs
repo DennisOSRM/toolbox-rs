@@ -66,8 +66,7 @@ pub fn read_tsp_file(filename: &str) -> Result<Vec<TspSite>, TspError> {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() != 3 {
             return Err(TspError::ParseError(format!(
-                "Invalid coordinate line: {}",
-                line
+                "Invalid coordinate line: {line}"
             )));
         }
 

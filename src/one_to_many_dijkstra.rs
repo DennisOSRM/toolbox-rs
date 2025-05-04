@@ -57,7 +57,7 @@ impl OneToManyDijkstra {
         // clear the search space
         self.clear();
 
-        debug!("[start] sources: {:?}, targets: {:?}", source, targets);
+        debug!("[start] sources: {source:?}, targets: {targets:?}");
 
         // prime queue
         self.queue.insert(source, 0, source);

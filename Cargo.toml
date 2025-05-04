@@ -53,3 +53,7 @@ lto = true
 [[bench]]
 name = "bench_main"
 harness = false
+
+[workspace.metadata.clippy]
+# Enable additional clippy lints
+extra_lints = ["clippy::pedantic", "clippy::nursery"]

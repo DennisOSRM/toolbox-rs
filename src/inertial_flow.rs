@@ -72,7 +72,7 @@ pub fn sub_step(
     }
 
     let comparator = ROTATED_COMPARATORS[axis];
-    debug!("[{axis}] sorting cooefficient: {:?}", comparator);
+    debug!("[{axis}] sorting cooefficient: {comparator:?}");
     // the iteration proxy list to be sorted. The coordinates vector itself is not touched.
     let mut node_id_list = node_id_list.to_vec();
     node_id_list

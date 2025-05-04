@@ -98,19 +98,19 @@ impl MaxFlow for EdmondsKarp {
                 })
                 .expect("graph is broken, couldn't find min edge");
             let duration = start.elapsed();
-            debug!(" flow assignment1 took: {:?} (done)", duration);
+            debug!(" flow assignment1 took: {duration:?} (done)");
 
             let bottleneck_edge = self
                 .residual_graph
                 .find_edge_unchecked(bootleneck_head_tail.1, bootleneck_head_tail.0);
-            debug!("  bottleneck edge: {}", bottleneck_edge);
+            debug!("  bottleneck edge: {bottleneck_edge}");
             let path_flow = self.residual_graph.data(bottleneck_edge).capacity;
             debug_assert!(path_flow > 0);
-            debug!("min edge: {}, capacity: {}", bottleneck_edge, path_flow);
+            debug!("min edge: {bottleneck_edge}, capacity: {path_flow}");
             // sum up flow
             self.max_flow += path_flow;
             let duration = start.elapsed();
-            debug!(" flow assignment2 took: {:?} (done)", duration);
+            debug!(" flow assignment2 took: {duration:?} (done)");
 
             // assign flow to residual graph
             for (a, b) in dfs.path_iter().tuple_windows() {
@@ -121,7 +121,7 @@ impl MaxFlow for EdmondsKarp {
                 self.residual_graph.data_mut(rev_edge).capacity += path_flow;
             }
             let duration = start.elapsed();
-            debug!(" flow assignment3 took: {:?} (done)", duration);
+            debug!(" flow assignment3 took: {duration:?} (done)");
         }
 
         self.finished = true;
