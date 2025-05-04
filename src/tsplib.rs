@@ -80,6 +80,8 @@ pub fn read_tsp_file(filename: &str) -> Result<Vec<TspSite>, TspError> {
             .map_err(|_| TspError::ParseError(format!("Invalid y coordinate: {}", parts[2])))?
             as i32;
 
+        println!("Parsed site: id={}, x={}, y={}", id, x, y);
+
         sites.push(TspSite {
             id,
             coordinate: IPoint2D::new(x, y),

@@ -7,6 +7,7 @@ pub mod bitset_subset_iterator;
 pub mod bloom_filter;
 pub mod bounding_box;
 pub mod cell;
+pub mod complete_graph;
 pub mod convex_hull;
 pub mod count_min_sketch;
 pub mod cycle_check;
