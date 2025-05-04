@@ -1,3 +1,5 @@
+use log::debug;
+
 use crate::{geometry::IPoint2D, io::read_lines};
 use std::str::FromStr;
 
@@ -80,7 +82,7 @@ pub fn read_tsp_file(filename: &str) -> Result<Vec<TspSite>, TspError> {
             .map_err(|_| TspError::ParseError(format!("Invalid y coordinate: {}", parts[2])))?
             as i32;
 
-        println!("Parsed site: id={}, x={}, y={}", id, x, y);
+        debug!("Parsed site: id={}, x={}, y={}", id, x, y);
 
         sites.push(TspSite {
             id,

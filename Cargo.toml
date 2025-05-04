@@ -23,6 +23,10 @@ path = "src/scaffold/bin/main.rs"
 name = "graph_plier"
 path = "src/graph_plier/bin/main.rs"
 
+[[bin]]
+name = "solver"
+path = "src/solver/bin/main.rs"
+
 [dependencies]
 bincode = "2.0.0"
 bitvec = "1.0.1"
