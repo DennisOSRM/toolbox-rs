@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/DennisOSRM/toolbox-rs/compare/v0.6.0...v0.6.1) - 2025-05-21
+
+### Other
+
+- Add more TSPLIB format support ([#526](https://github.com/DennisOSRM/toolbox-rs/pull/526))
+- Improve documentation on R-tree implementation ([#525](https://github.com/DennisOSRM/toolbox-rs/pull/525))
+- Compute MST for complete graphs via Prim's algorithm ([#524](https://github.com/DennisOSRM/toolbox-rs/pull/524))
+- Update criterion requirement from 0.5.1 to 0.6.0 ([#522](https://github.com/DennisOSRM/toolbox-rs/pull/522))
+
 ## [0.6.0](https://github.com/DennisOSRM/toolbox-rs/compare/v0.5.0...v0.6.0) - 2025-05-04
 
 ### Other
