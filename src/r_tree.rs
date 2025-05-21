@@ -281,12 +281,23 @@ impl<'a, T: RTreeElement> RTreeNearestIterator<'a, T> {
         let mut queue = BinaryHeap::with_capacity(capacity);
 
         // Initialize with root node if tree is not empty
-        if let Some(SearchNode::TreeNode(root)) = tree.search_nodes.last() {
-            queue.push(QueueElement::new(
-                root.bbox.min_distance(input_coordinate),
-                root.index,
-                QueueNodeType::TreeNode,
-            ));
+        if let Some(last_node) = tree.search_nodes.last() {
+            match last_node {
+                SearchNode::TreeNode(root) => {
+                    queue.push(QueueElement::new(
+                        root.bbox.min_distance(input_coordinate),
+                        root.index,
+                        QueueNodeType::TreeNode,
+                    ));
+                }
+                SearchNode::LeafNode(leaf) => {
+                    queue.push(QueueElement::new(
+                        leaf.bbox.min_distance(input_coordinate),
+                        leaf.index,
+                        QueueNodeType::LeafNode,
+                    ));
+                }
+            }
         }
 
         Self {
@@ -333,13 +344,19 @@ impl<T: RTreeElement + Clone> Iterator for RTreeNearestIterator<'_, T> {
                     }
                 }
                 QueueNodeType::LeafNode => {
+                    // Only iterate over valid leaf nodes in this chunk
+                    let max_leaf = self.tree.leaf_nodes.len();
                     for leaf_idx in 0..LEAF_PACK_FACTOR {
-                        let leaf = &self.tree.leaf_nodes[child_start_index + leaf_idx];
+                        let idx = child_start_index + leaf_idx;
+                        if idx >= max_leaf {
+                            break;
+                        }
+                        let leaf = &self.tree.leaf_nodes[idx];
                         for (elem_idx, elem) in leaf.elements().iter().enumerate() {
                             let dist = elem.distance_to(self.input_coordinate);
                             self.queue.push(QueueElement::new(
                                 dist,
-                                child_start_index,
+                                idx,
                                 QueueNodeType::Candidate(elem_idx),
                             ));
                         }
@@ -353,5 +370,282 @@ impl<T: RTreeElement + Clone> Iterator for RTreeNearestIterator<'_, T> {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bounding_box::BoundingBox;
+    use crate::geometry::FPCoordinate;
+    use crate::partition_id::PartitionID;
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct DummyElem(FPCoordinate);
+    impl RTreeElement for DummyElem {
+        fn bbox(&self) -> BoundingBox {
+            BoundingBox::from_coordinate(&self.0)
+        }
+        fn distance_to(&self, coordinate: &FPCoordinate) -> f64 {
+            self.0.distance_to(coordinate)
+        }
+        fn center(&self) -> &FPCoordinate {
+            &self.0
+        }
+    }
+
+    #[test]
+    fn test_leaf_new_and_accessors() {
+        let coord = FPCoordinate::new_from_lat_lon(1.0, 2.0);
+        let bbox = BoundingBox::from_coordinate(&coord);
+        let elem = DummyElem(coord.clone());
+        let leaf = Leaf::new(bbox.clone(), vec![elem.clone()]);
+        assert_eq!(leaf.bbox(), &bbox);
+        assert_eq!(leaf.elements(), &[elem]);
+    }
+
+    #[test]
+    fn test_leafnode_new() {
+        let bbox = BoundingBox::from_coordinate(&FPCoordinate::new_from_lat_lon(0.0, 0.0));
+        let node = LeafNode::new(bbox.clone(), 42);
+        assert_eq!(node.bbox, bbox);
+        assert_eq!(node.index, 42);
+    }
+
+    #[test]
+    fn test_queuenode_ordering() {
+        let a = QueueElement::new(1.0, 0, QueueNodeType::TreeNode);
+        let b = QueueElement::new(2.0, 1, QueueNodeType::TreeNode);
+        assert!(a > b); // Because BinaryHeap is max-heap, but we want min-heap
+    }
+
+    #[test]
+    fn test_rtree_from_elements_and_nearest_iter() {
+        // Insert at least LEAF_PACK_FACTOR * 2 + 1 elements to ensure multiple leaf nodes and a tree node
+        let mut coords = Vec::new();
+        for i in 0..(LEAF_PACK_FACTOR * 2 + 1) {
+            coords.push(DummyElem(FPCoordinate::new_from_lat_lon(
+                i as f64, i as f64,
+            )));
+        }
+        let tree = RTree::from_elements(coords.clone());
+        let query = FPCoordinate::new_from_lat_lon(5.1, 5.1);
+        let mut iter = tree.nearest_iter(&query);
+
+        // Find the true nearest element by brute force
+        let (true_nearest, true_dist) = coords
+            .iter()
+            .map(|e| (e.clone(), e.distance_to(&query)))
+            .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+            .unwrap();
+
+        // Collect all elements from the iterator and their distances
+        let iter_results: Vec<_> = iter.by_ref().collect();
+        assert_eq!(iter_results.len(), coords.len());
+
+        // The first element should be the true nearest
+        assert_eq!(iter_results[0].0, true_nearest);
+        assert!((iter_results[0].1 - true_dist).abs() < 1e-6);
+
+        // All elements should be sorted by distance
+        for i in 1..iter_results.len() {
+            assert!(iter_results[i - 1].1 <= iter_results[i].1);
+        }
+    }
+
+    #[test]
+    fn test_rtreeelement_for_tuple() {
+        let coord = FPCoordinate::new_from_lat_lon(3.0, 4.0);
+        let pid = PartitionID(7);
+        let tuple = (coord.clone(), pid);
+        assert_eq!(tuple.bbox(), BoundingBox::from_coordinate(&coord));
+        assert_eq!(tuple.center(), &coord);
+        let origin = FPCoordinate::new_from_lat_lon(0.0, 0.0);
+        assert!(tuple.distance_to(&origin) > 0.0);
+    }
+
+    #[test]
+    fn test_leaf_fills_to_capacity() {
+        // Fill exactly one leaf node
+        let mut coords = Vec::new();
+        for i in 0..LEAF_PACK_FACTOR {
+            coords.push(DummyElem(FPCoordinate::new_from_lat_lon(
+                i as f64, i as f64,
+            )));
+        }
+        let tree = RTree::from_elements(coords.clone());
+        // There should be exactly one leaf node
+        assert_eq!(tree.leaf_nodes.len(), 1);
+        // The leaf node should contain all elements
+        let leaf = &tree.leaf_nodes[0];
+        assert_eq!(leaf.elements().len(), LEAF_PACK_FACTOR);
+        // All inserted elements should be present
+        for elem in &coords {
+            assert!(leaf.elements().iter().any(|e| e.0 == elem.0));
+        }
+    }
+
+    #[test]
+    fn test_multiple_leafs_filled_to_capacity() {
+        // Fill several leaf nodes
+        let num_leaves = 4;
+        let num_elements = LEAF_PACK_FACTOR * num_leaves;
+        let mut coords = Vec::new();
+        for i in 0..num_elements {
+            coords.push(DummyElem(FPCoordinate::new_from_lat_lon(
+                i as f64, i as f64,
+            )));
+        }
+        let tree = RTree::from_elements(coords.clone());
+        // There should be exactly num_leaves leaf nodes
+        assert_eq!(tree.leaf_nodes.len(), num_leaves);
+        // Each leaf node should contain exactly LEAF_PACK_FACTOR elements
+        for leaf in &tree.leaf_nodes {
+            assert_eq!(leaf.elements().len(), LEAF_PACK_FACTOR);
+        }
+        // All inserted elements should be present in some leaf
+        let all_leaf_elements = tree
+            .leaf_nodes
+            .iter()
+            .flat_map(|leaf| leaf.elements())
+            .collect::<Vec<_>>();
+        for elem in &coords {
+            assert!(all_leaf_elements.iter().any(|e| e.0 == elem.0));
+        }
+    }
+
+    #[test]
+    fn test_rtree_from_elements_leaf_and_tree_structure() {
+        // Insert enough elements to create multiple leaves and at least one tree node
+        let num_elements = LEAF_PACK_FACTOR * BRANCHING_FACTOR + 1;
+        let mut coords = Vec::new();
+        for i in 0..num_elements {
+            coords.push(DummyElem(FPCoordinate::new_from_lat_lon(
+                i as f64, i as f64,
+            )));
+        }
+        let tree = RTree::from_elements(coords.clone());
+        // Check that the number of leaf nodes is as expected
+        let expected_leaves = num_elements.div_ceil(LEAF_PACK_FACTOR);
+        assert_eq!(tree.leaf_nodes.len(), expected_leaves);
+        // Check that each leaf node has at most LEAF_PACK_FACTOR elements
+        for (i, leaf) in tree.leaf_nodes.iter().enumerate() {
+            if i < expected_leaves - 1 {
+                assert_eq!(leaf.elements().len(), LEAF_PACK_FACTOR);
+            } else {
+                // The last leaf may have fewer elements
+                assert!(leaf.elements().len() <= LEAF_PACK_FACTOR);
+            }
+        }
+        // Check that the search_nodes vector contains both LeafNode and TreeNode variants
+        let mut has_leaf = false;
+        let mut has_tree = false;
+        for node in &tree.search_nodes {
+            match node {
+                SearchNode::LeafNode(leaf) => {
+                    has_leaf = true;
+                    // Check that the index and bbox are valid for the leaf node
+                    assert!(leaf.index < tree.leaf_nodes.len() * BRANCHING_FACTOR);
+                    let _ = &leaf.bbox; // Access bbox to cover line 221
+                }
+                SearchNode::TreeNode(tree_node) => {
+                    has_tree = true;
+                    // Check that the index and bbox are valid for the tree node
+                    assert!(tree_node.index < tree.search_nodes.len());
+                    let _ = &tree_node.bbox; // Access bbox to cover line 222
+                }
+            }
+        }
+        assert!(has_leaf);
+        assert!(has_tree);
+    }
+
+    #[test]
+    fn test_rtree_nearest_iter_init_with_leafnode() {
+        // Create a tree with only enough elements for a single leaf node
+        let mut coords = Vec::new();
+        for i in 0..LEAF_PACK_FACTOR {
+            coords.push(DummyElem(FPCoordinate::new_from_lat_lon(
+                i as f64, i as f64,
+            )));
+        }
+        let tree = RTree::from_elements(coords.clone());
+        // Force the root to be a LeafNode (happens when only one leaf node exists)
+        let query = FPCoordinate::new_from_lat_lon(0.0, 0.0);
+        let iter = tree.nearest_iter(&query);
+        // The queue should have been initialized with a LeafNode branch (line 286)
+        // We check that the iterator returns all elements in the tree
+        let results: Vec<_> = iter.collect();
+        assert_eq!(results.len(), coords.len());
+        for (elem, dist) in results {
+            assert!(coords.iter().any(|c| c.0 == elem.0));
+            assert!(dist >= 0.0);
+        }
+    }
+
+    #[test]
+    fn test_queueelement_ordering_and_equality() {
+        let a = QueueElement::new(1.0, 0, QueueNodeType::TreeNode);
+        let b = QueueElement::new(2.0, 1, QueueNodeType::LeafNode);
+        let c = QueueElement::new(1.0, 2, QueueNodeType::Candidate(0));
+
+        // Test PartialEq and Eq
+        assert_eq!(a, c);
+        assert_ne!(a, b);
+
+        // Test PartialOrd and Ord (min-heap behavior)
+        assert!(a > b); // Because BinaryHeap is max-heap, but we want min-heap
+        assert!(b < a);
+
+        // Test ordering in a BinaryHeap
+        use std::collections::BinaryHeap;
+        let mut heap = BinaryHeap::new();
+        heap.push(a);
+        heap.push(b);
+        heap.push(c);
+
+        // The element with the smallest distance should be popped last
+        let first = heap.pop().unwrap();
+        let second = heap.pop().unwrap();
+        let third = heap.pop().unwrap();
+        assert_eq!(first.distance, 1.0);
+        assert_eq!(second.distance, 1.0);
+        assert_eq!(third.distance, 2.0);
+    }
+
+    #[test]
+    fn test_leafnode_index_bounds() {
+        // Create enough elements to ensure multiple leaf nodes
+        let num_elements = LEAF_PACK_FACTOR * 3;
+        let mut coords = Vec::new();
+        for i in 0..num_elements {
+            coords.push(DummyElem(FPCoordinate::new_from_lat_lon(
+                i as f64, i as f64,
+            )));
+        }
+        let tree = RTree::from_elements(coords);
+        // Check that all LeafNode indices are within bounds
+        for node in &tree.search_nodes {
+            if let SearchNode::LeafNode(leaf) = node {
+                assert!(leaf.index < tree.leaf_nodes.len() * BRANCHING_FACTOR);
+            }
+        }
+    }
+
+    #[test]
+    fn test_rtree_from_elements_triggers_leafnode_bbox_extend_with() {
+        // To guarantee line 220 is hit, we need more than BRANCHING_FACTOR leaf nodes.
+        // That means more than LEAF_PACK_FACTOR * BRANCHING_FACTOR elements.
+        let num_elements = LEAF_PACK_FACTOR * (BRANCHING_FACTOR + 1);
+        let mut coords = Vec::new();
+        for i in 0..num_elements {
+            coords.push(DummyElem(FPCoordinate::new_from_lat_lon(
+                i as f64, i as f64,
+            )));
+        }
+        // This will create more than BRANCHING_FACTOR leaves, so the fold closure will be called for multiple leaves in a chunk.
+        let tree = RTree::from_elements(coords);
+        // We just assert the number of leaf nodes to ensure the code path is hit.
+        assert!(tree.leaf_nodes.len() > BRANCHING_FACTOR);
     }
 }
