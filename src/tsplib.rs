@@ -22,22 +22,30 @@ impl From<std::io::Error> for TspError {
     }
 }
 
-/// Parse a TSP file containing site coordinates.
+/// Represents a TSP instance, which can be either a set of coordinates or an explicit distance matrix
+#[derive(Debug, Clone)]
+pub enum TspInstance {
+    Coordinates(Vec<TspSite>),
+    ExplicitMatrix(Vec<Vec<i32>>),
+}
+
+/// Parse a TSP file containing site coordinates or explicit edge weights.
 ///
-/// Format specification:
-/// - Header section with metadata (NAME, COMMENT, TYPE, DIMENSION, EDGE_WEIGHT_TYPE)
-/// - NODE_COORD_SECTION marker
-/// - List of nodes with format: <id> <x> <y>
+/// Supports EDGE_WEIGHT_TYPE: EUC_2D (coordinates) and EXPLICIT (distance matrix, FULL_MATRIX only).
 ///
 /// # Arguments
 /// * `filename` - Path to the TSP file
 ///
 /// # Returns
-/// A vector of TspSite objects containing the parsed coordinates
-pub fn read_tsp_file(filename: &str) -> Result<Vec<TspSite>, TspError> {
+/// A TspInstance containing either coordinates or an explicit distance matrix
+pub fn read_tsp_file(filename: &str) -> Result<TspInstance, TspError> {
     let mut sites = Vec::new();
     let mut in_coord_section = false;
+    let mut in_weight_section = false;
     let mut dimension: Option<usize> = None;
+    let mut edge_weight_type: Option<String> = None;
+    let mut edge_weight_format: Option<String> = None;
+    let mut matrix_data: Vec<i32> = Vec::new();
 
     for line in read_lines(filename)? {
         let line = line?;
@@ -49,10 +57,16 @@ pub fn read_tsp_file(filename: &str) -> Result<Vec<TspSite>, TspError> {
 
         if line == "NODE_COORD_SECTION" {
             in_coord_section = true;
+            in_weight_section = false;
+            continue;
+        }
+        if line == "EDGE_WEIGHT_SECTION" {
+            in_weight_section = true;
+            in_coord_section = false;
             continue;
         }
 
-        if !in_coord_section {
+        if !in_coord_section && !in_weight_section {
             // Parse header section
             if line.starts_with("DIMENSION") {
                 if let Some(dim_str) = line.split(':').nth(1) {
@@ -60,48 +74,125 @@ pub fn read_tsp_file(filename: &str) -> Result<Vec<TspSite>, TspError> {
                         TspError::ParseError("Invalid DIMENSION value".to_string())
                     })?);
                 }
+            } else if line.starts_with("EDGE_WEIGHT_TYPE") {
+                if let Some(t) = line.split(':').nth(1) {
+                    edge_weight_type = Some(t.trim().to_string());
+                }
+            } else if line.starts_with("EDGE_WEIGHT_FORMAT") {
+                if let Some(f) = line.split(':').nth(1) {
+                    edge_weight_format = Some(f.trim().to_string());
+                }
             }
             continue;
         }
 
-        // Parse coordinate section
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() != 3 {
-            return Err(TspError::ParseError(format!(
-                "Invalid coordinate line: {line}"
-            )));
+        if in_coord_section {
+            // Parse coordinate section
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() != 3 {
+                return Err(TspError::ParseError(format!(
+                    "Invalid coordinate line: {line}"
+                )));
+            }
+
+            let id = parts[0]
+                .parse()
+                .map_err(|_| TspError::ParseError(format!("Invalid id: {}", parts[0])))?;
+            let x = f64::from_str(parts[1])
+                .map_err(|_| TspError::ParseError(format!("Invalid x coordinate: {}", parts[1])))?
+                as i32;
+            let y = f64::from_str(parts[2])
+                .map_err(|_| TspError::ParseError(format!("Invalid y coordinate: {}", parts[2])))?
+                as i32;
+
+            debug!("Parsed site: id={id}, x={x}, y={y}");
+
+            sites.push(TspSite {
+                id,
+                coordinate: IPoint2D::new(x, y),
+            });
+        } else if in_weight_section {
+            // Parse explicit edge weights (FULL_MATRIX only)
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            for p in parts {
+                let val = i32::from_str(p)
+                    .map_err(|_| TspError::ParseError(format!("Invalid matrix value: {}", p)))?;
+                matrix_data.push(val);
+            }
         }
-
-        let id = parts[0]
-            .parse()
-            .map_err(|_| TspError::ParseError(format!("Invalid id: {}", parts[0])))?;
-        let x = f64::from_str(parts[1])
-            .map_err(|_| TspError::ParseError(format!("Invalid x coordinate: {}", parts[1])))?
-            as i32;
-        let y = f64::from_str(parts[2])
-            .map_err(|_| TspError::ParseError(format!("Invalid y coordinate: {}", parts[2])))?
-            as i32;
-
-        debug!("Parsed site: id={}, x={}, y={}", id, x, y);
-
-        sites.push(TspSite {
-            id,
-            coordinate: IPoint2D::new(x, y),
-        });
     }
 
-    // Verify we read the expected number of sites
-    if let Some(dim) = dimension {
-        if sites.len() != dim {
-            return Err(TspError::ParseError(format!(
-                "Expected {} sites but found {}",
-                dim,
-                sites.len()
-            )));
+    let edge_type = edge_weight_type.as_deref().unwrap_or("EUC_2D");
+    match edge_type {
+        "EUC_2D" => {
+            // Verify we read the expected number of sites
+            if let Some(dim) = dimension {
+                if sites.len() != dim {
+                    return Err(TspError::ParseError(format!(
+                        "Expected {} sites but found {}",
+                        dim,
+                        sites.len()
+                    )));
+                }
+            }
+            Ok(TspInstance::Coordinates(sites))
         }
+        "EXPLICIT" => {
+            let dim = dimension.ok_or_else(|| {
+                TspError::ParseError("Missing DIMENSION for EXPLICIT".to_string())
+            })?;
+            let format = edge_weight_format.as_deref().unwrap_or("FULL_MATRIX");
+            match format {
+                "FULL_MATRIX" => {
+                    if matrix_data.len() != dim * dim {
+                        return Err(TspError::ParseError(format!(
+                            "Expected {} matrix entries but found {}",
+                            dim * dim,
+                            matrix_data.len()
+                        )));
+                    }
+                    let mut matrix = Vec::with_capacity(dim);
+                    for row in 0..dim {
+                        let start = row * dim;
+                        let end = start + dim;
+                        matrix.push(matrix_data[start..end].to_vec());
+                    }
+                    Ok(TspInstance::ExplicitMatrix(matrix))
+                }
+                "LOWER_DIAG_ROW" => {
+                    // The lower diagonal row format: each row i has i+1 entries (0-based)
+                    let expected = (dim * (dim + 1)) / 2;
+                    if matrix_data.len() != expected {
+                        return Err(TspError::ParseError(format!(
+                            "Expected {} matrix entries for LOWER_DIAG_ROW but found {}",
+                            expected,
+                            matrix_data.len()
+                        )));
+                    }
+                    // Fill lower triangle and diagonal from input, upper triangle by symmetry
+                    let mut matrix = vec![vec![0; dim]; dim];
+                    let mut idx = 0;
+                    for i in 0..dim {
+                        for j in 0..=i {
+                            let val = matrix_data[idx];
+                            matrix[i][j] = val;
+                            matrix[j][i] = val; // symmetric
+                            idx += 1;
+                        }
+                    }
+                    Ok(TspInstance::ExplicitMatrix(matrix))
+                }
+                other => Err(TspError::ParseError(format!(
+                    "Only FULL_MATRIX and LOWER_DIAG_ROW formats are supported, got {}",
+                    other
+                ))),
+            }
+        }
+        other => Err(TspError::ParseError(format!(
+            "Unsupported EDGE_WEIGHT_TYPE: {}",
+            other
+        ))),
     }
-
-    Ok(sites)
 }
 
 /// Calculate the Euclidean distance between two TSP sites
@@ -153,23 +244,28 @@ EOF"
     #[test]
     fn test_parse_tsp_file() {
         let file = create_test_tsp_file();
-        let sites = read_tsp_file(file.path().to_str().unwrap()).unwrap();
+        let instance = read_tsp_file(file.path().to_str().unwrap()).unwrap();
 
-        assert_eq!(sites.len(), 4, "Should parse exactly 4 sites");
+        match instance {
+            TspInstance::Coordinates(sites) => {
+                assert_eq!(sites.len(), 4, "Should parse exactly 4 sites");
 
-        // Check first site coordinates
-        assert_eq!(sites[0].coordinate.x, 0);
-        assert_eq!(sites[0].coordinate.y, 0);
-        assert_eq!(sites[0].id, 1);
+                // Check first site coordinates
+                assert_eq!(sites[0].coordinate.x, 0);
+                assert_eq!(sites[0].coordinate.y, 0);
+                assert_eq!(sites[0].id, 1);
 
-        // Verify distances
-        let d12 = euclidean_distance(&sites[0], &sites[1]); // horizontal distance
-        let d13 = euclidean_distance(&sites[0], &sites[2]); // vertical distance
-        let d14 = euclidean_distance(&sites[0], &sites[3]); // diagonal distance
+                // Verify distances
+                let d12 = euclidean_distance(&sites[0], &sites[1]); // horizontal distance
+                let d13 = euclidean_distance(&sites[0], &sites[2]); // vertical distance
+                let d14 = euclidean_distance(&sites[0], &sites[3]); // diagonal distance
 
-        assert_eq!(d12, 3, "Distance between sites 1 and 2 should be 3");
-        assert_eq!(d13, 4, "Distance between sites 1 and 3 should be 4");
-        assert_eq!(d14, 5, "Distance between sites 1 and 4 should be 5");
+                assert_eq!(d12, 3, "Distance between sites 1 and 2 should be 3");
+                assert_eq!(d13, 4, "Distance between sites 1 and 3 should be 4");
+                assert_eq!(d14, 5, "Distance between sites 1 and 4 should be 5");
+            }
+            TspInstance::ExplicitMatrix(_) => panic!("Expected coordinates, got matrix"),
+        }
     }
 
     #[test]
@@ -280,7 +376,7 @@ EOF"
     fn test_parse_empty_file() {
         let file = NamedTempFile::new().unwrap();
         let result = read_tsp_file(file.path().to_str().unwrap());
-        assert!(matches!(result, Ok(sites) if sites.is_empty()));
+        assert!(matches!(result, Ok(TspInstance::Coordinates(sites)) if sites.is_empty()));
     }
 
     #[test]
@@ -319,10 +415,11 @@ EOF"
 
         let result = read_tsp_file(file.path().to_str().unwrap());
         match result {
-            Ok(sites) => {
+            Ok(TspInstance::Coordinates(sites)) => {
                 assert_eq!(sites.len(), 2, "Should have 2 sites");
                 assert_eq!(sites[1].id, 3, "Second site should have id 3");
             }
+            Ok(TspInstance::ExplicitMatrix(_)) => panic!("Expected coordinates, got matrix"),
             Err(e) => panic!("Expected Ok result, got error: {:?}", e),
         }
     }
@@ -343,11 +440,61 @@ EOF"
 
         let result = read_tsp_file(file.path().to_str().unwrap());
         match result {
-            Ok(sites) => {
+            Ok(TspInstance::Coordinates(sites)) => {
                 assert_eq!(sites.len(), 2, "Should have 2 sites");
                 assert_eq!(sites[0].id, 1, "First site should have id 1");
                 assert_eq!(sites[1].id, 1, "Second site should have id 1");
             }
+            Ok(TspInstance::ExplicitMatrix(_)) => panic!("Expected coordinates, got matrix"),
+            Err(e) => panic!("Expected Ok result, got error: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_parse_explicit_full_matrix() {
+        let mut file = NamedTempFile::new().unwrap();
+        write!(
+            file,
+            "NAME : explicit_full_matrix\nDIMENSION : 3\nEDGE_WEIGHT_TYPE : EXPLICIT\nEDGE_WEIGHT_FORMAT : FULL_MATRIX\nEDGE_WEIGHT_SECTION\n0 1 2\n1 0 3\n2 3 0\nEOF"
+        )
+        .unwrap();
+
+        let result = read_tsp_file(file.path().to_str().unwrap());
+        match result {
+            Ok(TspInstance::ExplicitMatrix(matrix)) => {
+                assert_eq!(matrix.len(), 3);
+                assert_eq!(matrix[0], vec![0, 1, 2]);
+                assert_eq!(matrix[1], vec![1, 0, 3]);
+                assert_eq!(matrix[2], vec![2, 3, 0]);
+            }
+            Ok(TspInstance::Coordinates(_)) => panic!("Expected matrix, got coordinates"),
+            Err(e) => panic!("Expected Ok result, got error: {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_parse_explicit_lower_diag_row() {
+        let mut file = NamedTempFile::new().unwrap();
+        // 3x3 matrix, lower diag row: 0, 1 0, 2 3 0
+        // Should produce:
+        // 0 1 2
+        // 1 0 3
+        // 2 3 0
+        write!(
+            file,
+            "NAME : explicit_lower_diag_row\nDIMENSION : 3\nEDGE_WEIGHT_TYPE : EXPLICIT\nEDGE_WEIGHT_FORMAT : LOWER_DIAG_ROW\nEDGE_WEIGHT_SECTION\n0\n1 0\n2 3 0\nEOF"
+        )
+        .unwrap();
+
+        let result = read_tsp_file(file.path().to_str().unwrap());
+        match result {
+            Ok(TspInstance::ExplicitMatrix(matrix)) => {
+                assert_eq!(matrix.len(), 3);
+                assert_eq!(matrix[0], vec![0, 1, 2]);
+                assert_eq!(matrix[1], vec![1, 0, 3]);
+                assert_eq!(matrix[2], vec![2, 3, 0]);
+            }
+            Ok(TspInstance::Coordinates(_)) => panic!("Expected matrix, got coordinates"),
             Err(e) => panic!("Expected Ok result, got error: {:?}", e),
         }
     }

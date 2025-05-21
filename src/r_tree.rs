@@ -398,8 +398,8 @@ mod tests {
     fn test_leaf_new_and_accessors() {
         let coord = FPCoordinate::new_from_lat_lon(1.0, 2.0);
         let bbox = BoundingBox::from_coordinate(&coord);
-        let elem = DummyElem(coord.clone());
-        let leaf = Leaf::new(bbox.clone(), vec![elem.clone()]);
+        let elem = DummyElem(coord);
+        let leaf = Leaf::new(bbox, vec![elem.clone()]);
         assert_eq!(leaf.bbox(), &bbox);
         assert_eq!(leaf.elements(), &[elem]);
     }
@@ -407,7 +407,7 @@ mod tests {
     #[test]
     fn test_leafnode_new() {
         let bbox = BoundingBox::from_coordinate(&FPCoordinate::new_from_lat_lon(0.0, 0.0));
-        let node = LeafNode::new(bbox.clone(), 42);
+        let node = LeafNode::new(bbox, 42);
         assert_eq!(node.bbox, bbox);
         assert_eq!(node.index, 42);
     }
@@ -457,7 +457,7 @@ mod tests {
     fn test_rtreeelement_for_tuple() {
         let coord = FPCoordinate::new_from_lat_lon(3.0, 4.0);
         let pid = PartitionID(7);
-        let tuple = (coord.clone(), pid);
+        let tuple = (coord, pid);
         assert_eq!(tuple.bbox(), BoundingBox::from_coordinate(&coord));
         assert_eq!(tuple.center(), &coord);
         let origin = FPCoordinate::new_from_lat_lon(0.0, 0.0);
