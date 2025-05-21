@@ -206,7 +206,6 @@ fn calculate_tour_length(tour: &[usize], graph: &CompleteGraph<i32>) -> i32 {
         return 0;
     }
 
-    
     (0..n).map(|i| graph[(tour[i], tour[(i + 1) % n])]).sum()
 }
 
