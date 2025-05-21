@@ -206,8 +206,8 @@ fn calculate_tour_length(tour: &[usize], graph: &CompleteGraph<i32>) -> i32 {
         return 0;
     }
 
-    let length = (0..n).map(|i| graph[(tour[i], tour[(i + 1) % n])]).sum();
-    length
+    
+    (0..n).map(|i| graph[(tour[i], tour[(i + 1) % n])]).sum()
 }
 
 /// Iteratively generates all permutations and evaluates them using a stack
