@@ -48,6 +48,7 @@ pub mod one_to_many_dijkstra;
 pub mod partition_id;
 pub mod path_based_scc;
 pub mod polyline;
+pub mod prim_complete_graph;
 pub mod r_tree;
 pub mod rdx_sort;
 pub mod renumbering_table;
