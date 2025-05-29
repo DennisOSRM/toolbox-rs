@@ -141,6 +141,65 @@ where
     total_cost
 }
 
+/// Computes the MST of a complete graph, treating the nodes in `fixed_subtour` as already included in the MST.
+/// The MST is built over the remaining nodes, connecting them optimally to the fixed sub-tour.
+/// Returns the total cost and the MST edges (excluding the sub-tour's own edges).
+pub fn mst_prim_with_fixed_subtour<T>(
+    graph: &CompleteGraph<T>,
+    fixed_subtour: &[usize],
+) -> (u32, Vec<SimpleEdge>)
+where
+    T: Copy + Into<u32> + Default + PartialEq + std::fmt::Debug,
+{
+    let n = graph.num_nodes();
+    if n == 0 {
+        return (0, Vec::new());
+    }
+    let mut in_mst = vec![false; n];
+    for &u in fixed_subtour {
+        in_mst[u] = true;
+    }
+    let mut min_edge = vec![u32::MAX; n];
+    let mut parent = vec![None; n];
+    let mut heap = BinaryHeap::new();
+    // Initialize heap with all edges from fixed_subtour to the rest
+    for &u in fixed_subtour {
+        for v in 0..n {
+            if !in_mst[v] {
+                let weight = graph[(u, v)].into();
+                if weight < min_edge[v] {
+                    min_edge[v] = weight;
+                    parent[v] = Some(u);
+                    heap.push((std::cmp::Reverse(weight), v));
+                }
+            }
+        }
+    }
+    let mut total_cost = 0;
+    let mut mst_edges = Vec::with_capacity(n.saturating_sub(fixed_subtour.len()).saturating_sub(1));
+    while let Some((std::cmp::Reverse(cost), u)) = heap.pop() {
+        if in_mst[u] {
+            continue;
+        }
+        in_mst[u] = true;
+        total_cost += cost;
+        if let Some(p) = parent[u] {
+            mst_edges.push(SimpleEdge::new(p, u, cost));
+        }
+        for v in 0..n {
+            if !in_mst[v] {
+                let weight = graph[(u, v)].into();
+                if weight < min_edge[v] {
+                    min_edge[v] = weight;
+                    parent[v] = Some(u);
+                    heap.push((std::cmp::Reverse(weight), v));
+                }
+            }
+        }
+    }
+    (total_cost, mst_edges)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,5 +314,100 @@ mod tests {
             }
         }
         assert_eq!(mst_prim(&g).0, mst_prim_cost_only(&g));
+    }
+
+    #[test]
+    fn test_mst_prim_with_fixed_subtour_empty() {
+        let g: CompleteGraph<u32> = CompleteGraph::new(0);
+        let (cost, mst) = mst_prim_with_fixed_subtour(&g, &[]);
+        assert_eq!(cost, 0);
+        assert!(mst.is_empty());
+    }
+
+    #[test]
+    fn test_mst_prim_with_fixed_subtour_single_node() {
+        let g: CompleteGraph<u32> = CompleteGraph::new(1);
+        let (cost, mst) = mst_prim_with_fixed_subtour(&g, &[0]);
+        assert_eq!(cost, 0);
+        assert!(mst.is_empty());
+    }
+
+    #[test]
+    fn test_mst_prim_with_fixed_subtour_full_subtour() {
+        // All nodes in the subtour: MST should be empty and cost 0
+        let mut g = CompleteGraph::new(3);
+        g[(0, 1)] = 2u32;
+        g[(1, 0)] = 2u32;
+        g[(0, 2)] = 1u32;
+        g[(2, 0)] = 1u32;
+        g[(1, 2)] = 3u32;
+        g[(2, 1)] = 3u32;
+        let (cost, mst) = mst_prim_with_fixed_subtour(&g, &[0, 1, 2]);
+        assert_eq!(cost, 0);
+        assert!(mst.is_empty());
+    }
+
+    #[test]
+    fn test_mst_prim_with_fixed_subtour_partial() {
+        // Subtour is [0], MST should be the same as normal Prim
+        let mut g = CompleteGraph::new(3);
+        g[(0, 1)] = 2u32;
+        g[(1, 0)] = 2u32;
+        g[(0, 2)] = 1u32;
+        g[(2, 0)] = 1u32;
+        g[(1, 2)] = 3u32;
+        g[(2, 1)] = 3u32;
+        let (cost1, mst1) = mst_prim(&g);
+        let (cost2, mst2) = mst_prim_with_fixed_subtour(&g, &[0]);
+        assert_eq!(cost1, cost2);
+        assert_eq!(mst1, mst2);
+    }
+
+    #[test]
+    fn test_mst_prim_with_fixed_subtour_nontrivial() {
+        // Subtour is [0, 1], MST should only connect 2 to the subtour
+        let mut g = CompleteGraph::new(3);
+        g[(0, 1)] = 2u32;
+        g[(1, 0)] = 2u32;
+        g[(0, 2)] = 1u32;
+        g[(2, 0)] = 1u32;
+        g[(1, 2)] = 3u32;
+        g[(2, 1)] = 3u32;
+        let (cost, mst) = mst_prim_with_fixed_subtour(&g, &[0, 1]);
+        assert_eq!(cost, 1); // Only edge 0-2 (or 2-0) should be picked
+        assert_eq!(mst.len(), 1);
+        let edge = &mst[0];
+        assert!((edge.source == 0 && edge.target == 2) || (edge.source == 2 && edge.target == 0));
+        assert_eq!(edge.data, 1);
+    }
+
+    #[test]
+    fn test_mst_prim_with_fixed_subtour_larger() {
+        // Subtour is [0, 1], MST should connect 2 and 3 optimally
+        let mut g = CompleteGraph::new(4);
+        g[(0, 1)] = 1u32;
+        g[(1, 0)] = 1u32;
+        g[(0, 2)] = 2u32;
+        g[(2, 0)] = 2u32;
+        g[(0, 3)] = 3u32;
+        g[(3, 0)] = 3u32;
+        g[(1, 2)] = 4u32;
+        g[(2, 1)] = 4u32;
+        g[(1, 3)] = 5u32;
+        g[(3, 1)] = 5u32;
+        g[(2, 3)] = 6u32;
+        g[(3, 2)] = 6u32;
+        let (cost, mst) = mst_prim_with_fixed_subtour(&g, &[0, 1]);
+        // MST should connect 2 to 0 (cost 2), 3 to 0 (cost 3)
+        assert_eq!(cost, 5);
+        assert_eq!(mst.len(), 2);
+        let edge_set = mst
+            .iter()
+            .map(|e| (e.source.min(e.target), e.source.max(e.target), e.data))
+            .collect::<std::collections::HashSet<_>>();
+        let expected = [(0, 2, 2), (0, 3, 3)];
+        for &(a, b, w) in &expected {
+            assert!(edge_set.contains(&(a, b, w)));
+        }
     }
 }
