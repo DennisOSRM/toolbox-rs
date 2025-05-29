@@ -289,8 +289,8 @@ fn solve_dynamic_programming(graph: &CompleteGraph<i32>) -> (Vec<usize>, i32) {
     for j in 1..n {
         dp[1 << (j - 1)][j] = graph[(0, j)];
         parent[1 << (j - 1)][j] = 0;
-    } 
-    
+    }
+
     // Iterate over all subsets of vertices (excluding vertex 0)
     for subset_size in 2..n {
         for subset in 0..((1 << (n - 1)) as usize) {
