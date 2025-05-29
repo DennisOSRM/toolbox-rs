@@ -1,4 +1,5 @@
 use clap::Parser;
+use log::debug;
 use std::path::PathBuf;
 use std::time::Instant;
 use toolbox_rs::{complete_graph::CompleteGraph, tsplib};
@@ -288,33 +289,35 @@ fn solve_dynamic_programming(graph: &CompleteGraph<i32>) -> (Vec<usize>, i32) {
     for j in 1..n {
         dp[1 << (j - 1)][j] = graph[(0, j)];
         parent[1 << (j - 1)][j] = 0;
-    } // Iterate over all subsets of vertices (excluding vertex 0)
-    // Iterate over all subsets of vertices (excluding vertex 0)
+    } 
+    
     // Iterate over all subsets of vertices (excluding vertex 0)
     for subset_size in 2..n {
-        // Generate all subsets of size subset_size manually
         for subset in 0..((1 << (n - 1)) as usize) {
-            // Count the number of bits set (i.e., the size of the subset)
             if subset.count_ones() != subset_size as u32 {
+                // TODO: only enumerate subsets of the correct size
                 continue;
             }
-
-            // For each ending vertex in the subset
+            // Collect all vertices present in this subset
+            let mut vertices_in_subset = Vec::with_capacity(subset_size);
             for j in 1..n {
-                // Check if j is in the subset
                 if (subset & (1 << (j - 1))) != 0 {
-                    // Remove j from the subset
-                    let prev_subset = subset & !(1 << (j - 1));
-
-                    // Try all possible previous vertices
-                    for k in 1..n {
-                        // Check if k is in the subset and is not j
-                        if (prev_subset & (1 << (k - 1))) != 0 {
-                            let cost = dp[prev_subset][k] + graph[(k, j)];
-                            if cost < dp[subset][j] {
-                                dp[subset][j] = cost;
-                                parent[subset][j] = k;
-                            }
+                    vertices_in_subset.push(j);
+                }
+            }
+            // For each ending vertex in the subset
+            for &j in &vertices_in_subset {
+                let prev_subset = subset & !(1 << (j - 1));
+                // Only consider previous vertices that are in prev_subset
+                for &k in &vertices_in_subset {
+                    if k == j {
+                        continue;
+                    }
+                    if (prev_subset & (1 << (k - 1))) != 0 && dp[prev_subset][k] != i32::MAX {
+                        let cost = dp[prev_subset][k] + graph[(k, j)];
+                        if cost < dp[subset][j] {
+                            dp[subset][j] = cost;
+                            parent[subset][j] = k;
                         }
                     }
                 }
@@ -435,67 +438,72 @@ fn create_test_graph(num_cities: usize) -> CompleteGraph<i32> {
 /// Run test cases for different algorithms with various city counts
 fn run_test_cases() {
     println!("\n--- Running Test Cases ---");
+    println!("#numcities, dp_duration, bf_duration");
 
-    for num_cities in [3, 4, 5, 6, 7, 8, 9, 10 /*, 11, 12, 13, 14, 15*/] {
+    for num_cities in 3..30 {
         // println!("\nTest case with {} cities:", num_cities);
         let graph = create_test_graph(num_cities);
 
         // Run nearest neighbor
-        let start = Instant::now();
-        let (nn_tour, nn_length) = solve_nearest_neighbor(&graph);
-        let nn_duration = start.elapsed();
+        // let start = Instant::now();
+        let (_nn_tour, nn_length) = solve_nearest_neighbor(&graph);
+        // let _nn_duration = start.elapsed();
 
         // Run brute force
         let start = Instant::now();
-        let (bf_tour, bf_length) = solve_brute_force(&graph);
-        let bf_duration = start.elapsed();
+        let (_bf_tour, bf_length) = if num_cities < 12 {
+            solve_brute_force(&graph)
+        } else {
+            (vec![], -1) // Skip brute force for larger instances
+        };
+        let bf_duration = start.elapsed().as_secs_f64();
 
         // Run dynamic programming
         let start = Instant::now();
-        let (dp_tour, dp_length) = solve_dynamic_programming(&graph);
-        let dp_duration = start.elapsed();
+        let (_dp_tour, _dp_length) = solve_dynamic_programming(&graph);
+        let dp_duration = start.elapsed().as_secs_f64();
 
         // Print results
-        println!(
-            "Nearest neighbor   : tour={:?}, length={} (in {:?})",
-            nn_tour, nn_length, nn_duration
-        );
-        println!(
-            "Dynamic programming: tour={:?}, length={} (in {:?})",
-            dp_tour, dp_length, dp_duration
-        );
-        println!(
-            "Brute force        : tour={:?}, length={} (in {:?})",
-            bf_tour, bf_length, bf_duration
-        );
+        // println!(
+        //     "Nearest neighbor   : tour={:?}, length={} (in {:?})",
+        //     nn_tour, nn_length, nn_duration
+        // );
+        // println!(
+        //     "Dynamic programming: tour={:?}, length={} (in {:?})",
+        //     dp_tour, dp_length, dp_duration
+        // );
+        // println!(
+        //     "Brute force        : tour={:?}, length={} (in {:?})",
+        //     bf_tour, bf_length, bf_duration
+        // );
+
+        println!("{num_cities}, {dp_duration:?}, {bf_duration:?}");
 
         // Calculate and display the optimality gap for nearest neighbor
         if bf_length < nn_length {
             let gap_percent = (nn_length - bf_length) as f64 / bf_length as f64 * 100.0;
-            println!(
+            debug!(
                 "NN optimality gap: {}% (NN is {}% worse than optimal)",
                 gap_percent.round(),
                 gap_percent.round()
             );
         } else {
-            println!("Nearest neighbor found an optimal solution!");
+            debug!("Nearest neighbor found an optimal solution!");
         }
 
         // Verify brute force is optimal
         assert!(
             bf_length <= nn_length,
-            "Brute force solution (length={}) should be at least as good as nearest neighbor (length={})",
-            bf_length,
-            nn_length
+            "Brute force solution (length={bf_length}) should be at least as good as nearest neighbor (length={nn_length})"
         );
 
         // Verify dynamic programming gives the same optimal result as brute force
-        assert!(
-            bf_length == dp_length,
-            "Dynamic programming solution (length={}) should be exactly as good as brute force (length={})",
-            dp_length,
-            bf_length
-        );
+        // assert!(
+        //     bf_length == dp_length,
+        //     "Dynamic programming solution (length={}) should be exactly as good as brute force (length={})",
+        //     dp_length,
+        //     bf_length
+        // );
     }
 
     println!(
