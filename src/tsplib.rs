@@ -116,7 +116,7 @@ pub fn read_tsp_file(filename: &str) -> Result<TspInstance, TspError> {
             let parts: Vec<&str> = line.split_whitespace().collect();
             for p in parts {
                 let val = i32::from_str(p)
-                    .map_err(|_| TspError::ParseError(format!("Invalid matrix value: {}", p)))?;
+                    .map_err(|_| TspError::ParseError(format!("Invalid matrix value: {p}")))?;
                 matrix_data.push(val);
             }
         }
@@ -183,14 +183,12 @@ pub fn read_tsp_file(filename: &str) -> Result<TspInstance, TspError> {
                     Ok(TspInstance::ExplicitMatrix(matrix))
                 }
                 other => Err(TspError::ParseError(format!(
-                    "Only FULL_MATRIX and LOWER_DIAG_ROW formats are supported, got {}",
-                    other
+                    "Only FULL_MATRIX and LOWER_DIAG_ROW formats are supported, got {other}"
                 ))),
             }
         }
         other => Err(TspError::ParseError(format!(
-            "Unsupported EDGE_WEIGHT_TYPE: {}",
-            other
+            "Unsupported EDGE_WEIGHT_TYPE: {other}"
         ))),
     }
 }
