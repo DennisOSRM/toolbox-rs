@@ -48,7 +48,7 @@ xxhash-rust = {version = "0.8.15", features = ["xxh3"] }
 jemallocator = "0.5.4"
 
 [dev-dependencies]
-criterion = "0.6.0"
+criterion = "0.7.0"
 
 [profile.release]
 debug = true
