@@ -1,6 +1,5 @@
-use bincode::Decode;
-use bincode::Encode;
 use core::cmp::max;
+use rkyv::{Archive, Deserialize, Serialize};
 use std::{
     fmt::Display,
     hash::Hash,
@@ -10,7 +9,9 @@ use std::{
 /// represents the hiearchical partition id scheme. The root id has ID 1 and
 /// children are shifted to the left by one and plus 0/1. The parent child
 /// relationship can thus be queried in constant time.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Encode, Decode)]
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Archive, Serialize, Deserialize,
+)]
 pub struct PartitionID(pub u32);
 
 impl PartitionID {

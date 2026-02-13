@@ -24,7 +24,7 @@ use std::fmt::Display;
 /// // Convert back to floating-point
 /// let (lon, lat) = ny.to_lon_lat_pair();
 /// ```
-#[derive(Clone, Copy, Debug, Eq, PartialEq, bincode::Decode, bincode::Encode)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct FPCoordinate {
     pub lat: i32,
     pub lon: i32,
@@ -391,14 +391,11 @@ mod tests {
         let original = FPCoordinate::new_from_lat_lon(40.730610, -73.935242);
 
         // Encode to bytes
-        let encoded: Vec<u8> =
-            bincode::encode_to_vec(original, bincode::config::standard()).unwrap();
+        let encoded = rkyv::to_bytes::<rkyv::rancor::Error>(&original).unwrap();
 
         // Decode from bytes
         let decoded: FPCoordinate =
-            bincode::decode_from_slice(&encoded, bincode::config::standard())
-                .unwrap()
-                .0;
+            rkyv::from_bytes::<FPCoordinate, rkyv::rancor::Error>(&encoded).unwrap();
 
         // Verify the roundtrip
         assert_eq!(original, decoded);
