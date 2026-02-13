@@ -1,10 +1,11 @@
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group};
-use rand::{Rng, seq::SliceRandom};
+use criterion::{BenchmarkId, Criterion, criterion_group};
+use rand::{RngExt, seq::SliceRandom};
+use std::hint::black_box;
 use toolbox_rs::{k_way_merge_iterator::KWayMergeIterator, loser_tree::LoserTree};
 
 /// Create a list of random runs of numbers.
 ///
-/// # Panics
+/// # Panicsz
 /// Panics if k == 0 or s == 0
 fn create_random_runs(s: usize, k: usize) -> Vec<impl Iterator<Item = i32>> {
     assert!(k > 0, "k must be greater than 0");

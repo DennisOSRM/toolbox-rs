@@ -1,5 +1,6 @@
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group};
-use rand::Rng;
+use criterion::{BenchmarkId, Criterion, criterion_group};
+use rand::RngExt;
+use std::hint::black_box;
 use toolbox_rs::{
     mercator::{lat_to_y, lat_to_y_approx, lon_to_x},
     wgs84::{FloatLatitude, FloatLongitude},

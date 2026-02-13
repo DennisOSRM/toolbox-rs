@@ -1,5 +1,5 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group};
-use rand::{Rng, distr::StandardUniform};
+use rand::{RngExt, distr::StandardUniform};
 use toolbox_rs::fenwick::Fenwick;
 
 fn create_scrambled_data(length: usize) -> Vec<i32> {
