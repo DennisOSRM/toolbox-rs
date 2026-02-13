@@ -11,7 +11,7 @@ fn optimal_m(epsilon: f64) -> usize {
 }
 
 fn get_seed() -> u64 {
-    rand::Rng::random::<u64>(&mut rand::rng())
+    rand::RngExt::random::<u64>(&mut rand::rng())
 }
 
 pub struct CountMinSketch {

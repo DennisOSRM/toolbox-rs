@@ -1,4 +1,5 @@
-use criterion::{Criterion, black_box, criterion_group};
+use criterion::{Criterion, criterion_group};
+use std::hint::black_box;
 use toolbox_rs::great_circle::*;
 
 pub fn haversine_benchmark(c: &mut Criterion) {

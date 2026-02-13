@@ -1,4 +1,4 @@
-use rand::{Rng, distr::StandardUniform};
+use rand::{RngExt, distr::StandardUniform};
 use toolbox_rs::rdx_sort::Sort;
 
 fn main() {
