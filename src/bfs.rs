@@ -137,7 +137,7 @@ impl BFS {
     }
 
     //TODO: Add test covering this iterator
-    pub fn path_iter(&self) -> PathIter {
+    pub fn path_iter(&self) -> PathIter<'_> {
         PathIter::new(self)
     }
 }
@@ -148,7 +148,7 @@ pub struct PathIter<'a> {
 }
 
 impl PathIter<'_> {
-    pub fn new(bfs: &BFS) -> PathIter {
+    pub fn new(bfs: &BFS) -> PathIter<'_> {
         debug!("init: {}", bfs.target);
         PathIter {
             bfs,
