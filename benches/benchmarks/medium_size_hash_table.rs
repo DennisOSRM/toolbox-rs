@@ -1,5 +1,6 @@
-use criterion::{Criterion, black_box, criterion_group};
+use criterion::{Criterion, criterion_group};
 use std::collections::{BTreeMap, HashMap};
+use std::hint::black_box;
 use toolbox_rs::{
     fibonacci_hash::FibonacciHash, medium_size_hash_table::MediumSizeHashTable,
     tabulation_hash::TabulationHash, tiny_table::TinyTable,
