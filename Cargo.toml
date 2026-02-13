@@ -32,7 +32,7 @@ rkyv = "0.8.15"
 bitvec = "1.0.1"
 clap = { version = "4.5.38", features = ["derive"] }
 env_logger = "0.11.8"
-fxhash = "0.2.1"
+rustc-hash = "2.1.1"
 geojson = "0.24.1"
 indicatif = "0.18.0"
 itertools = "0.14.0"

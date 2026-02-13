@@ -3,10 +3,10 @@ mod serialize;
 
 use command_line::Arguments;
 use env_logger::{Builder, Env};
-use fxhash::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use log::info;
 use rayon::prelude::*;
+use rustc_hash::{FxHashMap, FxHashSet};
 use toolbox_rs::{
     bounding_box::BoundingBox, convex_hull::monotone_chain, edge::InputEdge,
     geometry::FPCoordinate, io, partition_id::PartitionID, space_filling_curve::zorder_cmp,

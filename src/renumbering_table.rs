@@ -1,4 +1,4 @@
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 
 enum Implementation {
     Vec(Vec<usize>),
