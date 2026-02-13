@@ -1,9 +1,12 @@
 mod command_line;
-use std::{fs::File, io::BufWriter};
+use std::{
+    fs::File,
+    io::{BufWriter, Write},
+};
 
-use bincode::encode_into_std_write;
 use env_logger::Env;
 use log::info;
+use rkyv::rancor;
 
 use crate::command_line::{Arguments, InputFormat};
 use toolbox_rs::{ddsg, dimacs, edge::InputEdge, metis};
@@ -35,15 +38,15 @@ fn main() {
         InputFormat::Metis => metis::read_coordinates(&args.coordinates),
     };
 
-    let config = bincode::config::standard();
-
     info!("writing edges into intermediate format");
+    let bytes = rkyv::to_bytes::<rancor::Error>(&edges).unwrap();
     let mut f = BufWriter::new(File::create(args.graph + ".toolbox").unwrap());
-    encode_into_std_write(&edges, &mut f, config).unwrap();
+    f.write_all(&bytes).unwrap();
 
     info!("writing coordinates into intermediate format");
+    let bytes = rkyv::to_bytes::<rancor::Error>(&coordinates).unwrap();
     let mut f = BufWriter::new(File::create(args.coordinates + ".toolbox").unwrap());
-    encode_into_std_write(&coordinates, &mut f, config).unwrap();
+    f.write_all(&bytes).unwrap();
 
     info!("done.");
 }

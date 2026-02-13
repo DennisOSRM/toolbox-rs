@@ -1,11 +1,11 @@
 use std::{
     fs::File,
-    io::{self, BufRead, BufReader},
+    io::{self, BufRead, BufReader, Read},
     path::Path,
 };
 
-use bincode::{config, decode_from_std_read};
 use itertools::Itertools;
+use rkyv::rancor;
 
 use crate::edge::{InputEdge, TrivialEdge};
 
@@ -21,9 +21,11 @@ where
 
 pub fn read_graph_into_trivial_edges(filename: &str) -> Vec<TrivialEdge> {
     let mut reader = BufReader::new(File::open(filename).unwrap());
-    let config = config::standard();
+    let mut buf = Vec::new();
+    reader.read_to_end(&mut buf).unwrap();
 
-    let input_edges: Vec<InputEdge<usize>> = decode_from_std_read(&mut reader, config).unwrap();
+    let input_edges: Vec<InputEdge<usize>> =
+        rkyv::from_bytes::<Vec<InputEdge<usize>>, rancor::Error>(&buf).unwrap();
 
     input_edges
         .iter()
@@ -34,10 +36,16 @@ pub fn read_graph_into_trivial_edges(filename: &str) -> Vec<TrivialEdge> {
         .collect_vec()
 }
 
-pub fn read_vec_from_file<T: bincode::Decode<()>>(filename: &str) -> Vec<T> {
+pub fn read_vec_from_file<T>(filename: &str) -> Vec<T>
+where
+    Vec<T>: rkyv::Archive,
+    <Vec<T> as rkyv::Archive>::Archived: for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rancor::Error>>
+        + rkyv::Deserialize<Vec<T>, rancor::Strategy<rkyv::de::Pool, rancor::Error>>,
+{
     let mut reader = BufReader::new(File::open(filename).unwrap());
-    let config = config::standard();
-    decode_from_std_read(&mut reader, config).unwrap()
+    let mut buf = Vec::new();
+    reader.read_to_end(&mut buf).unwrap();
+    rkyv::from_bytes::<Vec<T>, rancor::Error>(&buf).unwrap()
 }
 
 #[cfg(test)]
@@ -73,31 +81,24 @@ mod tests {
     // Test `read_graph_into_trivial_edges` function
     #[test]
     fn test_read_graph_into_trivial_edges() {
-        // Define test input edges
-        #[derive(bincode::Encode)]
-        struct TestEdge {
-            source: usize,
-            target: usize,
-            weight: usize,
-        }
-
-        let input_edges = vec![
-            TestEdge {
+        // Define test input edges using the real InputEdge type
+        let input_edges: Vec<InputEdge<usize>> = vec![
+            InputEdge {
                 source: 1,
                 target: 2,
-                weight: 10,
+                data: 10,
             },
-            TestEdge {
+            InputEdge {
                 source: 2,
                 target: 3,
-                weight: 20,
+                data: 20,
             },
         ];
 
         // Serialize the input edges to a temporary file
         let mut file = NamedTempFile::new().unwrap();
-        let config = config::standard();
-        bincode::encode_into_std_write(&input_edges, &mut file, config).unwrap();
+        let bytes = rkyv::to_bytes::<rancor::Error>(&input_edges).unwrap();
+        file.write_all(&bytes).unwrap();
 
         // Read the graph into trivial edges
         let trivial_edges = read_graph_into_trivial_edges(file.path().to_str().unwrap());
@@ -121,12 +122,12 @@ mod tests {
     #[test]
     fn test_read_vec_from_file() {
         // Define test data
-        let test_data = vec![1, 2, 3, 4, 5];
+        let test_data: Vec<i32> = vec![1, 2, 3, 4, 5];
 
         // Serialize the test data to a temporary file
         let mut file = NamedTempFile::new().unwrap();
-        let config = config::standard();
-        bincode::encode_into_std_write(&test_data, &mut file, config).unwrap();
+        let bytes = rkyv::to_bytes::<rancor::Error>(&test_data).unwrap();
+        file.write_all(&bytes).unwrap();
 
         // Read the vector from the file
         let result: Vec<i32> = read_vec_from_file(file.path().to_str().unwrap());
@@ -139,7 +140,8 @@ mod tests {
     #[test]
     fn test_read_vec_from_file_with_custom_struct() {
         // Define a custom struct for testing
-        #[derive(Debug, PartialEq, bincode::Encode, bincode::Decode)]
+        #[derive(Debug, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+        #[rkyv(compare(PartialEq), derive(Debug))]
         struct TestStruct {
             id: u64,
             name: String,
@@ -158,8 +160,8 @@ mod tests {
 
         // Serialize the test data to a temporary file
         let mut file = NamedTempFile::new().unwrap();
-        let config = config::standard();
-        bincode::encode_into_std_write(&test_data, &mut file, config).unwrap();
+        let bytes = rkyv::to_bytes::<rancor::Error>(&test_data).unwrap();
+        file.write_all(&bytes).unwrap();
 
         // Read the vector from the file
         let result: Vec<TestStruct> = read_vec_from_file(file.path().to_str().unwrap());

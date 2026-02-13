@@ -1,5 +1,5 @@
-use bincode::encode_into_std_write;
 use log::info;
+use rkyv::rancor;
 use std::{
     fs::File,
     io::{BufWriter, Write},
@@ -82,8 +82,8 @@ pub fn assignment_csv(filename: &str, partition_ids: &[PartitionID], coordinates
 
 pub fn binary_partition_file(partition_file: &str, partition_ids: &[PartitionID]) {
     let mut f = BufWriter::new(File::create(partition_file).unwrap());
-    let config = bincode::config::standard();
-    encode_into_std_write(partition_ids, &mut f, config).unwrap();
+    let bytes = rkyv::to_bytes::<rancor::Error>(&partition_ids.to_vec()).unwrap();
+    f.write_all(&bytes).unwrap();
 }
 
 pub fn write_results(

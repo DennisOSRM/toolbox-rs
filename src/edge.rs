@@ -1,4 +1,4 @@
-use bincode::{Decode, Encode};
+use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::graph::NodeID;
 use core::mem::swap;
@@ -17,7 +17,7 @@ pub trait EdgeData {
 pub trait EdgeWithData: Edge<ID = usize> + EdgeData<DATA = i32> {}
 impl EdgeWithData for InputEdge<i32> {}
 
-#[derive(Clone, Copy, Debug, bincode::Decode, bincode::Encode)]
+#[derive(Clone, Copy, Debug, Archive, Serialize, Deserialize)]
 pub struct TrivialEdge {
     pub source: usize,
     pub target: usize,
@@ -33,7 +33,9 @@ impl Edge for TrivialEdge {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialOrd, Ord, PartialEq, Decode, Encode)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialOrd, Ord, PartialEq, Archive, Serialize, Deserialize,
+)]
 pub struct InputEdge<EdgeDataT: Eq> {
     pub source: NodeID,
     pub target: NodeID,
