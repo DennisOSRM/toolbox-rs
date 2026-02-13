@@ -52,7 +52,8 @@ impl OneToManyDijkstra {
     /// to run consecutive searches, even on different graphs. It is cleared on
     /// every run, which saves on allocations.
     pub fn run<G: Graph<usize>>(&mut self, graph: &G, source: NodeID, targets: &[NodeID]) -> bool {
-        let targets = fxhash::FxHashMap::<NodeID, ()>::from_iter(targets.iter().map(|&x| (x, ())));
+        let targets =
+            rustc_hash::FxHashMap::<NodeID, ()>::from_iter(targets.iter().map(|&x| (x, ())));
 
         // clear the search space
         self.clear();

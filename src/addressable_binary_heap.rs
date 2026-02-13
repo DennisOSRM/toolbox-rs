@@ -1,6 +1,6 @@
 use core::hash::Hash;
-use fxhash::FxHashMap;
 use num::{Bounded, Integer};
+use rustc_hash::FxHashMap;
 use std::fmt::Debug;
 
 struct HeapNode<NodeID: Copy + Integer, Weight: Bounded + Copy + Integer + Debug, Data> {
