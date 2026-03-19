@@ -37,10 +37,10 @@ where
     let mut top_k = Vec::with_capacity(2 * k);
     let mut threshold: Option<T::Integral> = None;
     for item in input {
-        if let Some(ref t) = threshold {
-            if item.value() >= *t {
-                continue;
-            }
+        if let Some(ref t) = threshold
+            && item.value() >= *t
+        {
+            continue;
         }
         top_k.push(item);
         if top_k.len() == 2 * k {

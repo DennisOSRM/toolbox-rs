@@ -1,6 +1,6 @@
 use std::{fs::File, io::BufWriter};
 
-use geojson::{feature::Id, Feature, FeatureWriter, Geometry, GeometryValue};
+use geojson::{Feature, FeatureWriter, Geometry, GeometryValue, feature::Id};
 use itertools::Itertools;
 use toolbox_rs::{bounding_box::BoundingBox, geometry::FPCoordinate, partition_id::PartitionID};
 
@@ -46,12 +46,9 @@ pub(crate) fn boundary_geometry_geojson(coordinates: &[FPCoordinate], filename: 
     let mut writer = FeatureWriter::from_writer(file);
     for coordinate in coordinates {
         // serialize convex hull polygons as geojson
-        let geometry = Geometry::new(
-            GeometryValue::Point {
-                coordinates: geojson::Position::from(coordinate.to_lon_lat_vec()),
-            }
-            .into(),
-        );
+        let geometry = Geometry::new(GeometryValue::Point {
+            coordinates: geojson::Position::from(coordinate.to_lon_lat_vec()),
+        });
 
         writer
             .write_feature(&Feature {

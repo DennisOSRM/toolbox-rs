@@ -86,7 +86,7 @@ impl PartitionID {
 
     /// Returns whether the ID id a left child
     pub fn is_left_child(&self) -> bool {
-        self.0 % 2 == 0
+        self.0.is_multiple_of(2)
     }
 
     /// Returns whether the ID id a right child
