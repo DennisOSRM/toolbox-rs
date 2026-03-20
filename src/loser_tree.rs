@@ -58,7 +58,7 @@ impl<T: Clone + Ord + PartialOrd> LoserTree<T> {
             let parent = (i - 1) / 2;
 
             // sibling of the current node either to the left or to the right
-            let sibling = if i % 2 == 0 { i - 1 } else { i + 1 };
+            let sibling = if i.is_multiple_of(2) { i - 1 } else { i + 1 };
 
             // determine the winner of the match
             let winner = self.play_match(

@@ -91,9 +91,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     } else if let Some(ref matrix) = matrix {
         // Use explicit matrix
-        for i in 0..num_nodes {
-            for j in 0..num_nodes {
-                *graph.get_mut(i, j) = matrix[i][j];
+        for (i, row) in matrix.iter().enumerate().take(num_nodes) {
+            for (j, value) in row.iter().enumerate().take(num_nodes) {
+                *graph.get_mut(i, j) = *value;
             }
         }
     }

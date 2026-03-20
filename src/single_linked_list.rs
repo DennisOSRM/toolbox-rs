@@ -115,10 +115,10 @@ impl<T: Copy + Debug + PartialOrd> SingleLinkedList<T> {
     pub fn is_sorted(&self) -> bool {
         let mut current = &self.head;
         while let Some(node) = current {
-            if let Some(next_node) = &node.next {
-                if node.elem > next_node.elem {
-                    return false;
-                }
+            if let Some(next_node) = &node.next
+                && node.elem > next_node.elem
+            {
+                return false;
             }
             current = &node.next;
         }

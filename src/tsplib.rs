@@ -78,10 +78,10 @@ pub fn read_tsp_file(filename: &str) -> Result<TspInstance, TspError> {
                 if let Some(t) = line.split(':').nth(1) {
                     edge_weight_type = Some(t.trim().to_string());
                 }
-            } else if line.starts_with("EDGE_WEIGHT_FORMAT") {
-                if let Some(f) = line.split(':').nth(1) {
-                    edge_weight_format = Some(f.trim().to_string());
-                }
+            } else if line.starts_with("EDGE_WEIGHT_FORMAT")
+                && let Some(f) = line.split(':').nth(1)
+            {
+                edge_weight_format = Some(f.trim().to_string());
             }
             continue;
         }
@@ -126,14 +126,14 @@ pub fn read_tsp_file(filename: &str) -> Result<TspInstance, TspError> {
     match edge_type {
         "EUC_2D" => {
             // Verify we read the expected number of sites
-            if let Some(dim) = dimension {
-                if sites.len() != dim {
-                    return Err(TspError::ParseError(format!(
-                        "Expected {} sites but found {}",
-                        dim,
-                        sites.len()
-                    )));
-                }
+            if let Some(dim) = dimension
+                && sites.len() != dim
+            {
+                return Err(TspError::ParseError(format!(
+                    "Expected {} sites but found {}",
+                    dim,
+                    sites.len()
+                )));
             }
             Ok(TspInstance::Coordinates(sites))
         }
@@ -172,12 +172,18 @@ pub fn read_tsp_file(filename: &str) -> Result<TspInstance, TspError> {
                     // Fill lower triangle and diagonal from input, upper triangle by symmetry
                     let mut matrix = vec![vec![0; dim]; dim];
                     let mut idx = 0;
-                    for i in 0..dim {
-                        for j in 0..=i {
-                            let val = matrix_data[idx];
-                            matrix[i][j] = val;
-                            matrix[j][i] = val; // symmetric
+                    for (i, row) in matrix.iter_mut().enumerate() {
+                        for cell in row.iter_mut().take(i + 1) {
+                            *cell = matrix_data[idx];
                             idx += 1;
+                        }
+                    }
+
+                    for i in 0..dim {
+                        let (upper_rows, current_and_below) = matrix.split_at_mut(i);
+                        let current_row = &current_and_below[0];
+                        for (j, upper_row) in upper_rows.iter_mut().enumerate() {
+                            upper_row[i] = current_row[j];
                         }
                     }
                     Ok(TspInstance::ExplicitMatrix(matrix))

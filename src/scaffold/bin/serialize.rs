@@ -1,6 +1,6 @@
 use std::{fs::File, io::BufWriter};
 
-use geojson::{Feature, FeatureWriter, Geometry, Value, feature::Id};
+use geojson::{Feature, FeatureWriter, Geometry, GeometryValue, feature::Id};
 use itertools::Itertools;
 use toolbox_rs::{bounding_box::BoundingBox, geometry::FPCoordinate, partition_id::PartitionID};
 
@@ -18,12 +18,14 @@ pub(crate) fn convex_cell_hull_geojson(
             .take(convex_hull.len() + 1)
             .map(|c| {
                 // TODO: should this be implemented via the Into<> trait?
-                c.to_lon_lat_vec()
+                geojson::Position::from(c.to_lon_lat_vec())
             })
             .collect_vec();
 
         // serialize convex hull polygons as geojson
-        let geometry = Geometry::new(Value::Polygon(vec![convex_hull]));
+        let geometry = Geometry::new(GeometryValue::Polygon {
+            coordinates: vec![convex_hull],
+        });
 
         writer
             .write_feature(&Feature {
@@ -44,7 +46,9 @@ pub(crate) fn boundary_geometry_geojson(coordinates: &[FPCoordinate], filename: 
     let mut writer = FeatureWriter::from_writer(file);
     for coordinate in coordinates {
         // serialize convex hull polygons as geojson
-        let geometry = Geometry::new(Value::Point(coordinate.to_lon_lat_vec()));
+        let geometry = Geometry::new(GeometryValue::Point {
+            coordinates: geojson::Position::from(coordinate.to_lon_lat_vec()),
+        });
 
         writer
             .write_feature(&Feature {
