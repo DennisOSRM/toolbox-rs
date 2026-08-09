@@ -30,7 +30,8 @@ impl<T: Ord + Clone> Default for StaticGraph<T> {
 impl<T: Ord + Copy> StaticGraph<T> {
     // In time O(V+E) check that the following invariants hold:
     // a) the target node of each edge is smaller than the number of nodes
-    // b) index values for nodes first_edges are strictly increasing
+    // b) index values for nodes first_edges are non-decreasing, as a node
+    //    without any outgoing edge shares its offset with the next node
     // c) the targets within each adjacency block are sorted ascendingly
     pub fn check_integrity(&self) -> bool {
         self.edge_array

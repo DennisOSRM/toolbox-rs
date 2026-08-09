@@ -72,7 +72,7 @@ impl Dinic {
             }
         }
         debug!(
-            "BFS took {} runs, upper bound on path length: {}",
+            "BFS run {}, upper bound on path length: {}",
             self.bfs_count, self.level[self.source]
         );
         self.level[self.source] != usize::MAX
@@ -257,7 +257,9 @@ impl MaxFlow for Dinic {
         edge_array.shrink_to_fit();
         debug!("residual graph has {write} arcs");
 
-        debug_assert!(write <= u32::MAX as usize, "arc ids have to fit into u32");
+        // the DFS stores arc ids in parent_edge as u32, so a larger graph would
+        // silently index the wrong arc
+        assert!(write <= u32::MAX as usize, "arc ids have to fit into u32");
         let residual_graph = StaticGraph::from_adjacency_array(node_array, edge_array);
 
         Self {

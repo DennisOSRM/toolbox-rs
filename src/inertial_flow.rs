@@ -26,6 +26,8 @@ pub enum FlowError {
     AxisOutOfBounds,
     /// the cell does not induce any edge, thus it cannot be cut
     EmptyGraph,
+    /// the graph has more nodes than the node ids of a cell can address
+    GraphTooLarge,
     String(String),
 }
 
@@ -77,6 +79,12 @@ pub fn sub_step(
         // solver from being handed an empty graph.
         return Err(FlowError::EmptyGraph);
     }
+    if coordinates.len() > u32::MAX as usize {
+        // Node ids are narrowed to u32 while sorting the nodes of the cell.
+        // Every id addresses a coordinate, so checking the coordinates covers
+        // all of them at once.
+        return Err(FlowError::GraphTooLarge);
+    }
 
     let comparator = ROTATED_COMPARATORS[axis];
     debug!("[{axis}] sorting cooefficient: {comparator:?}");
@@ -88,6 +96,7 @@ pub fn sub_step(
         .iter()
         .map(|id| {
             let projection = comparator(coordinates[*id].lat, coordinates[*id].lon);
+            // the check on the number of coordinates above rules this out
             let id: u32 = (*id).try_into().expect("node id does not fit into u32");
             (projection, id)
         })
