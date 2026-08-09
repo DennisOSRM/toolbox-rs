@@ -17,7 +17,10 @@ impl RenumberingTable {
         if factor > 8 {
             // the table will filled with at most 12.5% of the number of elements
             return Self {
-                table: Implementation::Map(FxHashMap::default()),
+                table: Implementation::Map(FxHashMap::with_capacity_and_hasher(
+                    usage_bound,
+                    Default::default(),
+                )),
             };
         }
 

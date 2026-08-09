@@ -31,6 +31,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
     // In time O(V+E) check that the following invariants hold:
     // a) the target node of each edge is smaller than the number of nodes
     // b) index values for nodes first_edges are strictly increasing
+    // c) the targets within each adjacency block are sorted ascendingly
     pub fn check_integrity(&self) -> bool {
         self.edge_array
             .iter()
@@ -39,6 +40,25 @@ impl<T: Ord + Copy> StaticGraph<T> {
                 .node_array
                 .windows(2)
                 .all(|pair| pair[0].first_edge <= pair[1].first_edge)
+            && self.node_range().all(|node| {
+                self.edge_array[self.edge_range(node)]
+                    .windows(2)
+                    .all(|pair| pair[0].target <= pair[1].target)
+            })
+    }
+
+    /// Finds the edge (s,t) by a binary search over the adjacency block of s.
+    /// This requires the targets within a block to be sorted, which holds for
+    /// all of this type's constructors.
+    pub fn find_edge_sorted(&self, s: NodeID, t: NodeID) -> Option<EdgeID> {
+        if s >= self.number_of_nodes() {
+            return None;
+        }
+        let range = self.edge_range(s);
+        self.edge_array[range.clone()]
+            .binary_search_by_key(&t, |entry| entry.target)
+            .ok()
+            .map(|offset| range.start + offset)
     }
 
     pub fn new(mut input: Vec<impl Edge<ID = NodeID> + EdgeData<DATA = T> + Ord>) -> Self {
@@ -47,6 +67,24 @@ impl<T: Ord + Copy> StaticGraph<T> {
         input.sort();
 
         Self::new_from_sorted_list(input)
+    }
+
+    /// Assembles a graph from a prebuilt adjacency array. The caller has to
+    /// guarantee that `node_array` is non-decreasing, starts at zero, ends at
+    /// `edge_array.len()` and that the targets within each adjacency block are
+    /// sorted ascendingly.
+    pub fn from_adjacency_array(
+        node_array: Vec<EdgeID>,
+        edge_array: Vec<EdgeArrayEntry<T>>,
+    ) -> Self {
+        let graph = Self {
+            // the layouts of EdgeID and NodeArrayEntry match, thus the
+            // allocation is reused instead of copied
+            node_array: node_array.into_iter().map(NodeArrayEntry::new).collect(),
+            edge_array,
+        };
+        debug_assert!(graph.check_integrity());
+        graph
     }
 
     pub fn new_from_sorted_list(

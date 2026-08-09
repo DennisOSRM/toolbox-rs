@@ -11,10 +11,12 @@ use itertools::Itertools;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info};
 use rayon::prelude::*;
-use std::sync::{Arc, atomic::AtomicI32};
+use std::sync::{
+    Arc,
+    atomic::{AtomicI32, AtomicU32, Ordering},
+};
 use toolbox_rs::geometry::FPCoordinate;
 use toolbox_rs::io;
-use toolbox_rs::unsafe_slice::UnsafeSlice;
 use toolbox_rs::{
     inertial_flow::{self, Flow, flow_cmp},
     partition_id::PartitionID,
@@ -54,9 +56,16 @@ fn main() {
         coordinates.len()
     );
 
-    // enqueue initial job for partitioning of the root node into job queue
+    // enqueue initial job for partitioning of the root node into job queue. The
+    // root job takes ownership of the edge set, which is only needed again if
+    // the cut is to be written out.
     let id_vector = (0..coordinates.len()).collect_vec();
-    let job = (edges.clone(), id_vector);
+    let input_edges = if args.cut_csv.is_empty() {
+        Vec::new()
+    } else {
+        edges.clone()
+    };
+    let job = (edges, id_vector);
     let mut current_job_queue = vec![job];
 
     let sty = ProgressStyle::default_spinner()
@@ -65,8 +74,14 @@ fn main() {
         .progress_chars("#>-");
 
     let mut current_level = 0;
-    let mut partition_ids_vec = vec![PartitionID::root(); coordinates.len()];
-    let partition_ids = UnsafeSlice::new(&mut partition_ids_vec);
+    // Cells are disjoint, hence each entry is written by at most one thread per
+    // level. Relaxed atomics express that without an aliasing hazard and
+    // compile to plain loads and stores.
+    let partition_ids = (0..coordinates.len())
+        .map(|_| AtomicU32::new(PartitionID::root().0))
+        .collect_vec();
+    let load = |index: usize| PartitionID(partition_ids[index].load(Ordering::Relaxed));
+    let store = |index: usize, id: PartitionID| partition_ids[index].store(id.0, Ordering::Relaxed);
 
     while !current_job_queue.is_empty() && current_level < args.recursion_depth {
         let pb = ProgressBar::new(current_job_queue.len() as u64);
@@ -94,15 +109,22 @@ fn main() {
                             upper_bound.clone(),
                         )
                     })
-                    .filter(|result| result.is_ok())
-                    .map(|result| result.unwrap())
+                    .filter_map(Result::ok)
                     .min_by(flow_cmp);
 
-                if best_max_flow.is_none() {
+                let Some(result) = best_max_flow else {
+                    // No axis yielded a cut, e.g. because the cell has no edges
+                    // at all. The cell stays as it is, but its nodes still have
+                    // to descend to the bottom of the hierarchy.
+                    debug!("cell of {} nodes could not be cut", job.1.len());
+                    let level_difference = (args.recursion_depth - current_level) as usize;
+                    for i in &job.1 {
+                        let mut id = load(*i);
+                        id.make_leftmost_descendant(level_difference);
+                        store(*i, id);
+                    }
                     return Vec::new();
-                }
-
-                let result = best_max_flow.unwrap();
+                };
                 debug!(
                     "best max-flow: {}, balance: {:.3}",
                     result.flow, result.balance
@@ -110,47 +132,59 @@ fn main() {
 
                 debug!("partitioning and assigning ids for all nodes");
 
-                (result.left_ids).iter().for_each(|id| unsafe {
-                    partition_ids.get_mut(*id).make_left_child();
+                (result.left_ids).iter().for_each(|i| {
+                    let mut id = load(*i);
+                    id.make_left_child();
+                    store(*i, id);
                 });
-                (result.right_ids).iter().for_each(|id| unsafe {
-                    partition_ids.get_mut(*id).make_right_child();
+                (result.right_ids).iter().for_each(|i| {
+                    let mut id = load(*i);
+                    id.make_right_child();
+                    store(*i, id);
                 });
 
-                // partition edge and node id sets for the next iteration
+                // Partition edge and node id sets for the next iteration. The
+                // edge set of the parent is consumed here, so that it is freed
+                // right away instead of at the end of the level. Edges of the
+                // cut are dropped: their head is outside of the cell they would
+                // end up in, where they only inflate the flow graph by a node
+                // that no flow can pass through.
                 debug!("generating next level edges");
-                // TODO: don't copy, but partition in place
-                let (left_edges, right_edges): (Vec<_>, Vec<_>) = job
-                    .0
-                    .iter()
-                    .partition(|edge| partition_ids.get(edge.source).is_left_child());
+                let mut left_edges = Vec::new();
+                let mut right_edges = Vec::new();
+                for edge in std::mem::take(&mut job.0) {
+                    let tail_is_left = load(edge.source).is_left_child();
+                    if tail_is_left != load(edge.target).is_left_child() {
+                        continue;
+                    }
+                    if tail_is_left {
+                        left_edges.push(edge);
+                    } else {
+                        right_edges.push(edge);
+                    }
+                }
                 debug!("generating next level ids");
 
                 // iterate on left half if larger than the minimum cell size
                 let mut next_jobs = Vec::new();
+                let level_difference = (args.recursion_depth - current_level - 1) as usize;
                 if result.left_ids.len() > args.minimum_cell_size {
                     next_jobs.push((left_edges, result.left_ids));
                 } else {
-                    let level_difference = (args.recursion_depth - current_level - 1) as usize;
                     for i in &result.left_ids {
-                        unsafe {
-                            partition_ids
-                                .get_mut(*i)
-                                .make_leftmost_descendant(level_difference);
-                        }
+                        let mut id = load(*i);
+                        id.make_leftmost_descendant(level_difference);
+                        store(*i, id);
                     }
                 }
                 // iterate on right half if larger than the minimum cell size
                 if result.right_ids.len() > args.minimum_cell_size {
                     next_jobs.push((right_edges, result.right_ids));
                 } else {
-                    let level_difference = (args.recursion_depth - current_level - 1) as usize;
                     for i in &result.right_ids {
-                        unsafe {
-                            partition_ids
-                                .get_mut(*i)
-                                .make_rightmost_descendant(level_difference);
-                        }
+                        let mut id = load(*i);
+                        id.make_rightmost_descendant(level_difference);
+                        store(*i, id);
                     }
                 }
                 next_jobs
@@ -161,10 +195,14 @@ fn main() {
         current_job_queue = next_job_queue;
     }
 
-    write_results(&args, &partition_ids_vec, &coordinates, &edges);
-
+    let partition_ids_vec = partition_ids
+        .iter()
+        .map(|id| PartitionID(id.load(Ordering::Relaxed)))
+        .collect_vec();
     for id in &partition_ids_vec {
         debug_assert_eq!(id.level(), args.recursion_depth);
     }
+
+    write_results(&args, &partition_ids_vec, &coordinates, &input_edges);
     info!("done.");
 }
