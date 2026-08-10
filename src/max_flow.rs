@@ -18,6 +18,16 @@ impl ResidualEdgeData {
     }
 }
 
+/// An arc of a residual graph that caches the capacity of its reverse arc. The
+/// BFS of a max-flow computation checks the reverse capacity of every arc it
+/// relaxes and looking that arc up dominated its run time. Note that caching is
+/// free of charge, as the padding of the adjacency array entry is used up.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ResidualArcData {
+    pub capacity: i32,
+    pub reverse_capacity: i32,
+}
+
 pub trait MaxFlow {
     fn run(&mut self);
     fn run_with_upper_bound(&mut self, bound: Arc<AtomicI32>);

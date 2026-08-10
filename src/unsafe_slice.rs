@@ -32,10 +32,11 @@ impl<'a, T> UnsafeSlice<'a, T> {
 
     /// Returns a shared reference to the element at the given index.
     ///
-    /// This function is safe to call because it returns an immutable reference,
-    /// which can be shared between multiple threads. However, it's important to note
-    /// that this safety relies on the exclusive access guarantee provided by the
-    /// mutable reference passed to `UnsafeSlice::new()`.
+    /// # Safety
+    /// This type is `Sync`, so a shared reference handed out here can be alive
+    /// while another thread writes the very same index through `get_mut`. That
+    /// is a data race, which is why this is not a safe function. The caller has
+    /// to guarantee that no thread writes the index while the reference lives.
     ///
     /// # Arguments
     ///
@@ -55,10 +56,13 @@ impl<'a, T> UnsafeSlice<'a, T> {
     /// # use toolbox_rs::unsafe_slice::UnsafeSlice;
     /// let mut data = vec![1, 2, 3];
     /// let slice = UnsafeSlice::new(&mut data);
-    /// assert_eq!(*slice.get(0), 1);
+    /// // SAFETY: no other thread accesses the slice
+    /// assert_eq!(unsafe { *slice.get(0) }, 1);
     /// ```
-    pub fn get(&self, index: usize) -> &T {
-        unsafe { &mut *self.slice[index].get() }
+    pub unsafe fn get(&self, index: usize) -> &T {
+        // note that going through a &mut here would be a second aliasing
+        // violation on top of the concurrent one
+        unsafe { &*self.slice[index].get() }
     }
 }
 
@@ -70,14 +74,14 @@ mod tests {
     fn instantiate() {
         let mut data = vec![0, 1, 23, 83, 38, 3, 8947, 2762];
         let slice = UnsafeSlice::new(&mut data);
-        assert_eq!(*slice.get(0), 0);
-        assert_eq!(*slice.get(1), 1);
-        assert_eq!(*slice.get(2), 23);
-        assert_eq!(*slice.get(3), 83);
-        assert_eq!(*slice.get(4), 38);
-        assert_eq!(*slice.get(5), 3);
-        assert_eq!(*slice.get(6), 8947);
-        assert_eq!(*slice.get(7), 2762);
+        assert_eq!(unsafe { *slice.get(0) }, 0);
+        assert_eq!(unsafe { *slice.get(1) }, 1);
+        assert_eq!(unsafe { *slice.get(2) }, 23);
+        assert_eq!(unsafe { *slice.get(3) }, 83);
+        assert_eq!(unsafe { *slice.get(4) }, 38);
+        assert_eq!(unsafe { *slice.get(5) }, 3);
+        assert_eq!(unsafe { *slice.get(6) }, 8947);
+        assert_eq!(unsafe { *slice.get(7) }, 2762);
     }
 
     #[test]
@@ -92,10 +96,10 @@ mod tests {
             *slice.get_mut(2) = 30;
         }
 
-        assert_eq!(*slice.get(0), 10);
-        assert_eq!(*slice.get(1), 2);
-        assert_eq!(*slice.get(2), 30);
-        assert_eq!(*slice.get(3), 4);
+        assert_eq!(unsafe { *slice.get(0) }, 10);
+        assert_eq!(unsafe { *slice.get(1) }, 2);
+        assert_eq!(unsafe { *slice.get(2) }, 30);
+        assert_eq!(unsafe { *slice.get(3) }, 4);
 
         // Verify we can read the modified values
         assert_eq!(data[0], 10);

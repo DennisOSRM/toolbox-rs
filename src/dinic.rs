@@ -8,12 +8,12 @@
 //! saturated edge that is closest to the source.
 use crate::{
     edge::InputEdge,
-    graph::{Graph, NodeID},
-    max_flow::{MaxFlow, ResidualEdgeData},
+    graph::{EdgeArrayEntry, EdgeID, Graph, NodeID},
+    max_flow::{MaxFlow, ResidualArcData, ResidualEdgeData},
     static_graph::StaticGraph,
 };
 use bitvec::vec::BitVec;
-use core::cmp::min;
+use core::cmp::{max, min};
 use log::debug;
 use std::{
     collections::VecDeque,
@@ -21,15 +21,16 @@ use std::{
         Arc,
         atomic::{AtomicI32, Ordering},
     },
-    time::Instant,
 };
 
 pub struct Dinic {
-    residual_graph: StaticGraph<ResidualEdgeData>,
+    residual_graph: StaticGraph<ResidualArcData>,
     max_flow: i32,
     finished: bool,
     level: Vec<usize>,
     parents: Vec<NodeID>,
+    /// arc on which the DFS entered a node, i.e. the arc (parents[v], v)
+    parent_edge: Vec<u32>,
     stack: Vec<(NodeID, i32)>,
     dfs_count: usize,
     bfs_count: usize,
@@ -41,7 +42,6 @@ pub struct Dinic {
 
 impl Dinic {
     fn bfs(&mut self) -> bool {
-        let start = Instant::now();
         self.bfs_count += 1;
         // init
         self.level.fill(usize::MAX);
@@ -49,9 +49,6 @@ impl Dinic {
 
         self.queue.clear();
         self.queue.push_back(self.target);
-
-        let duration = start.elapsed();
-        debug!("BFS init: {duration:?}");
 
         // label residual graph nodes in BFS order, but in reverse starting from the target
         while let Some(u) = self.queue.pop_front() {
@@ -63,8 +60,7 @@ impl Dinic {
                 }
 
                 // check capacity of reverse edge
-                let rev_edge = self.residual_graph.find_edge_unchecked(v, u);
-                let edge_capacity = self.residual_graph.data(rev_edge).capacity;
+                let edge_capacity = self.residual_graph.data(edge).reverse_capacity;
                 if edge_capacity < 1 {
                     // no capacity to use on this edge
                     continue;
@@ -75,16 +71,14 @@ impl Dinic {
                 }
             }
         }
-        let duration = start.elapsed();
         debug!(
-            "BFS took: {:?}, upper bound on path length: {}",
-            duration, self.level[self.source]
+            "BFS run {}, upper bound on path length: {}",
+            self.bfs_count, self.level[self.source]
         );
         self.level[self.source] != usize::MAX
     }
 
     fn dfs(&mut self) -> i32 {
-        let start = Instant::now();
         self.dfs_count += 1;
         self.stack.clear();
         self.stack.push((self.source, i32::MAX));
@@ -92,8 +86,6 @@ impl Dinic {
         self.parents.fill(NodeID::MAX);
         self.parents[self.source] = self.source;
 
-        let duration = start.elapsed();
-        debug!(" DFS init: {duration:?}");
         let mut blocking_flow = 0;
         while let Some((u, flow)) = self.stack.pop() {
             for edge in self.residual_graph.edge_range(u) {
@@ -112,10 +104,9 @@ impl Dinic {
                     continue;
                 }
                 self.parents[v] = u;
+                self.parent_edge[v] = edge as u32;
                 let flow = min(flow, available_capacity);
                 if v == self.target {
-                    let duration = start.elapsed();
-                    debug!(" reached target {v}: {duration:?}");
                     // reached a target. Unpack path in reverse order, assign flow
                     let mut v = v; // mutable shadow
                     let mut closest_tail = u;
@@ -124,17 +115,23 @@ impl Dinic {
                         if u == v {
                             break;
                         }
-                        let fwd_edge = self.residual_graph.find_edge_unchecked(u, v);
-                        self.residual_graph.data_mut(fwd_edge).capacity -= flow;
-                        if 0 == self.residual_graph.data_mut(fwd_edge).capacity {
+                        let fwd_edge = self.parent_edge[v] as EdgeID;
+                        let residual = self.residual_graph.data_mut(fwd_edge);
+                        residual.capacity -= flow;
+                        residual.reverse_capacity += flow;
+                        if 0 == residual.capacity {
                             closest_tail = u;
                         }
-                        let rev_edge = self.residual_graph.find_edge_unchecked(v, u);
-                        self.residual_graph.data_mut(rev_edge).capacity += flow;
+                        // keep the cached capacities of the arc pair in sync
+                        let rev_edge = self
+                            .residual_graph
+                            .find_edge_sorted(v, u)
+                            .expect("residual graph is not symmetric");
+                        let residual = self.residual_graph.data_mut(rev_edge);
+                        residual.capacity += flow;
+                        residual.reverse_capacity -= flow;
                         v = u;
                     }
-                    let duration = start.elapsed();
-                    debug!(" augmentation took: {duration:?}");
 
                     // unwind stack till tail node, then continue the search
                     let before = self.stack.len();
@@ -157,62 +154,113 @@ impl Dinic {
             }
         }
 
-        let duration = start.elapsed();
-        debug!("DFS took: {duration:?} (unsuccessful)");
         blocking_flow
     }
 }
 
 impl MaxFlow for Dinic {
     fn from_edge_list(
-        mut edge_list: Vec<InputEdge<ResidualEdgeData>>,
+        edge_list: Vec<InputEdge<ResidualEdgeData>>,
         source: usize,
         target: usize,
     ) -> Self {
         debug_assert!(!edge_list.is_empty());
-        let number_of_edges = edge_list.len();
 
-        debug!("extending {} edges", edge_list.len());
-        // blindly generate reverse edges for all edges with zero capacity
-        edge_list.extend_from_within(..);
-        debug!("into {} edges", edge_list.len());
+        // The residual graph holds a reverse arc of zero capacity for each input
+        // arc. Instead of materializing those and then sorting 2|E| entries, the
+        // adjacency array is built directly by a counting sort in O(V + E).
+        let number_of_nodes = 1 + edge_list
+            .iter()
+            .map(|edge| max(edge.source, edge.target))
+            .max()
+            .expect("edge list is empty");
+        debug!("counting degrees of {number_of_nodes} nodes");
 
-        edge_list.iter_mut().skip(number_of_edges).for_each(|edge| {
-            edge.reverse();
-            edge.data.capacity = 0;
-        });
-        debug!("sorting after reversing");
+        // count the residual degree of each node in node_array[node + 1], then
+        // turn the counts into the offsets of the adjacency blocks
+        let mut node_array = vec![0_usize; number_of_nodes + 1];
+        for edge in &edge_list {
+            node_array[edge.source + 1] += 1;
+            node_array[edge.target + 1] += 1;
+        }
+        for i in 1..node_array.len() {
+            node_array[i] += node_array[i - 1];
+        }
 
-        // dedup-merge edge set, by using the following trick: not the dedup(.) call
-        // below takes the second argument as mut. When deduping equivalent values
-        // a and b, then a is accumulated onto b.
-        edge_list.sort_unstable_by(|a, b| {
-            if a.source == b.source {
-                return a.target.cmp(&b.target);
+        debug!("scattering {} arcs", 2 * edge_list.len());
+        // Scatter the arcs into their blocks. node_array[u] serves as the write
+        // cursor of node u and thus ends up pointing at the end of u's block.
+        // Each input arc contributes its capacity to the forward arc and to the
+        // cached reverse capacity of the reverse arc, which is why the cache
+        // comes for free.
+        let mut edge_array = vec![
+            EdgeArrayEntry {
+                target: 0,
+                data: ResidualArcData::default()
+            };
+            2 * edge_list.len()
+        ];
+        for edge in &edge_list {
+            let forward = node_array[edge.source];
+            node_array[edge.source] += 1;
+            edge_array[forward] = EdgeArrayEntry {
+                target: edge.target,
+                data: ResidualArcData {
+                    capacity: edge.data.capacity,
+                    reverse_capacity: 0,
+                },
+            };
+
+            let reverse = node_array[edge.target];
+            node_array[edge.target] += 1;
+            edge_array[reverse] = EdgeArrayEntry {
+                target: edge.source,
+                data: ResidualArcData {
+                    capacity: 0,
+                    reverse_capacity: edge.data.capacity,
+                },
+            };
+        }
+        drop(edge_list);
+
+        // each cursor now points at the end of its block, which is the begin of
+        // the next one. Shifting by one restores the adjacency array.
+        node_array.rotate_right(1);
+        node_array[0] = 0;
+
+        debug!("merging parallel arcs");
+        // sort each adjacency block by target and merge parallel arcs into a
+        // single one that carries the accumulated capacity. Note that this is
+        // fine, as we are looking to compute a node partition. Blocks are short,
+        // hence sorting them is cheap.
+        let mut write = 0;
+        let mut begin = 0;
+        for node in 0..number_of_nodes {
+            let end = node_array[node + 1];
+            edge_array[begin..end].sort_unstable_by_key(|entry| entry.target);
+
+            let block_begin = write;
+            for read in begin..end {
+                if write > block_begin && edge_array[write - 1].target == edge_array[read].target {
+                    edge_array[write - 1].data.capacity += edge_array[read].data.capacity;
+                    edge_array[write - 1].data.reverse_capacity +=
+                        edge_array[read].data.reverse_capacity;
+                } else {
+                    edge_array[write] = edge_array[read];
+                    write += 1;
+                }
             }
-            a.source.cmp(&b.source)
-        });
-        debug!("start dedup");
-        edge_list.dedup_by(|a, b| {
-            // edges a and b are assumed to be equivalent in the residual graph if
-            // (and only if) they are parallel. In other words, this removes parallel
-            // edges in the residual graph and accumulates capacities on the remaining
-            // egde.
-            let edges_are_parallel = a.is_parallel_to(b);
-            if edges_are_parallel {
-                b.data.capacity += a.data.capacity;
-            }
-            edges_are_parallel
-        });
-        edge_list.shrink_to_fit();
-        debug!("dedup done");
+            begin = end;
+            node_array[node + 1] = write;
+        }
+        edge_array.truncate(write);
+        edge_array.shrink_to_fit();
+        debug!("residual graph has {write} arcs");
 
-        // at this point the edge set of the residual graph doesn't have any
-        // duplicates anymore. Note that this is fine, as we are looking to
-        // compute a node partition.
-
-        let residual_graph = StaticGraph::new_from_sorted_list(edge_list);
-        let number_of_nodes = residual_graph.number_of_nodes();
+        // the DFS stores arc ids in parent_edge as u32, so a larger graph would
+        // silently index the wrong arc
+        assert!(write <= u32::MAX as usize, "arc ids have to fit into u32");
+        let residual_graph = StaticGraph::from_adjacency_array(node_array, edge_array);
 
         Self {
             residual_graph,
@@ -220,6 +268,7 @@ impl MaxFlow for Dinic {
             finished: false,
             level: Vec::with_capacity(number_of_nodes),
             parents: Vec::with_capacity(number_of_nodes),
+            parent_edge: Vec::with_capacity(number_of_nodes),
             stack: Vec::with_capacity(number_of_nodes),
             dfs_count: 0,
             bfs_count: 0,
@@ -246,8 +295,8 @@ impl MaxFlow for Dinic {
 
         let number_of_nodes = self.residual_graph.number_of_nodes();
         self.parents.resize(number_of_nodes, 0);
+        self.parent_edge.resize(number_of_nodes, 0);
         self.level.resize(number_of_nodes, usize::MAX);
-        self.queue.reserve(number_of_nodes);
 
         let mut flow = 0;
         while self.bfs() {
