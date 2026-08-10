@@ -63,7 +63,6 @@ pub mod top_k;
 pub mod tsplib;
 pub mod unidirectional_dijkstra;
 pub mod union_find;
-pub mod unsafe_slice;
 pub mod vector_tile;
 pub mod wgs84;
 
