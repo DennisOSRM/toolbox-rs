@@ -29,14 +29,24 @@ impl<T: Ord + Clone> Default for StaticGraph<T> {
 
 impl<T: Ord + Copy> StaticGraph<T> {
     // In time O(V+E) check that the following invariants hold:
-    // a) the target node of each edge is smaller than the number of nodes
-    // b) index values for nodes first_edges are non-decreasing, as a node
+    // a) the node array spans the edge array, from zero up to its length. An
+    //    empty node array fails here, as it lacks even the sentinel.
+    // b) the target node of each edge is smaller than the number of nodes
+    // c) index values for nodes first_edges are non-decreasing, as a node
     //    without any outgoing edge shares its offset with the next node
-    // c) the targets within each adjacency block are sorted ascendingly
+    // d) the targets within each adjacency block are sorted ascendingly
     pub fn check_integrity(&self) -> bool {
-        self.edge_array
-            .iter()
-            .all(|edge_entry| (edge_entry.target) < self.number_of_nodes())
+        self.node_array
+            .first()
+            .is_some_and(|entry| entry.first_edge == 0)
+            && self
+                .node_array
+                .last()
+                .is_some_and(|entry| entry.first_edge == self.edge_array.len())
+            && self
+                .edge_array
+                .iter()
+                .all(|edge_entry| (edge_entry.target) < self.number_of_nodes())
             && self
                 .node_array
                 .windows(2)
@@ -245,6 +255,9 @@ mod tests {
             ],
         };
         assert!(!graph.check_integrity());
+
+        // a default constructed graph has no sentinel at all
+        assert!(!StaticGraph::<i32>::default().check_integrity());
     }
 
     #[test]
