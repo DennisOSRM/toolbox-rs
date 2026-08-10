@@ -42,9 +42,15 @@ impl<T: Ord + Copy> StaticGraph<T> {
                 .windows(2)
                 .all(|pair| pair[0].first_edge <= pair[1].first_edge)
             && self.node_range().all(|node| {
-                self.edge_array[self.edge_range(node)]
-                    .windows(2)
-                    .all(|pair| pair[0].target <= pair[1].target)
+                // an offset that points past the edge array is a failed check
+                // and not a reason to panic
+                self.edge_array
+                    .get(self.edge_range(node))
+                    .is_some_and(|block| {
+                        block
+                            .windows(2)
+                            .all(|pair| pair[0].target <= pair[1].target)
+                    })
             })
     }
 
@@ -223,6 +229,22 @@ mod tests {
         let graph = Graph::new(edges);
         assert_eq!(6, graph.number_of_nodes());
         assert_eq!(8, graph.number_of_edges());
+    }
+
+    #[test]
+    fn integrity_check_reports_broken_offsets() {
+        use crate::graph::EdgeArrayEntry;
+        use crate::static_graph::NodeArrayEntry;
+
+        // a single node whose block claims five arcs while there are only two
+        let graph = StaticGraph::<i32> {
+            node_array: vec![NodeArrayEntry::new(0), NodeArrayEntry::new(5)],
+            edge_array: vec![
+                EdgeArrayEntry { target: 0, data: 1 },
+                EdgeArrayEntry { target: 0, data: 1 },
+            ],
+        };
+        assert!(!graph.check_integrity());
     }
 
     #[test]
