@@ -12,7 +12,7 @@ That is the output after nine levels, drawn from the convex hulls the scaffold t
 
 #### Measuring first
 
-Run time is what matters and it is also the hardest thing to measure on a laptop. Repeated runs of the same binary on the same input varied by up to 26 percent here, which is more than most of the individual changes below are worth on their own. Instructions retired, which `/usr/bin/time -l` reports on macOS, varied by less than one percent between the same runs.
+Run time is what matters and it is also the hardest thing to measure. The same binary on the same input does not take the same time twice. Every comparison here was therefore measured more than once, with the before and after runs interleaved, so that whatever else the workstation is doing cannot settle on one side of it. Instructions retired, which `/usr/bin/time -l` reports on macOS, is far steadier from run to run.
 
 So the two numbers do different jobs here. Wall clock says whether the tool got faster. Instructions retired says whether a particular change was the reason, and it is what the individual steps below are quoted in. The two do not move by the same amount, which gets its own section further down.
 
