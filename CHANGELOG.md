@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/DennisOSRM/toolbox-rs/compare/v0.6.0...v0.7.0) - 2026-08-10
+
+### Other
+
+- Remove UnsafeSlice ([#543](https://github.com/DennisOSRM/toolbox-rs/pull/543))
+- Speed up the partitioner and remove its unsafe code ([#542](https://github.com/DennisOSRM/toolbox-rs/pull/542))
+- Bump actions/checkout from 6 to 7 ([#541](https://github.com/DennisOSRM/toolbox-rs/pull/541))
+- Update itertools requirement from 0.14.0 to 0.15.0 ([#540](https://github.com/DennisOSRM/toolbox-rs/pull/540))
+- Update geojson requirement from 0.24.1 to 1.0.0 ([#539](https://github.com/DennisOSRM/toolbox-rs/pull/539))
+- Migrate from FxHash to rustc-hash ([#538](https://github.com/DennisOSRM/toolbox-rs/pull/538))
+- Migrate from bincode to rkyv ([#535](https://github.com/DennisOSRM/toolbox-rs/pull/535))
+- Update rand requirement from 0.9.1 to 0.10.0 ([#537](https://github.com/DennisOSRM/toolbox-rs/pull/537))
+- Bump actions/checkout from 5 to 6 ([#532](https://github.com/DennisOSRM/toolbox-rs/pull/532))
+- Update criterion requirement from 0.7.0 to 0.8.2 ([#536](https://github.com/DennisOSRM/toolbox-rs/pull/536))
+- Bump actions/checkout from 4 to 5 ([#531](https://github.com/DennisOSRM/toolbox-rs/pull/531))
+- Update indicatif requirement from 0.17.11 to 0.18.0 ([#529](https://github.com/DennisOSRM/toolbox-rs/pull/529))
+- Update criterion requirement from 0.6.0 to 0.7.0 ([#530](https://github.com/DennisOSRM/toolbox-rs/pull/530))
+- Improve effeciency of dynamic programming TSP solver ([#528](https://github.com/DennisOSRM/toolbox-rs/pull/528))
+- Compute MST wrt fixed subtour on complete graph ([#527](https://github.com/DennisOSRM/toolbox-rs/pull/527))
+- Add more TSPLIB format support ([#526](https://github.com/DennisOSRM/toolbox-rs/pull/526))
+- Improve documentation on R-tree implementation ([#525](https://github.com/DennisOSRM/toolbox-rs/pull/525))
+- Compute MST for complete graphs via Prim's algorithm ([#524](https://github.com/DennisOSRM/toolbox-rs/pull/524))
+- Update criterion requirement from 0.5.1 to 0.6.0 ([#522](https://github.com/DennisOSRM/toolbox-rs/pull/522))
+
 ## [0.6.0](https://github.com/DennisOSRM/toolbox-rs/compare/v0.5.0...v0.6.0) - 2025-05-04
 
 ### Other
