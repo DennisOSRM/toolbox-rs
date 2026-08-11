@@ -113,7 +113,7 @@ Neither effect is a reason to stop counting instructions. They are the reason to
 | peak memory | 10.26 GB | 11.02 GB | 7.37 GB | 7.05 GB |
 | cut edges | 2,667,702 | 2,667,614 | 1,959,596 | 1,959,521 |
 
-Run time falls by just under a third on both networks while the instruction count falls by about half, and the cut gets slightly smaller on both. Peak memory moves in opposite directions, and the input format explains that. The old code always duplicated the edge list to build the reverse arcs. The DIMACS file lists both directions of every road, so most of those duplicates merged away again during deduplication. The DDSG file lists each arc once, so they did not.
+Run time falls by just under a third on both networks while the instruction count falls by about half, and the cut gets slightly smaller on both. Peak memory is a wash. It went up 7 percent on the one network and down 4 percent on the other, and repeated runs of the unchanged binary already spread over 11 percent on the USA input, so neither direction is worth reading as a result.
 
 The work is in [#542](https://github.com/DennisOSRM/toolbox-rs/pull/542).
 
