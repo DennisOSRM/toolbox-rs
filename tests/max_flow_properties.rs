@@ -18,6 +18,7 @@ use toolbox_rs::{
     edmonds_karp::EdmondsKarp,
     ford_fulkerson::FordFulkerson,
     graph::NodeID,
+    incremental_dinic::IncrementalDinic,
     max_flow::{MaxFlow, ResidualEdgeData},
 };
 
@@ -110,7 +111,20 @@ fn solve<T: MaxFlow + Send + 'static>(
             worker.join().expect("solver thread panicked");
             result
         }
-        Err(_) => panic!(
+        // a panicking worker drops the sender, which looks like a timeout unless
+        // the two are told apart
+        Err(mpsc::RecvTimeoutError::Disconnected) => match worker.join() {
+            Err(panic) => {
+                let message = panic
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                    .unwrap_or_else(|| "no message".to_string());
+                panic!("{case}/{solver_name}: solver panicked: {message}")
+            }
+            Ok(()) => panic!("{case}/{solver_name}: solver produced no result"),
+        },
+        Err(mpsc::RecvTimeoutError::Timeout) => panic!(
             "{case}/{solver_name}: did not finish within {SOLVER_TIMEOUT:?}, \
              the solver is not converging"
         ),
@@ -124,6 +138,8 @@ fn check(case: &str, edges: &Edges, source: NodeID, target: NodeID, expected: Op
     let (karp_flow, karp_cut) = solve::<EdmondsKarp>(case, "Edmonds-Karp", edges, source, target);
     let (fulkerson_flow, fulkerson_cut) =
         solve::<FordFulkerson>(case, "Ford-Fulkerson", edges, source, target);
+    let (incremental_flow, incremental_cut) =
+        solve::<IncrementalDinic>(case, "IncrementalDinic", edges, source, target);
 
     assert_eq!(
         dinic_flow, karp_flow,
@@ -132,6 +148,10 @@ fn check(case: &str, edges: &Edges, source: NodeID, target: NodeID, expected: Op
     assert_eq!(
         dinic_flow, fulkerson_flow,
         "{case}: Dinic says {dinic_flow}, Ford-Fulkerson says {fulkerson_flow}"
+    );
+    assert_eq!(
+        dinic_flow, incremental_flow,
+        "{case}: Dinic says {dinic_flow}, IncrementalDinic says {incremental_flow}"
     );
     if let Some(expected) = expected {
         assert_eq!(dinic_flow, expected, "{case}: known flow is {expected}");
@@ -155,6 +175,16 @@ fn check(case: &str, edges: &Edges, source: NodeID, target: NodeID, expected: Op
         source,
         target,
         fulkerson_flow,
+    );
+
+    assert_valid_min_cut(
+        case,
+        "IncrementalDinic",
+        edges,
+        &incremental_cut,
+        source,
+        target,
+        incremental_flow,
     );
 
     // the partitioner compares partitions between runs, so a solver that is

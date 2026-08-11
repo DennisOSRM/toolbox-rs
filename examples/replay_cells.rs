@@ -8,7 +8,9 @@
 //! numbers have to stay the same across solver changes, because the minimum cut
 //! value of a fixed graph is unique even when the cut itself is not.
 use std::time::Instant;
-use toolbox_rs::{dinic::Dinic, max_flow::MaxFlow, solver_stats::read_cell};
+use toolbox_rs::{
+    dinic::Dinic, incremental_dinic::IncrementalDinic, max_flow::MaxFlow, solver_stats::read_cell,
+};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -16,6 +18,8 @@ fn main() {
         .next()
         .expect("usage: replay_cells <directory> [repeats]");
     let repeats: usize = args.next().map_or(1, |r| r.parse().expect("repeats"));
+    // which solver to replay with, so the two can be compared on the same corpus
+    let solver_name = std::env::var("TOOLBOX_SOLVER").unwrap_or_else(|_| "dinic".to_string());
 
     let mut cells: Vec<_> = std::fs::read_dir(&directory)
         .expect("could not read corpus directory")
@@ -42,16 +46,29 @@ fn main() {
             + 1;
         for _ in 0..repeats {
             let start = Instant::now();
-            let mut solver = Dinic::from_edge_list(edges.clone(), source, target);
-            solver.run();
-            let flow = solver.max_flow().expect("solver did not run");
+            let flow = match solver_name.as_str() {
+                "incremental" => {
+                    let mut solver =
+                        IncrementalDinic::from_edge_list(edges.clone(), source, target);
+                    solver.run();
+                    solver.max_flow().expect("solver did not run")
+                }
+                _ => {
+                    let mut solver = Dinic::from_edge_list(edges.clone(), source, target);
+                    solver.run();
+                    solver.max_flow().expect("solver did not run")
+                }
+            };
             let elapsed = start.elapsed().as_secs_f64() * 1000.;
             total_flow += flow as i64;
             total_millis += elapsed;
             println!("{arcs:>12}  {nodes:>10}  {flow:>8}  {elapsed:>10.1}");
         }
     }
-    println!("cells {}, repeats {repeats}", cells.len());
+    println!(
+        "solver {solver_name}, cells {}, repeats {repeats}",
+        cells.len()
+    );
     println!("flow checksum {total_flow}");
     println!("total {total_millis:.1} ms");
 }
