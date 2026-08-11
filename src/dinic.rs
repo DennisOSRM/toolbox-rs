@@ -34,6 +34,9 @@ pub struct Dinic {
     stack: Vec<(NodeID, i32)>,
     dfs_count: usize,
     bfs_count: usize,
+    /// issue #545 phase 0: augmenting paths found, counted separately from
+    /// dfs_count, which conflates phases and paths
+    augmentations: u64,
     queue: VecDeque<NodeID>,
     source: NodeID,
     target: NodeID,
@@ -141,6 +144,7 @@ impl Dinic {
                         }
                     }
                     blocking_flow += flow;
+                    self.augmentations += 1;
                     debug!(" stack len before: {before}, after: {}", self.stack.len());
 
                     // make target reachable again
@@ -272,6 +276,7 @@ impl MaxFlow for Dinic {
             stack: Vec::with_capacity(number_of_nodes),
             dfs_count: 0,
             bfs_count: 0,
+            augmentations: 0,
             queue: VecDeque::with_capacity(number_of_nodes),
             source,
             target,
@@ -299,13 +304,22 @@ impl MaxFlow for Dinic {
         self.level.resize(number_of_nodes, usize::MAX);
 
         let mut flow = 0;
+        let mut phases = 0;
         while self.bfs() {
+            phases += 1;
             flow += self.dfs();
             if let Some(bound) = &self.bound {
                 // break early if an upper bound is known to the computation
                 if flow > bound.load(Ordering::Relaxed) {
                     debug!("aborting max flow computation at {flow}");
                     self.max_flow = flow;
+                    crate::solver_stats::record(
+                        phases,
+                        self.augmentations,
+                        true,
+                        number_of_nodes,
+                        self.residual_graph.number_of_edges(),
+                    );
                     return;
                 }
             }
@@ -315,6 +329,13 @@ impl MaxFlow for Dinic {
         }
         self.max_flow = flow;
         self.finished = true;
+        crate::solver_stats::record(
+            phases,
+            self.augmentations,
+            false,
+            number_of_nodes,
+            self.residual_graph.number_of_edges(),
+        );
     }
 
     fn max_flow(&self) -> Result<i32, String> {

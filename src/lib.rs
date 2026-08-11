@@ -54,6 +54,7 @@ pub mod rdx_sort;
 pub mod renumbering_table;
 pub mod run_iterator;
 pub mod single_linked_list;
+pub mod solver_stats;
 pub mod space_filling_curve;
 pub mod static_graph;
 pub mod tabulation_hash;

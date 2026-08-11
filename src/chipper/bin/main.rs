@@ -204,5 +204,6 @@ fn main() {
     }
 
     write_results(&args, &partition_ids_vec, &coordinates, &input_edges);
+    toolbox_rs::solver_stats::report();
     info!("done.");
 }
