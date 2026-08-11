@@ -169,6 +169,7 @@ impl MaxFlow for Dinic {
         target: usize,
     ) -> Self {
         debug_assert!(!edge_list.is_empty());
+        crate::solver_stats::maybe_dump(&edge_list, source, target);
 
         // The residual graph holds a reverse arc of zero capacity for each input
         // arc. Instead of materializing those and then sorting 2|E| entries, the

@@ -3,7 +3,10 @@
 //! partitioning run does not have to emit a log line per solver invocation.
 //! This module is not part of the library's purpose and gets removed once the
 //! measurements are recorded.
-use std::sync::atomic::{AtomicU64, Ordering};
+use crate::edge::InputEdge;
+use crate::max_flow::ResidualEdgeData;
+use std::io::Write;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// phase counts are bucketed exactly up to this many, everything above lands
 /// in the last bucket
@@ -154,4 +157,58 @@ pub fn report() {
             println!("  {label:>3}: {count}");
         }
     }
+}
+
+/// One slot per power of two of (V + E), so that a dump captures cells across
+/// the whole size range rather than a million copies of the smallest one.
+const SIZE_BUCKETS: usize = 28;
+static DUMPED: [AtomicBool; SIZE_BUCKETS] = [const { AtomicBool::new(false) }; SIZE_BUCKETS];
+
+/// Writes the first solver input seen in each size bucket to `TOOLBOX_DUMP_CELLS`,
+/// building a corpus of real inputs that can be replayed without running the
+/// whole partitioner. Temporary, for the phase 2 benchmark of issue #545.
+///
+/// Format is little endian: edge count as u64, source and target as u32, then
+/// one u32 pair per arc. Capacities are not stored because the partitioner only
+/// ever uses unit capacities, which is checked here.
+pub fn maybe_dump(edges: &[InputEdge<ResidualEdgeData>], source: usize, target: usize) {
+    let Ok(directory) = std::env::var("TOOLBOX_DUMP_CELLS") else {
+        return;
+    };
+    let bucket = (usize::BITS - edges.len().leading_zeros()) as usize;
+    if bucket >= SIZE_BUCKETS || DUMPED[bucket].swap(true, Ordering::Relaxed) {
+        return;
+    }
+
+    let mut buffer = Vec::with_capacity(16 + 8 * edges.len());
+    buffer.extend_from_slice(&(edges.len() as u64).to_le_bytes());
+    buffer.extend_from_slice(&(source as u32).to_le_bytes());
+    buffer.extend_from_slice(&(target as u32).to_le_bytes());
+    for edge in edges {
+        debug_assert_eq!(edge.data.capacity, 1, "the corpus assumes unit capacities");
+        buffer.extend_from_slice(&(edge.source as u32).to_le_bytes());
+        buffer.extend_from_slice(&(edge.target as u32).to_le_bytes());
+    }
+    let path = format!("{directory}/cell_{:02}_{}.bin", bucket, edges.len());
+    if let Ok(mut file) = std::fs::File::create(&path) {
+        let _ = file.write_all(&buffer);
+    }
+}
+
+/// Reads a corpus file written by [`maybe_dump`].
+pub fn read_cell(path: &std::path::Path) -> (Vec<InputEdge<ResidualEdgeData>>, usize, usize) {
+    let bytes = std::fs::read(path).expect("could not read cell file");
+    let count = u64::from_le_bytes(bytes[0..8].try_into().unwrap()) as usize;
+    let source = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
+    let target = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+    let mut edges = Vec::with_capacity(count);
+    for i in 0..count {
+        let at = 16 + i * 8;
+        edges.push(InputEdge::new(
+            u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize,
+            u32::from_le_bytes(bytes[at + 4..at + 8].try_into().unwrap()) as usize,
+            ResidualEdgeData::new(1),
+        ));
+    }
+    (edges, source, target)
 }
