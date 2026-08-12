@@ -107,6 +107,21 @@ impl Dinic {
                 self.parent_edge[v] = edge as u32;
                 let flow = min(flow, available_capacity);
                 if v == self.target {
+                    // The bottleneck that the stack carries is an upper bound
+                    // rather than the capacity of the path: an earlier
+                    // augmentation of this very DFS may have taken capacity off
+                    // the prefix that both paths share. Walk the path once to
+                    // find what it has left before assigning it, or the arcs of
+                    // the prefix end up oversubscribed.
+                    let mut flow = flow; // mutable shadow
+                    let mut node = v;
+                    while self.parents[node] != node {
+                        let arc = self.parent_edge[node] as EdgeID;
+                        flow = min(flow, self.residual_graph.data(arc).capacity);
+                        node = self.parents[node];
+                    }
+                    debug_assert!(flow > 0, "the augmenting path carries no flow");
+
                     // reached a target. Unpack path in reverse order, assign flow
                     let mut v = v; // mutable shadow
                     let mut closest_tail = u;
@@ -359,10 +374,169 @@ mod tests {
     use crate::dinic::Dinic;
     use crate::edge::EdgeData;
     use crate::edge::InputEdge;
+    use crate::edmonds_karp::EdmondsKarp;
     use crate::max_flow::MaxFlow;
     use crate::max_flow::ResidualEdgeData;
     use bitvec::bits;
     use bitvec::prelude::Lsb0;
+    use rand::{RngExt, SeedableRng, prelude::StdRng};
+
+    /// A random layered graph. Its depth forces the solver through a number of
+    /// phases, and the arcs that skip and lead back a layer keep the layer graph
+    /// from being the layering the graph was built with.
+    fn layered_graph(
+        rng: &mut StdRng,
+        width: usize,
+        depth: usize,
+    ) -> (Vec<InputEdge<ResidualEdgeData>>, usize, usize) {
+        let source = 0;
+        let target = 1 + width * depth;
+        let node = |layer: usize, index: usize| 1 + layer * width + index;
+
+        let mut edges = Vec::new();
+        for index in 0..width {
+            edges.push(InputEdge::new(
+                source,
+                node(0, index),
+                ResidualEdgeData::new(rng.random_range(1..=8)),
+            ));
+            edges.push(InputEdge::new(
+                node(depth - 1, index),
+                target,
+                ResidualEdgeData::new(rng.random_range(1..=8)),
+            ));
+        }
+        for layer in 0..depth - 1 {
+            for index in 0..width {
+                for other in 0..width {
+                    if rng.random_range(0..100) < 40 {
+                        edges.push(InputEdge::new(
+                            node(layer, index),
+                            node(layer + 1, other),
+                            ResidualEdgeData::new(rng.random_range(1..=5)),
+                        ));
+                    }
+                }
+                if layer + 2 < depth && rng.random_range(0..100) < 20 {
+                    edges.push(InputEdge::new(
+                        node(layer, index),
+                        node(layer + 2, rng.random_range(0..width)),
+                        ResidualEdgeData::new(rng.random_range(1..=5)),
+                    ));
+                }
+                if layer > 0 && rng.random_range(0..100) < 20 {
+                    edges.push(InputEdge::new(
+                        node(layer, index),
+                        node(layer - 1, rng.random_range(0..width)),
+                        ResidualEdgeData::new(rng.random_range(1..=5)),
+                    ));
+                }
+            }
+        }
+        (edges, source, target)
+    }
+
+    /// The capacity of the cut that `assignment` induces on `edges`.
+    fn cut_capacity(
+        edges: &[InputEdge<ResidualEdgeData>],
+        assignment: &bitvec::vec::BitVec,
+    ) -> i32 {
+        edges
+            .iter()
+            .filter(|edge| assignment[edge.source] && !assignment[edge.target])
+            .map(|edge| edge.data.capacity)
+            .sum()
+    }
+
+    /// Capacities above one are what makes the bottleneck of an augmenting path
+    /// a quantity of its own, and a solver that hands a path more flow than it
+    /// has left overstates the result. The small graphs below all carry a
+    /// bottleneck of one and cannot tell.
+    #[test]
+    fn max_flow_matches_edmonds_karp_on_random_graphs() {
+        let mut rng = StdRng::seed_from_u64(0x5EED);
+        for round in 0..25 {
+            let (edges, source, target) = layered_graph(&mut rng, 4 + round % 5, 4 + round % 7);
+
+            let mut reference = EdmondsKarp::from_edge_list(edges.clone(), source, target);
+            reference.run();
+            let expected = reference
+                .max_flow()
+                .expect("max flow computation did not run");
+
+            let mut solver = Dinic::from_edge_list(edges.clone(), source, target);
+            solver.run();
+            let max_flow = solver.max_flow().expect("max flow computation did not run");
+
+            assert_eq!(max_flow, expected, "round {round}");
+
+            // the assignment has to be a minimum cut, i.e. one of capacity equal
+            // to the value of the flow
+            let assignment = solver
+                .assignment(source)
+                .expect("assignment computation did not run");
+            assert!(assignment[source], "round {round}");
+            assert!(!assignment[target], "round {round}");
+            assert_eq!(cut_capacity(&edges, &assignment), max_flow, "round {round}");
+        }
+    }
+
+    /// The shape that chipper hands to the solver: a grid whose extreme rows are
+    /// contracted into the source and the target, which turns the arcs of those
+    /// rows into arcs of a capacity well above one.
+    #[test]
+    fn max_flow_matches_edmonds_karp_on_contracted_grids() {
+        for (width, height) in [(6, 8), (9, 12), (13, 7)] {
+            let contracted = height / 4;
+            let id = |row: usize, column: usize| {
+                if row < contracted {
+                    0
+                } else if row >= height - contracted {
+                    1
+                } else {
+                    2 + (row - contracted) * width + column
+                }
+            };
+
+            let mut edges = Vec::new();
+            let mut push = |s: usize, t: usize| {
+                if s != t {
+                    edges.push(InputEdge::new(s, t, ResidualEdgeData::new(1)));
+                    edges.push(InputEdge::new(t, s, ResidualEdgeData::new(1)));
+                }
+            };
+            for row in 0..height {
+                for column in 0..width {
+                    if column + 1 < width {
+                        push(id(row, column), id(row, column + 1));
+                    }
+                    if row + 1 < height {
+                        push(id(row, column), id(row + 1, column));
+                    }
+                }
+            }
+
+            let mut reference = EdmondsKarp::from_edge_list(edges.clone(), 0, 1);
+            reference.run();
+            let expected = reference
+                .max_flow()
+                .expect("max flow computation did not run");
+
+            let mut solver = Dinic::from_edge_list(edges.clone(), 0, 1);
+            solver.run();
+            let max_flow = solver.max_flow().expect("max flow computation did not run");
+
+            assert_eq!(max_flow, expected, "grid {width}x{height}");
+            let assignment = solver
+                .assignment(0)
+                .expect("assignment computation did not run");
+            assert_eq!(
+                cut_capacity(&edges, &assignment),
+                max_flow,
+                "grid {width}x{height}"
+            );
+        }
+    }
 
     #[test]
     fn max_flow_clr() {
