@@ -27,6 +27,7 @@ pub mod geometry;
 pub mod graph;
 pub mod great_circle;
 pub mod huffman_code;
+pub mod ibfs;
 pub mod incremental_dinic;
 pub mod inertial_flow;
 pub mod io;

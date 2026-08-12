@@ -18,6 +18,7 @@ use toolbox_rs::{
     edmonds_karp::EdmondsKarp,
     ford_fulkerson::FordFulkerson,
     graph::NodeID,
+    ibfs::Ibfs,
     incremental_dinic::IncrementalDinic,
     max_flow::{MaxFlow, ResidualEdgeData},
 };
@@ -140,6 +141,7 @@ fn check(case: &str, edges: &Edges, source: NodeID, target: NodeID, expected: Op
         solve::<FordFulkerson>(case, "Ford-Fulkerson", edges, source, target);
     let (incremental_flow, incremental_cut) =
         solve::<IncrementalDinic>(case, "IncrementalDinic", edges, source, target);
+    let (ibfs_flow, ibfs_cut) = solve::<Ibfs>(case, "Ibfs", edges, source, target);
 
     assert_eq!(
         dinic_flow, karp_flow,
@@ -152,6 +154,10 @@ fn check(case: &str, edges: &Edges, source: NodeID, target: NodeID, expected: Op
     assert_eq!(
         dinic_flow, incremental_flow,
         "{case}: Dinic says {dinic_flow}, IncrementalDinic says {incremental_flow}"
+    );
+    assert_eq!(
+        dinic_flow, ibfs_flow,
+        "{case}: Dinic says {dinic_flow}, Ibfs says {ibfs_flow}"
     );
     if let Some(expected) = expected {
         assert_eq!(dinic_flow, expected, "{case}: known flow is {expected}");
@@ -186,6 +192,8 @@ fn check(case: &str, edges: &Edges, source: NodeID, target: NodeID, expected: Op
         target,
         incremental_flow,
     );
+
+    assert_valid_min_cut(case, "Ibfs", edges, &ibfs_cut, source, target, ibfs_flow);
 
     // the partitioner compares partitions between runs, so a solver that is
     // not reproducible would make every later measurement meaningless

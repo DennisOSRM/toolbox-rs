@@ -9,7 +9,8 @@
 //! value of a fixed graph is unique even when the cut itself is not.
 use std::time::Instant;
 use toolbox_rs::{
-    dinic::Dinic, incremental_dinic::IncrementalDinic, max_flow::MaxFlow, solver_stats::read_cell,
+    dinic::Dinic, ibfs::Ibfs, incremental_dinic::IncrementalDinic, max_flow::MaxFlow,
+    solver_stats::read_cell,
 };
 
 fn main() {
@@ -51,6 +52,11 @@ fn main() {
                 "incremental" => {
                     let mut solver =
                         IncrementalDinic::from_edge_list(edges.clone(), source, target);
+                    solver.run();
+                    solver.max_flow().expect("solver did not run")
+                }
+                "ibfs" => {
+                    let mut solver = Ibfs::from_edge_list(edges.clone(), source, target);
                     solver.run();
                     solver.max_flow().expect("solver did not run")
                 }
