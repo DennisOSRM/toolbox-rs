@@ -13,6 +13,7 @@ use toolbox_rs::{
 };
 
 fn main() {
+    env_logger::init();
     let mut args = std::env::args().skip(1);
     let directory = args
         .next()

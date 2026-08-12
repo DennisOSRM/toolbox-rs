@@ -1,24 +1,24 @@
-//! A max-flow solver that repairs its distance labels locally instead of
-//! rebuilding them with a full BFS every phase. See issue #545.
+//! A max-flow solver that relabels lazily instead of rebuilding the level graph
+//! with a full BFS every phase. See issue #545.
 //!
-//! `level[v]` is the exact residual distance from `v` to the target. The
-//! enabling fact is the monotonicity lemma: augmenting only along level
-//! respecting paths never decreases a residual distance, because saturating an
-//! admissible arc removes forward capacity and adds a back arc from level d+1
-//! to level d, which cannot create a shorter path. Distances therefore only
-//! rise, the level graph evolves decrementally, and exact labels can be
-//! maintained with Even-Shiloach style repair.
+//! The labels are not distances. They are a valid labelling in the push-relabel
+//! sense: `level[target] == 0`, and `level[u] <= level[v] + 1` for every arc
+//! `u -> v` that still has residual capacity. Any such labelling is a lower
+//! bound on the true residual distance, which is all that is needed:
 //!
-//! Two consequences shape the code:
+//! * an arc may be walked only if it strictly lowers the label, so a walk cannot
+//!   cycle and has to end at the target
+//! * once `level[source]` reaches the node count no augmenting path can exist,
+//!   because a path has at most `n - 1` arcs and each one lowers the label by at
+//!   least one
 //!
-//! * With exact labels, a walk that always steps to a neighbour one level lower
-//!   is guaranteed to reach the target, so the augmenting search never
-//!   backtracks. Classic Dinic needs a backtracking DFS only because its labels
-//!   are a filter rather than exact distances.
-//! * Repair needs the residual capacity of the arcs entering an orphan. Every
-//!   arc record already caches the capacity of its reverse arc, so that is a
-//!   sequential scan of the orphan's own adjacency block with no pointer
-//!   chasing.
+//! Dropping exactness is what makes the repair cheap. Raising a label can only
+//! give the arcs coming into that node more slack, never less, so a node that
+//! runs out of arcs is relabelled on its own with one scan of its adjacency and
+//! nothing cascades. An earlier version of this file maintained exact distances
+//! and had to propagate every change, which let mutually supporting nodes raise
+//! each other one level at a time and made it thousands of times slower than the
+//! solver it was meant to replace.
 use crate::{
     edge::InputEdge,
     graph::{EdgeID, Graph, NodeID},
@@ -35,44 +35,46 @@ use std::{
     },
 };
 
-/// distance of a node that cannot reach the target any more
-const UNREACHABLE: u32 = u32::MAX;
-
 pub struct IncrementalDinic {
     residual_graph: StaticGraph<ResidualArcData>,
-    /// exact residual distance to the target
+    /// a valid labelling, not a distance. Reaching `horizon` means the target is
+    /// out of reach.
     level: Vec<u32>,
     /// next arc of a node that may still be admissible. Everything before it is
-    /// known to be inadmissible and, while the node keeps its level, to stay so.
+    /// inadmissible and stays so until the node is relabelled.
     current_arc: Vec<u32>,
-    /// nodes waiting to be relabelled, bucketed by the level they had when they
-    /// were queued, so that repair proceeds in increasing distance order
-    buckets: Vec<Vec<NodeID>>,
-    queued: BitVec,
-    /// the augmenting path currently being walked, as arc ids
+    /// how many nodes carry each label, so that an empty label can be spotted
+    count: Vec<u32>,
+    /// arcs of the walk currently being extended, from the source outwards
     path: Vec<EdgeID>,
     queue: VecDeque<NodeID>,
+    horizon: u32,
     max_flow: i32,
     finished: bool,
     relabels: usize,
+    gaps: usize,
     source: NodeID,
     target: NodeID,
     bound: Option<Arc<AtomicI32>>,
 }
 
 impl IncrementalDinic {
-    /// One full sweep, only ever run once, to establish exact distances.
+    /// One full sweep, run once, to start from the tightest valid labelling
+    /// there is.
     fn initial_bfs(&mut self) {
-        self.level.fill(UNREACHABLE);
+        self.level.fill(self.horizon);
         self.level[self.target] = 0;
         self.queue.clear();
         self.queue.push_back(self.target);
 
         while let Some(u) = self.queue.pop_front() {
             let next = self.level[u] + 1;
+            if next >= self.horizon {
+                continue;
+            }
             for edge in self.residual_graph.edge_range(u) {
                 let v = self.residual_graph.target(edge);
-                if self.level[v] != UNREACHABLE {
+                if self.level[v] != self.horizon {
                     continue;
                 }
                 // the arc that matters is v -> u, whose capacity this record caches
@@ -85,23 +87,15 @@ impl IncrementalDinic {
         }
     }
 
-    /// True if the arc may be used on a shortest path out of `u`.
-    fn is_admissible(&self, u: NodeID, edge: EdgeID) -> bool {
-        let data = self.residual_graph.data(edge);
-        if data.capacity < 1 {
-            return false;
-        }
-        let v = self.residual_graph.target(edge);
-        self.level[u] != UNREACHABLE && self.level[v] + 1 == self.level[u]
-    }
-
-    /// Advances the current arc of `u` to the next admissible one and returns
-    /// it, or `None` if `u` has none left and has to be relabelled.
+    /// Advances the current arc of `u` to the next one that has capacity and
+    /// leads to a strictly lower label.
     fn advance(&mut self, u: NodeID) -> Option<EdgeID> {
         let end = self.residual_graph.end_edges(u);
         let mut arc = self.current_arc[u] as EdgeID;
+        let level = self.level[u];
         while arc < end {
-            if self.is_admissible(u, arc) {
+            let entry = self.residual_graph.data(arc);
+            if entry.capacity > 0 && self.level[self.residual_graph.target(arc)] < level {
                 self.current_arc[u] = arc as u32;
                 return Some(arc);
             }
@@ -111,31 +105,65 @@ impl IncrementalDinic {
         None
     }
 
-    /// Walks from the source to the target along admissible arcs. With exact
-    /// labels every node on the way has an admissible arc, so this only fails
-    /// if the source itself has none left.
-    fn find_path(&mut self) -> bool {
-        self.path.clear();
-        let mut u = self.source;
-        while u != self.target {
-            let Some(arc) = self.advance(u) else {
-                // only the node the walk is standing on can be short of arcs,
-                // and by exactness that node has to be the source
-                debug_assert_eq!(
-                    u, self.source,
-                    "an interior node ran out of admissible arcs, so the labels are not exact"
-                );
-                return false;
-            };
-            self.path.push(arc);
-            u = self.residual_graph.target(arc);
+    /// Raises the label of a node that has no admissible arc left, to one more
+    /// than the lowest label it can still reach. That restores an admissible arc
+    /// unless the node can reach nothing at all, and it cannot invalidate the
+    /// labelling anywhere else, because arcs into `u` only gain slack when
+    /// `level[u]` grows.
+    fn relabel(&mut self, u: NodeID) {
+        let mut best = self.horizon;
+        for arc in self.residual_graph.edge_range(u) {
+            if self.residual_graph.data(arc).capacity < 1 {
+                continue;
+            }
+            let neighbour = self.residual_graph.target(arc);
+            // a self loop leads nowhere and would raise the label for ever
+            if neighbour == u {
+                continue;
+            }
+            let candidate = self.level[neighbour];
+            if candidate < best {
+                best = candidate;
+            }
         }
-        true
+        let raised = best.saturating_add(1).min(self.horizon);
+        let old = self.level[u];
+        debug_assert!(raised > old, "a label must never fall");
+        self.count[old as usize] -= 1;
+        if raised < self.horizon {
+            self.count[raised as usize] += 1;
+        }
+        self.level[u] = raised;
+        self.current_arc[u] = self.residual_graph.begin_edges(u) as u32;
+        self.relabels += 1;
+
+        // If no node carries the label `old` any more, then nothing above it can
+        // reach the target: a residual path drops the label by at most one per
+        // arc, so it would have to pass through a node labelled `old`. Those
+        // nodes can go straight to the horizon instead of climbing there one
+        // step at a time, which is the difference between this terminating in
+        // milliseconds and in minutes.
+        if old > 0 && old < self.horizon && self.count[old as usize] == 0 {
+            self.apply_gap(old);
+        }
     }
 
-    /// Pushes flow along the path found by [`find_path`] and returns its value.
-    /// Saturated arcs leave their tail without a way down, which makes it an
-    /// orphan.
+    /// Retires every node above an empty label.
+    fn apply_gap(&mut self, gap: u32) {
+        self.gaps += 1;
+        for node in 0..self.level.len() {
+            let level = self.level[node];
+            if level > gap && level < self.horizon {
+                self.count[level as usize] -= 1;
+                self.level[node] = self.horizon;
+                self.current_arc[node] = self.residual_graph.begin_edges(node) as u32;
+            }
+        }
+        // the walk may have been standing on a node that has just retired
+        self.path.clear();
+    }
+
+    /// Pushes flow along the walked path and returns its value.
     fn augment(&mut self) -> i32 {
         let flow = self
             .path
@@ -153,7 +181,6 @@ impl IncrementalDinic {
             let forward = self.residual_graph.data_mut(arc);
             forward.capacity -= flow;
             forward.reverse_capacity += flow;
-            let saturated = forward.capacity == 0;
 
             let partner = self
                 .residual_graph
@@ -163,114 +190,73 @@ impl IncrementalDinic {
             backward.capacity += flow;
             backward.reverse_capacity -= flow;
 
-            if saturated && self.advance(tail).is_none() {
-                self.enqueue(tail);
-            }
             tail = head;
         }
         flow
     }
 
-    fn enqueue(&mut self, node: NodeID) {
-        if node == self.target || self.queued[node] {
-            return;
+    /// The node the walk currently stands on.
+    fn head_of_walk(&self) -> NodeID {
+        match self.path.last() {
+            Some(arc) => self.residual_graph.target(*arc),
+            None => self.source,
         }
-        let level = self.level[node];
-        if level == UNREACHABLE {
-            return;
-        }
-        let level = level as usize;
-        if self.buckets.len() <= level {
-            self.buckets.resize(level + 1, Vec::new());
-        }
-        self.buckets[level].push(node);
-        self.queued.set(node, true);
     }
 
-    /// Restores exact labels after an augmentation.
-    ///
-    /// Orphans are processed in increasing order of their old level, so a node
-    /// is relabelled only after everything it could depend on is already
-    /// correct. A node whose recomputed level is unchanged ends the cascade.
-    fn repair(&mut self) {
-        let horizon = self.residual_graph.number_of_nodes() as u32;
-        let mut level = 0;
-        while level < self.buckets.len() {
-            while let Some(u) = self.buckets[level].pop() {
-                self.queued.set(u, false);
-                let old = self.level[u];
-                if old as usize != level {
-                    // already relabelled through a shorter route, it will be
-                    // picked up again from its new bucket
+    /// Cuts the walk back to the tail of the arc closest to the source that the
+    /// last augmentation saturated. Everything before that is still usable.
+    fn retreat_past_saturated(&mut self) {
+        let first_saturated = self
+            .path
+            .iter()
+            .position(|arc| self.residual_graph.data(*arc).capacity == 0);
+        match first_saturated {
+            Some(index) => self.path.truncate(index),
+            None => self.path.clear(),
+        }
+    }
+
+    /// Checks the labelling rather than the distances, since exactness is no
+    /// longer the contract. Too slow to ship, right for the property tests.
+    #[cfg(debug_assertions)]
+    fn assert_valid_labelling(&self, when: &str) {
+        assert_eq!(self.level[self.target], 0, "{when}: the target label moved");
+        for u in self.residual_graph.node_range() {
+            for arc in self.residual_graph.edge_range(u) {
+                if self.residual_graph.data(arc).capacity < 1 {
                     continue;
                 }
+                let v = self.residual_graph.target(arc);
+                assert!(
+                    self.level[u] <= self.level[v].saturating_add(1),
+                    "{when}: arc {u} -> {v} has residual capacity but its labels are \
+                     {} and {}, which breaks the labelling",
+                    self.level[u],
+                    self.level[v]
+                );
+            }
+        }
+    }
 
-                let mut best = UNREACHABLE;
-                for arc in self.residual_graph.edge_range(u) {
-                    if self.residual_graph.data(arc).capacity < 1 {
-                        continue;
-                    }
-                    let neighbour = self.residual_graph.target(arc);
-                    // a self loop offers no way towards the target, and taking
-                    // it as support would raise the level by one forever
-                    if neighbour == u {
-                        continue;
-                    }
-                    let candidate = self.level[neighbour];
-                    if candidate < best {
-                        best = candidate;
-                    }
-                }
-                // A residual distance can never exceed n - 1, so anything past
-                // that means the target is out of reach. Without this cap two
-                // nodes whose only remaining arcs point at each other keep
-                // raising one another by one for ever.
-                let new = if best == UNREACHABLE || best + 1 >= horizon {
-                    UNREACHABLE
-                } else {
-                    best + 1
-                };
-                if new == old {
+    /// At the end there must be no residual path from source to target, which is
+    /// the property the flow value rests on.
+    #[cfg(debug_assertions)]
+    fn assert_no_residual_path(&self) {
+        let mut seen: BitVec = BitVec::repeat(false, self.residual_graph.number_of_nodes());
+        let mut stack = vec![self.source];
+        seen.set(self.source, true);
+        while let Some(u) = stack.pop() {
+            for arc in self.residual_graph.edge_range(u) {
+                if self.residual_graph.data(arc).capacity < 1 {
                     continue;
                 }
-                debug_assert!(new > old, "a distance decreased, which breaks monotonicity");
-                self.level[u] = new;
-                self.relabels += 1;
-                // the node may use a different arc now, and the arcs it skipped
-                // were skipped against its old level
-                self.current_arc[u] = self.residual_graph.begin_edges(u) as u32;
-
-                // whoever reached the target through u at the old distance has
-                // to be checked. The record in u's own block caches the capacity
-                // of the arc coming in, so this is one sequential scan.
-                for arc in self.residual_graph.edge_range(u) {
-                    if self.residual_graph.data(arc).reverse_capacity < 1 {
-                        continue;
-                    }
-                    let neighbour = self.residual_graph.target(arc);
-                    if neighbour != u && self.level[neighbour] == old + 1 {
-                        self.enqueue(neighbour);
-                    }
+                let v = self.residual_graph.target(arc);
+                assert_ne!(v, self.target, "an augmenting path was left behind");
+                if !seen[v] {
+                    seen.set(v, true);
+                    stack.push(v);
                 }
             }
-            level += 1;
-        }
-        self.buckets.clear();
-    }
-
-    /// Recomputes the labels from scratch and compares. Far too slow to ship,
-    /// exactly right for the property tests, and the fastest way to find the
-    /// operation that broke an invariant rather than the run that failed.
-    #[cfg(debug_assertions)]
-    fn assert_levels_exact(&mut self, when: &str) {
-        let maintained = self.level.clone();
-        self.initial_bfs();
-        for (node, kept) in maintained.iter().enumerate() {
-            assert_eq!(
-                *kept, self.level[node],
-                "{when}: level of node {node} is {kept} but the exact distance is {}",
-                self.level[node]
-            );
         }
     }
 }
@@ -287,13 +273,14 @@ impl MaxFlow for IncrementalDinic {
             residual_graph,
             level: Vec::new(),
             current_arc: Vec::new(),
-            buckets: Vec::new(),
-            queued: BitVec::new(),
+            count: Vec::new(),
             path: Vec::new(),
             queue: VecDeque::with_capacity(number_of_nodes),
+            horizon: number_of_nodes as u32,
             max_flow: 0,
             finished: false,
             relabels: 0,
+            gaps: 0,
             source,
             target,
             bound: None,
@@ -307,45 +294,63 @@ impl MaxFlow for IncrementalDinic {
 
     fn run(&mut self) {
         let number_of_nodes = self.residual_graph.number_of_nodes();
-        self.level.resize(number_of_nodes, UNREACHABLE);
+        self.level.resize(number_of_nodes, self.horizon);
         self.current_arc.resize(number_of_nodes, 0);
-        self.queued.resize(number_of_nodes, false);
         for node in 0..number_of_nodes {
             self.current_arc[node] = self.residual_graph.begin_edges(node) as u32;
         }
 
         self.initial_bfs();
+        self.count.clear();
+        self.count.resize(number_of_nodes + 1, 0);
+        for node in 0..number_of_nodes {
+            let level = self.level[node];
+            if level < self.horizon {
+                self.count[level as usize] += 1;
+            }
+        }
         #[cfg(debug_assertions)]
-        self.assert_levels_exact("after the initial sweep");
+        self.assert_valid_labelling("after the initial sweep");
 
         let mut flow = 0;
-        while self.level[self.source] != UNREACHABLE {
-            if !self.find_path() {
-                // the source has no admissible arc, so its own label is stale
-                self.enqueue(self.source);
-                self.repair();
-                #[cfg(debug_assertions)]
-                self.assert_levels_exact("after relabelling the source");
+        self.path.clear();
+        while self.level[self.source] < self.horizon {
+            let u = self.head_of_walk();
+            if u == self.target {
+                flow += self.augment();
+                self.retreat_past_saturated();
+
+                if let Some(bound) = &self.bound
+                    && flow > bound.load(Ordering::Relaxed)
+                {
+                    debug!("aborting max flow computation at {flow}");
+                    self.max_flow = flow;
+                    return;
+                }
                 continue;
             }
-            flow += self.augment();
-            self.repair();
-            #[cfg(debug_assertions)]
-            self.assert_levels_exact("after an augmentation");
-
-            if let Some(bound) = &self.bound
-                && flow > bound.load(Ordering::Relaxed)
-            {
-                debug!("aborting max flow computation at {flow}");
-                self.max_flow = flow;
-                return;
+            match self.advance(u) {
+                Some(arc) => self.path.push(arc),
+                None => {
+                    // the walk is stuck, so this node's label was too low. It is
+                    // raised on its own and the step that led here is undone, so
+                    // that the predecessor picks another arc.
+                    self.relabel(u);
+                    self.path.pop();
+                }
             }
+        }
+
+        #[cfg(debug_assertions)]
+        {
+            self.assert_valid_labelling("at the end");
+            self.assert_no_residual_path();
         }
 
         if let Some(bound) = &self.bound {
             bound.fetch_min(flow, Ordering::Relaxed);
         }
-        debug!("{} relabels", self.relabels);
+        debug!("{} relabels, {} gaps", self.relabels, self.gaps);
         self.max_flow = flow;
         self.finished = true;
     }
@@ -361,8 +366,7 @@ impl MaxFlow for IncrementalDinic {
         if !self.finished {
             return Err("Assignment was not computed.".to_string());
         }
-        let mut reachable = BitVec::new();
-        reachable.resize(self.residual_graph.number_of_nodes(), false);
+        let mut reachable: BitVec = BitVec::repeat(false, self.residual_graph.number_of_nodes());
         let mut stack = Vec::with_capacity(self.residual_graph.number_of_nodes());
         stack.push(source);
         reachable.set(source, true);
