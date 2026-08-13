@@ -13,7 +13,7 @@ use log::{debug, info};
 use rayon::prelude::*;
 use std::sync::{
     Arc,
-    atomic::{AtomicI32, AtomicU32, Ordering},
+    atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering},
 };
 use toolbox_rs::geometry::FPCoordinate;
 use toolbox_rs::io;
@@ -117,6 +117,15 @@ fn main() {
     let load = |index: usize| PartitionID(partition_ids[index].load(Ordering::Relaxed));
     let store = |index: usize, id: PartitionID| partition_ids[index].store(id.0, Ordering::Relaxed);
 
+    // The side of the latest cut that a node ended up on, which is all that
+    // splitting the edge set needs. A partition id carries the whole path and
+    // packs it into a u32, so it cannot record a bisection deeper than 31.
+    let sides = (0..node_count).map(|_| AtomicU8::new(0)).collect_vec();
+    let side_of = |index: usize| sides[index].load(Ordering::Relaxed);
+    let set_side = |index: usize, side: u8| sides[index].store(side, Ordering::Relaxed);
+    // the ids are only kept for a run that was not asked for levels
+    let keep_ids = args.level_sizes.is_empty();
+
     while !current_job_queue.is_empty() && current_level < args.recursion_depth {
         let pb = ProgressBar::new(current_job_queue.len() as u64);
         pb.set_style(sty.clone());
@@ -151,11 +160,13 @@ fn main() {
                     // at all. The cell stays as it is, but its nodes still have
                     // to descend to the bottom of the hierarchy.
                     debug!("cell of {} nodes could not be cut", job.1.len());
-                    let level_difference = (args.recursion_depth - current_level) as usize;
-                    for i in &job.1 {
-                        let mut id = load(*i);
-                        id.make_leftmost_descendant(level_difference);
-                        store(*i, id);
+                    if keep_ids {
+                        let level_difference = (args.recursion_depth - current_level) as usize;
+                        for i in &job.1 {
+                            let mut id = load(*i);
+                            id.make_leftmost_descendant(level_difference);
+                            store(*i, id);
+                        }
                     }
                     return (job.2, None, std::mem::take(&mut job.1));
                 };
@@ -166,16 +177,20 @@ fn main() {
 
                 debug!("partitioning and assigning ids for all nodes");
 
-                (result.left_ids).iter().for_each(|i| {
-                    let mut id = load(*i);
-                    id.make_left_child();
-                    store(*i, id);
-                });
-                (result.right_ids).iter().for_each(|i| {
-                    let mut id = load(*i);
-                    id.make_right_child();
-                    store(*i, id);
-                });
+                (result.left_ids).iter().for_each(|i| set_side(*i, 0));
+                (result.right_ids).iter().for_each(|i| set_side(*i, 1));
+                if keep_ids {
+                    (result.left_ids).iter().for_each(|i| {
+                        let mut id = load(*i);
+                        id.make_left_child();
+                        store(*i, id);
+                    });
+                    (result.right_ids).iter().for_each(|i| {
+                        let mut id = load(*i);
+                        id.make_right_child();
+                        store(*i, id);
+                    });
+                }
 
                 // Partition edge and node id sets for the next iteration. The
                 // edge set of the parent is consumed here, so that it is freed
@@ -187,8 +202,8 @@ fn main() {
                 let mut left_edges = Vec::new();
                 let mut right_edges = Vec::new();
                 for edge in std::mem::take(&mut job.0) {
-                    let tail_is_left = load(edge.source).is_left_child();
-                    if tail_is_left != load(edge.target).is_left_child() {
+                    let tail_is_left = side_of(edge.source) == 0;
+                    if tail_is_left != (side_of(edge.target) == 0) {
                         continue;
                     }
                     if tail_is_left {
@@ -204,19 +219,21 @@ fn main() {
                 // half that settles are pushed to the bottom of the hierarchy,
                 // so that every node ends up on the same level and the ids stay
                 // what they were before the levels were assembled.
-                let level_difference = (args.recursion_depth - current_level - 1) as usize;
-                if result.left_ids.len() <= stop_at {
-                    for i in &result.left_ids {
-                        let mut id = load(*i);
-                        id.make_leftmost_descendant(level_difference);
-                        store(*i, id);
+                if keep_ids {
+                    let level_difference = (args.recursion_depth - current_level - 1) as usize;
+                    if result.left_ids.len() <= stop_at {
+                        for i in &result.left_ids {
+                            let mut id = load(*i);
+                            id.make_leftmost_descendant(level_difference);
+                            store(*i, id);
+                        }
                     }
-                }
-                if result.right_ids.len() <= stop_at {
-                    for i in &result.right_ids {
-                        let mut id = load(*i);
-                        id.make_rightmost_descendant(level_difference);
-                        store(*i, id);
+                    if result.right_ids.len() <= stop_at {
+                        for i in &result.right_ids {
+                            let mut id = load(*i);
+                            id.make_rightmost_descendant(level_difference);
+                            store(*i, id);
+                        }
                     }
                 }
                 (

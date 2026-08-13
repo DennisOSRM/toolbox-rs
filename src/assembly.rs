@@ -369,4 +369,102 @@ mod tests {
         ];
         let _ = Tree::new(tree, vec![0, 1]);
     }
+
+    use rand::{RngExt, SeedableRng, prelude::StdRng};
+
+    /// Grows a bisection tree by cutting cells until they are small enough,
+    /// which is the shape the partitioner leaves behind.
+    fn random_tree(rng: &mut StdRng, nodes: usize, stop_at: usize) -> Tree {
+        // cells in creation order, a parent before its children
+        let mut sizes = vec![nodes];
+        let mut children: Vec<Option<(usize, usize)>> = vec![None];
+        let mut leaf_of_node = vec![0_usize; nodes];
+        let mut members = vec![(0..nodes).collect::<Vec<_>>()];
+
+        let mut index = 0;
+        while index < sizes.len() {
+            if sizes[index] > stop_at {
+                let own = std::mem::take(&mut members[index]);
+                // cut somewhere, but never so that a side comes out empty
+                let at = rng.random_range(1..own.len());
+                let (left, right) = own.split_at(at);
+                let (left, right) = (left.to_vec(), right.to_vec());
+
+                children[index] = Some((sizes.len(), sizes.len() + 1));
+                for half in [left, right] {
+                    sizes.push(half.len());
+                    children.push(None);
+                    for &node in &half {
+                        leaf_of_node[node] = members.len();
+                    }
+                    members.push(half);
+                }
+            }
+            index += 1;
+        }
+
+        // the assembly wants every child before its parent
+        let last = sizes.len() - 1;
+        let flip = |index: usize| last - index;
+        let nodes = sizes
+            .iter()
+            .zip(&children)
+            .map(|(&size, children)| Node {
+                size,
+                children: children.map(|(left, right)| (flip(left), flip(right))),
+            })
+            .rev()
+            .collect();
+        Tree::new(nodes, leaf_of_node.iter().map(|&leaf| flip(leaf)).collect())
+    }
+
+    #[test]
+    fn an_assembled_hierarchy_nests_and_is_answerable() {
+        let mut rng = StdRng::seed_from_u64(0xA55E);
+        for round in 0..10 {
+            let tree = random_tree(&mut rng, 60 + round * 7, 3);
+            let directory = assemble(&tree, &[4, 10, 25, 200]);
+
+            assert_eq!(directory.number_of_nodes(), tree.number_of_nodes());
+            assert_eq!(directory.levels(), 4);
+
+            for u in 0..directory.number_of_nodes() {
+                for v in 0..directory.number_of_nodes() {
+                    // two nodes that meet stay together above that level
+                    let meeting = directory.common_level(u, v);
+                    for level in 0..directory.levels() {
+                        let same = directory.same_cell(u, v, level);
+                        assert_eq!(same, meeting.is_some_and(|first| level >= first));
+                    }
+                }
+            }
+            // a size holding the whole graph puts everything into one cell
+            assert_eq!(directory.cells_on_level(3), 1);
+        }
+    }
+
+    #[test]
+    fn no_cell_of_a_level_is_larger_than_the_level_allows() {
+        let mut rng = StdRng::seed_from_u64(0xB0A7);
+        for round in 0..10 {
+            let tree = random_tree(&mut rng, 80 + round * 5, 2);
+            let sizes = [8, 20, 60];
+            let directory = assemble(&tree, &sizes);
+
+            for (level, &size) in sizes.iter().enumerate() {
+                let mut count = vec![0_usize; directory.cells_on_level(level)];
+                for node in 0..directory.number_of_nodes() {
+                    count[directory.cell_of(node, level) as usize] += 1;
+                }
+                // a cell only grows past its size when the bisection left one
+                // that large and nothing can break it further
+                for (cell, &held) in count.iter().enumerate() {
+                    assert!(
+                        held <= size.max(2),
+                        "cell {cell} of level {level} holds {held}"
+                    );
+                }
+            }
+        }
+    }
 }

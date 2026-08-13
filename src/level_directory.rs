@@ -256,4 +256,208 @@ mod tests {
         // the lowest level has three cells, the table above it only two
         let _ = LevelDirectory::new(vec![0, 1, 2], vec![vec![0, 0]]);
     }
+
+    use rand::{RngExt, SeedableRng, prelude::StdRng};
+
+    /// Builds a hierarchy by grouping the cells of one level into the next,
+    /// which is the shape a real one has: nested, and every cell of a level in
+    /// exactly one of the level above.
+    fn random_directory(rng: &mut StdRng, nodes: usize, levels: usize) -> LevelDirectory {
+        let mut base = Vec::with_capacity(nodes);
+        let mut cells = 0;
+        for _ in 0..nodes {
+            // start a new cell now and then, so cells come out of different sizes
+            if cells == 0 || rng.random_range(0..100) < 40 {
+                cells += 1;
+            }
+            base.push(cells - 1);
+        }
+
+        let mut parents = Vec::new();
+        let mut below = cells as usize;
+        for _ in 1..levels {
+            let mut table = Vec::with_capacity(below);
+            let mut above = 0;
+            for _ in 0..below {
+                if above == 0 || rng.random_range(0..100) < 50 {
+                    above += 1;
+                }
+                table.push(above - 1);
+            }
+            below = above as usize;
+            parents.push(table);
+        }
+        LevelDirectory::new(base, parents)
+    }
+
+    /// The level two nodes meet on, read off the cells of every level rather
+    /// than walked, so that the walk has something to be checked against.
+    fn meeting_level_by_hand(directory: &LevelDirectory, u: NodeID, v: NodeID) -> Option<usize> {
+        (0..directory.levels()).find(|&level| directory.same_cell(u, v, level))
+    }
+
+    #[test]
+    fn the_walk_agrees_with_reading_off_the_levels() {
+        let mut rng = StdRng::seed_from_u64(0x1E7E1);
+        for round in 0..20 {
+            let directory = random_directory(&mut rng, 40, 1 + round % 5);
+            for u in 0..directory.number_of_nodes() {
+                for v in 0..directory.number_of_nodes() {
+                    assert_eq!(
+                        directory.common_level(u, v),
+                        meeting_level_by_hand(&directory, u, v),
+                        "round {round}, nodes {u} and {v}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cells_only_ever_join_going_up() {
+        let mut rng = StdRng::seed_from_u64(0xC0FFEE);
+        for round in 0..20 {
+            let directory = random_directory(&mut rng, 40, 4);
+            for u in 0..directory.number_of_nodes() {
+                for v in 0..directory.number_of_nodes() {
+                    let mut together = false;
+                    for level in 0..directory.levels() {
+                        let same = directory.same_cell(u, v, level);
+                        assert!(
+                            !together || same,
+                            "round {round}: {u} and {v} fell apart above level {level}"
+                        );
+                        together |= same;
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_level_holds_every_node_in_exactly_one_cell() {
+        let mut rng = StdRng::seed_from_u64(0xBEEF);
+        for _ in 0..10 {
+            let directory = random_directory(&mut rng, 60, 4);
+            for level in 0..directory.levels() {
+                let cells = (0..directory.number_of_nodes())
+                    .map(|node| directory.cell_of(node, level))
+                    .collect::<std::collections::HashSet<_>>();
+                // the cells of a level are numbered from zero without a gap
+                assert_eq!(cells.len(), directory.cells_on_level(level));
+                assert_eq!(
+                    cells
+                        .iter()
+                        .copied()
+                        .max()
+                        .map_or(0, |cell| cell as usize + 1),
+                    directory.cells_on_level(level)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn levels_never_grow_in_the_number_of_cells() {
+        let mut rng = StdRng::seed_from_u64(0xF00D);
+        for _ in 0..10 {
+            let directory = random_directory(&mut rng, 60, 5);
+            for level in 1..directory.levels() {
+                assert!(
+                    directory.cells_on_level(level) <= directory.cells_on_level(level - 1),
+                    "level {level} holds more cells than the one below it"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_node_sits_in_the_cell_its_own_cell_lies_in() {
+        let mut rng = StdRng::seed_from_u64(0xD00D);
+        let directory = random_directory(&mut rng, 50, 4);
+        for node in 0..directory.number_of_nodes() {
+            for level in 1..directory.levels() {
+                // walking one level from the cell below has to land on the same
+                // cell as walking all the way up from the node
+                let below = directory.cell_of(node, level - 1);
+                let expected = directory.cell_of(node, level);
+                let walked =
+                    LevelDirectory::new(vec![below], directory.parents[level - 1..].to_vec())
+                        .cell_of(0, 1);
+                assert_eq!(walked, expected, "node {node} at level {level}");
+            }
+        }
+    }
+
+    #[test]
+    fn every_node_meets_every_other_under_a_shared_root() {
+        // one cell at the top, so every pair meets somewhere
+        let directory = LevelDirectory::new(vec![0, 1, 2, 3], vec![vec![0, 0, 1, 1], vec![0, 0]]);
+        for u in 0..4 {
+            for v in 0..4 {
+                assert!(directory.common_level(u, v).is_some(), "{u} and {v}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_hierarchy_of_one_node_is_answerable() {
+        let directory = LevelDirectory::new(vec![0], vec![vec![0], vec![0]]);
+        assert_eq!(directory.number_of_nodes(), 1);
+        assert_eq!(directory.levels(), 3);
+        assert_eq!(directory.common_level(0, 0), Some(0));
+        assert_eq!(directory.cell_of(0, 2), 0);
+    }
+
+    #[test]
+    fn every_node_alone_on_every_level_never_meets() {
+        let directory = LevelDirectory::new(vec![0, 1, 2], vec![vec![0, 1, 2], vec![0, 1, 2]]);
+        assert_eq!(directory.cells_on_level(2), 3);
+        for u in 0..3 {
+            for v in 0..3 {
+                assert_eq!(
+                    directory.common_level(u, v),
+                    if u == v { Some(0) } else { None }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_node_together_on_the_lowest_level_meets_at_once() {
+        let directory = LevelDirectory::new(vec![0, 0, 0, 0], vec![vec![0]]);
+        for u in 0..4 {
+            for v in 0..4 {
+                assert_eq!(directory.common_level(u, v), Some(0));
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "no level 3 in the hierarchy")]
+    fn a_level_the_hierarchy_does_not_have_is_caught() {
+        let _ = directory().cell_of(0, 3);
+    }
+
+    #[test]
+    fn the_levels_survive_being_written_and_read() {
+        let mut rng = StdRng::seed_from_u64(0x5A5A);
+        let directory = random_directory(&mut rng, 80, 4);
+
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&directory).expect("cannot be written");
+        let read: LevelDirectory = rkyv::from_bytes::<LevelDirectory, rkyv::rancor::Error>(&bytes)
+            .expect("cannot be read");
+
+        assert_eq!(read, directory);
+        assert_eq!(read.levels(), directory.levels());
+        assert_eq!(read.number_of_nodes(), directory.number_of_nodes());
+        for u in 0..directory.number_of_nodes() {
+            for level in 0..directory.levels() {
+                assert_eq!(read.cell_of(u, level), directory.cell_of(u, level));
+            }
+            for v in 0..directory.number_of_nodes() {
+                assert_eq!(read.common_level(u, v), directory.common_level(u, v));
+            }
+        }
+    }
 }
