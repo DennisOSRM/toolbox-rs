@@ -151,6 +151,9 @@ impl TileData {
         boundary.shrink_to_fit();
         border_nodes.shrink_to_fit();
         for nodes in nodes_by_tile.values_mut() {
+            // the nodes were collected in order, which is what the membership
+            // test of the interior arcs relies on
+            debug_assert!(nodes.windows(2).all(|pair| pair[0] < pair[1]));
             nodes.shrink_to_fit();
         }
         Self {
@@ -331,9 +334,18 @@ fn build_tile(state: &ServerState, zoom: u32, x: u32, y: u32) -> Tile {
             let from = to_tile_coordinate(state.coordinates[node], zoom, x, y);
             for edge in state.graph.edge_range(node) {
                 let target = state.graph.target(edge);
-                // the graph holds both directions, and the cut is drawn by the
-                // layer above this one
-                if target <= node || state.partition_ids[target] != cell {
+                // the cut is drawn by the layer above this one
+                if state.partition_ids[target] != cell {
+                    continue;
+                }
+                // The graph holds both directions of an arc, so one of them has
+                // to be dropped. Dropping by node id alone would drop an arc
+                // that leaves the bucket for good, as the bucket holding its
+                // other end is not the one being drawn, which tore a seam into
+                // every boundary between two buckets. An arc is therefore only
+                // dropped when the end it would be drawn from sits in this very
+                // bucket. The list is in node order, so it can be searched.
+                if target <= node && nodes.binary_search(&target).is_ok() {
                     continue;
                 }
                 let to = to_tile_coordinate(state.coordinates[target], zoom, x, y);
@@ -1272,5 +1284,51 @@ mod tests {
             .to_request();
         let response = actix_test::call_service(&app, request).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// An arc that leaves the bucket of the tile has to be drawn all the same.
+    /// Dropping one direction of it by node id alone dropped it entirely
+    /// whenever its other end sat in a neighbouring bucket, which tore a seam
+    /// into every boundary between two buckets.
+    #[test]
+    fn an_arc_that_leaves_the_bucket_is_still_drawn() {
+        // two nodes far enough apart to land in different tiles of the index,
+        // with the higher id to the west so that the lower one is outside
+        let west = FPCoordinate::new_from_lat_lon(LAT, 8.80);
+        let east = FPCoordinate::new_from_lat_lon(LAT, 8.95);
+        let edges = vec![InputEdge::new(0, 1, 1_usize), InputEdge::new(1, 0, 1_usize)];
+        // node 0 is east, node 1 is west, so the arc runs from the higher id
+        let coordinates = vec![east, west];
+        let partition_ids = vec![PartitionID::new(4), PartitionID::new(4)];
+        let state = ServerState::new(StaticGraph::new(edges), coordinates, partition_ids);
+
+        let buckets = state.tiles.nodes_by_tile.len();
+        assert_eq!(
+            buckets, 2,
+            "the two nodes have to land in different buckets"
+        );
+
+        // both tiles have to carry the arc between them
+        for coordinate in [west, east] {
+            let (lon, lat) = coordinate.to_lon_lat_pair();
+            let (x, y) = coordinate_to_tile_number(
+                FloatCoordinate {
+                    lat: FloatLatitude(lat),
+                    lon: FloatLongitude(lon),
+                },
+                INDEX_ZOOM,
+            );
+            let tile = build_tile(&state, INDEX_ZOOM, x, y);
+            let interior = tile
+                .layers
+                .iter()
+                .find(|layer| layer.name == INTERIOR_LAYER)
+                .expect("no interior layer");
+            assert_eq!(
+                interior.features.len(),
+                1,
+                "the arc is missing from the tile at {lon}"
+            );
+        }
     }
 }
