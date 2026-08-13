@@ -21,8 +21,8 @@ use toolbox_rs::{
     one_to_many_dijkstra::OneToManyDijkstra,
     partition_id::PartitionID,
     static_graph::{self, StaticGraph},
-    vector_tile::{TILE_SIZE, degree_to_pixel_lat, degree_to_pixel_lon},
-    wgs84::{FloatLatitude, FloatLongitude},
+    vector_tile::{TILE_SIZE, coordinate_to_tile_number, degree_to_pixel_lat, degree_to_pixel_lon},
+    wgs84::{FloatCoordinate, FloatLatitude, FloatLongitude},
 };
 
 // Include the generated protobuf code
@@ -41,6 +41,16 @@ const CELL_LAYER: &str = "cells";
 
 /// The name of the layer the border nodes are drawn into.
 const BORDER_LAYER: &str = "border_nodes";
+
+/// The name of the layer that holds every arc, tinted by the cell it belongs
+/// to. The cut alone is a handful of arcs per cell and reads as scattered
+/// dashes, whereas the arcs inside a cell fill it in and make it a region.
+const INTERIOR_LAYER: &str = "interior";
+
+/// The zoom level the arcs are bucketed by. A request at this level or above
+/// falls into exactly one bucket, which is all that has to be looked at. The
+/// client asks for nothing below it.
+const INDEX_ZOOM: u32 = 12;
 
 /// How many distances a popup is handed. A cell can have far more border nodes
 /// than fit on a screen, so the closest ones are handed over and the rest is
@@ -74,6 +84,20 @@ struct BorderNode {
 struct TileData {
     boundary: Vec<BoundaryArc>,
     border_nodes: Vec<BorderNode>,
+    /// the nodes that fall into a tile of [`INDEX_ZOOM`], so that a request
+    /// only has to look at the arcs that can reach it
+    nodes_by_tile: FxHashMap<(u32, u32), Vec<NodeID>>,
+}
+
+/// The tile of [`INDEX_ZOOM`] that the given tile lies in.
+fn index_tile_of(zoom: u32, x: u32, y: u32) -> (u32, u32) {
+    if zoom <= INDEX_ZOOM {
+        let up = INDEX_ZOOM - zoom;
+        (x << up, y << up)
+    } else {
+        let down = zoom - INDEX_ZOOM;
+        (x >> down, y >> down)
+    }
 }
 
 impl TileData {
@@ -88,7 +112,18 @@ impl TileData {
     ) -> Self {
         let mut boundary = Vec::new();
         let mut border_nodes = Vec::new();
+        let mut nodes_by_tile: FxHashMap<(u32, u32), Vec<NodeID>> = FxHashMap::default();
         for source in graph.node_range() {
+            let (lon, lat) = coordinates[source].to_lon_lat_pair();
+            let tile = coordinate_to_tile_number(
+                FloatCoordinate {
+                    lat: FloatLatitude(lat),
+                    lon: FloatLongitude(lon),
+                },
+                INDEX_ZOOM,
+            );
+            nodes_by_tile.entry(tile).or_default().push(source);
+
             let mut leaves_cell = false;
             for edge in graph.edge_range(source) {
                 let target = graph.target(edge);
@@ -115,9 +150,13 @@ impl TileData {
         }
         boundary.shrink_to_fit();
         border_nodes.shrink_to_fit();
+        for nodes in nodes_by_tile.values_mut() {
+            nodes.shrink_to_fit();
+        }
         Self {
             boundary,
             border_nodes,
+            nodes_by_tile,
         }
     }
 }
@@ -182,7 +221,8 @@ fn is_visible(source: (i32, i32), target: (i32, i32)) -> bool {
 /// Builds the tile that covers the given position of the tile pyramid. The
 /// boundary arcs are grouped by the cell they belong to, so that a client can
 /// give each cell a color of its own.
-fn build_tile(data: &TileData, zoom: u32, x: u32, y: u32) -> Tile {
+fn build_tile(state: &ServerState, zoom: u32, x: u32, y: u32) -> Tile {
+    let data = &state.tiles;
     let mut geometries: FxHashMap<PartitionID, GeometryEncoder> = FxHashMap::default();
 
     for arc in &data.boundary {
@@ -248,8 +288,60 @@ fn build_tile(data: &TileData, zoom: u32, x: u32, y: u32) -> Tile {
         });
     }
 
+    // Every arc that stays inside its cell, so that a cell reads as a region
+    // rather than as the handful of dashes its cut consists of. Only the nodes
+    // of the index tile that this one falls into can reach it.
+    let mut interior: FxHashMap<PartitionID, GeometryEncoder> = FxHashMap::default();
+    if let Some(nodes) = data.nodes_by_tile.get(&index_tile_of(zoom, x, y)) {
+        for &node in nodes {
+            let cell = state.partition_ids[node];
+            let from = to_tile_coordinate(state.coordinates[node], zoom, x, y);
+            for edge in state.graph.edge_range(node) {
+                let target = state.graph.target(edge);
+                // the graph holds both directions, and the cut is drawn by the
+                // layer above this one
+                if target <= node || state.partition_ids[target] != cell {
+                    continue;
+                }
+                let to = to_tile_coordinate(state.coordinates[target], zoom, x, y);
+                if !is_visible(from, to) {
+                    continue;
+                }
+                let geometry = interior.entry(cell).or_default();
+                geometry.move_to(&[from]);
+                geometry.line_to(&[to]);
+            }
+        }
+    }
+
+    let mut interior_features = Vec::with_capacity(interior.len());
+    let mut interior_values = Vec::with_capacity(interior.len());
+    for (cell, geometry) in interior {
+        interior_features.push(Feature {
+            id: Some(u64::from(cell.0)),
+            r#type: Some(GeomType::Linestring.into()),
+            geometry: geometry.build(),
+            tags: vec![
+                0,
+                u32::try_from(interior_values.len()).expect("too many cells on one tile"),
+            ],
+        });
+        interior_values.push(Value {
+            uint_value: Some(u64::from(cell.0)),
+            ..Default::default()
+        });
+    }
+
     Tile {
         layers: vec![
+            Layer {
+                version: 2,
+                name: INTERIOR_LAYER.to_string(),
+                extent: Some(TILE_EXTENT),
+                features: interior_features,
+                keys: vec!["cell".to_string()],
+                values: interior_values,
+            },
             Layer {
                 version: 2,
                 name: CELL_LAYER.to_string(),
@@ -280,7 +372,7 @@ async fn get_tile(
 
     // Encode the tile to protobuf format
     let mut buf = Vec::new();
-    build_tile(&state.tiles, zoom, x, y)
+    build_tile(&state, zoom, x, y)
         .encode(&mut buf)
         .expect("a tile does not fit into its buffer");
 
@@ -658,6 +750,7 @@ mod tests {
                 cell: PartitionID::new(7),
                 node: 42,
             }],
+            nodes_by_tile: FxHashMap::default(),
         }
     }
 
@@ -781,9 +874,13 @@ mod tests {
     #[test]
     fn a_cell_becomes_a_feature_of_the_tile() {
         let (x, y) = tile_of_probe();
-        let tile = build_tile(&data_with_one_arc(), ZOOM, x, y);
+        let tile = build_tile(&state_with_one_arc(), ZOOM, x, y);
 
-        assert_eq!(tile.layers.len(), 2, "one layer of cells, one of nodes");
+        assert_eq!(
+            tile.layers.len(),
+            3,
+            "one layer of interior arcs, one of the cut, one of nodes"
+        );
         let layer = cell_layer(&tile);
         assert_eq!(layer.name, CELL_LAYER);
         assert_eq!(layer.extent, Some(TILE_EXTENT));
@@ -813,7 +910,9 @@ mod tests {
         });
 
         let (x, y) = tile_of_probe();
-        let tile = build_tile(&data, ZOOM, x, y);
+        let mut state = state_with_one_arc();
+        state.tiles = data;
+        let tile = build_tile(&state, ZOOM, x, y);
         let layer = cell_layer(&tile);
 
         assert_eq!(layer.features.len(), 2, "one feature per cell");
@@ -841,7 +940,7 @@ mod tests {
     #[test]
     fn a_tile_elsewhere_stays_empty() {
         // the same data, but a tile on the other side of the planet
-        let tile = build_tile(&data_with_one_arc(), ZOOM, 1, 1);
+        let tile = build_tile(&state_with_one_arc(), ZOOM, 1, 1);
         assert!(cell_layer(&tile).features.is_empty());
         assert!(cell_layer(&tile).values.is_empty());
     }
@@ -871,7 +970,7 @@ mod tests {
     #[test]
     fn geometry_is_a_well_formed_command_sequence() {
         let (x, y) = tile_of_probe();
-        let tile = build_tile(&data_with_one_arc(), ZOOM, x, y);
+        let tile = build_tile(&state_with_one_arc(), ZOOM, x, y);
         // a single arc is one MoveTo onto its start and one LineTo to its end
         assert_eq!(
             commands_of(&cell_layer(&tile).features[0].geometry),
@@ -882,7 +981,7 @@ mod tests {
     #[test]
     fn tags_stay_within_keys_and_values() {
         let (x, y) = tile_of_probe();
-        let tile = build_tile(&data_with_one_arc(), ZOOM, x, y);
+        let tile = build_tile(&state_with_one_arc(), ZOOM, x, y);
         for layer in &tile.layers {
             for feature in &layer.features {
                 assert_eq!(feature.tags.len() % 2, 0, "tags are pairs");
@@ -907,8 +1006,18 @@ mod tests {
         let body = to_bytes(response.into_body()).await.expect("empty body");
         let body = String::from_utf8_lossy(&body);
         assert!(body.contains("<html"));
-        // the client asks for the layer the server actually serves
-        assert!(body.contains("/cells/{z}/{x}/{y}.mvt"));
+        // The client asks for the layer the server actually serves, and it
+        // builds the URL from the origin. A relative one would be handed to a
+        // worker, which has no document to resolve it against and rejects it
+        // with "Failed to parse URL".
+        assert!(
+            body.contains("location.origin + \"/cells/{z}/{x}/{y}.mvt\""),
+            "the tile URL has to be absolute"
+        );
+        assert!(
+            !body.contains("[\"/cells/"),
+            "a relative tile URL cannot be fetched from a worker"
+        );
         // and keeps the position of the map in the URL
         assert!(body.contains("hash: true"));
     }
@@ -994,7 +1103,7 @@ mod tests {
     #[test]
     fn border_nodes_reach_the_tile() {
         let (x, y) = tile_of_probe();
-        let tile = build_tile(&data_with_one_arc(), ZOOM, x, y);
+        let tile = build_tile(&state_with_one_arc(), ZOOM, x, y);
 
         let layer = tile
             .layers
@@ -1014,7 +1123,7 @@ mod tests {
 
     #[test]
     fn border_nodes_of_another_tile_are_left_out() {
-        let tile = build_tile(&data_with_one_arc(), ZOOM, 1, 1);
+        let tile = build_tile(&state_with_one_arc(), ZOOM, 1, 1);
         let layer = tile
             .layers
             .iter()

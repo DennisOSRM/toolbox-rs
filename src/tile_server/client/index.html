@@ -38,7 +38,11 @@ var simple = {
     "sources": {
         "local-tiles": {
             "type": "vector",
-            "tiles": ["/cells/{z}/{x}/{y}.mvt"],
+            // absolute, as the tiles are fetched from a worker and a worker has
+            // no document to resolve a relative URL against. Built from the
+            // origin so that it still follows whatever address the server was
+            // told to listen on.
+            "tiles": [location.origin + "/cells/{z}/{x}/{y}.mvt"],
             "minzoom": 12,
             "maxzoom": 19
         }
@@ -49,6 +53,35 @@ var simple = {
             "type": "background",
             "paint": {
                 "background-color": "#111"
+            }
+        },
+        {
+            "id": "cell interior",
+            "type": "line",
+            "source": "local-tiles",
+            "source-layer": "interior",
+            "minzoom": 12,
+            "layout": { "line-cap": "round", "line-join": "round" },
+            "paint": {
+                "line-width": {
+                    "base": 1.5,
+                    "stops": [[12.5, 1], [14, 1.5], [18, 5]]
+                },
+                "line-color": [
+                    "match",
+                    ["%", ["to-number", ["get", "cell"]], 10],
+                    0, "#e6194b",
+                    1, "#3cb44b",
+                    2, "#ffe119",
+                    3, "#4363d8",
+                    4, "#f58231",
+                    5, "#911eb4",
+                    6, "#46f0f0",
+                    7, "#f032e6",
+                    8, "#bcf60c",
+                    9, "#fabebe",
+                    "#ffffff"
+                ]
             }
         },
         {
@@ -83,21 +116,7 @@ var simple = {
                     "base": 1.5,
                     "stops": [[12.5, 1.5], [14, 2.5], [18, 8]]
                 },
-                "line-color": [
-                    "match",
-                    ["%", ["to-number", ["get", "cell"]], 10],
-                    0, "#e6194b",
-                    1, "#3cb44b",
-                    2, "#ffe119",
-                    3, "#4363d8",
-                    4, "#f58231",
-                    5, "#911eb4",
-                    6, "#46f0f0",
-                    7, "#f032e6",
-                    8, "#bcf60c",
-                    9, "#fabebe",
-                    "#ffffff"
-                ]
+                "line-color": "#ffffff"
             }
         },
         {
