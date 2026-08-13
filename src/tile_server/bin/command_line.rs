@@ -20,9 +20,9 @@ pub struct Arguments {
     #[clap(short, long, action)]
     pub coordinates: String,
 
-    /// path to the assignment file
+    /// path to the level directory that chipper wrote
     #[clap(short, long, action)]
-    pub assignment: String,
+    pub directory: String,
 
     /// address and port to serve on
     #[clap(short, long, default_value = "127.0.0.1:5000", action)]
@@ -34,7 +34,7 @@ impl Display for Arguments {
         writeln!(f, "command line arguments:")?;
         writeln!(f, "graph: {}", self.graph)?;
         writeln!(f, "coordinates: {}", self.coordinates)?;
-        writeln!(f, "assignment: {}", self.assignment)?;
+        writeln!(f, "level directory: {}", self.directory)?;
         writeln!(f, "listen: {}", self.listen)
     }
 }
