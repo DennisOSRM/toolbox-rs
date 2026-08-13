@@ -23,6 +23,10 @@ pub struct Arguments {
     /// path to the assignment file
     #[clap(short, long, action)]
     pub assignment: String,
+
+    /// address and port to serve on
+    #[clap(short, long, default_value = "127.0.0.1:5000", action)]
+    pub listen: String,
 }
 
 impl Display for Arguments {
@@ -30,6 +34,7 @@ impl Display for Arguments {
         writeln!(f, "command line arguments:")?;
         writeln!(f, "graph: {}", self.graph)?;
         writeln!(f, "coordinates: {}", self.coordinates)?;
-        writeln!(f, "assignment: {}", self.assignment)
+        writeln!(f, "assignment: {}", self.assignment)?;
+        writeln!(f, "listen: {}", self.listen)
     }
 }

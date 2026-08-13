@@ -38,7 +38,7 @@ var simple = {
     "sources": {
         "local-tiles": {
             "type": "vector",
-            "tiles": ["http://127.0.0.1:5000/{tileset_id}/{z}/{x}/{y}.mvt"],
+            "tiles": ["/cells/{z}/{x}/{y}.mvt"],
             "minzoom": 12,
             "maxzoom": 19
         }
@@ -49,6 +49,46 @@ var simple = {
             "type": "background",
             "paint": {
                 "background-color": "#111"
+            }
+        },
+        {
+            "id": "border nodes",
+            "type": "circle",
+            "source": "local-tiles",
+            "source-layer": "border_nodes",
+            "minzoom": 12,
+            "paint": {
+                "circle-radius": {
+                    "base": 1.5,
+                    "stops": [[12.5, 2.5], [14, 4], [18, 9]]
+                },
+                "circle-color": "#fff",
+                "circle-stroke-color": "#000",
+                "circle-stroke-width": 1
+            }
+        },
+        {
+            "id": "cell boundaries",
+            "type": "line",
+            "source": "local-tiles",
+            "source-layer": "cells",
+            "minzoom": 12,
+            "layout": {
+                "visibility": "visible",
+                "line-cap": "round",
+                "line-join": "round"
+            },
+            "paint": {
+                "line-width": {
+                    "base": 1.5,
+                    "stops": [[12.5, 1.5], [14, 2.5], [18, 8]]
+                },
+                "line-color": [
+                    "hsl",
+                    ["%", ["*", ["to-number", ["get", "cell"]], 47], 360],
+                    75,
+                    55
+                ]
             }
         },
         {
@@ -934,12 +974,80 @@ var map = new maplibregl.Map({
     container: 'map',
     style: simple,
     zoom: 13,
+    // keeps zoom and position in the URL fragment, so a view can be reloaded
+    // and shared. The center below only applies when the URL carries none.
     hash: true,
-    center: [-77.0269,38.8995]
+    center: [8.57747, 50.20731]
 });
 
 map.addControl(new maplibregl.NavigationControl());
 map.showTileBoundaries = true;
+
+// Shows the distances from a border node into its cell. The cursor coming to
+// rest on a node asks the server for them, as a cell holds far more of them
+// than would fit into a tile.
+var popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false });
+var shownNode = null;
+var pending = null;
+
+function formatDistances(answer) {
+    var rows = answer.nearest.map(function (reachable) {
+        return '<tr><td>' + reachable.node + '</td><td style="text-align:right">'
+            + reachable.distance + '</td></tr>';
+    }).join('');
+    var shown = answer.nearest.length;
+    var others = answer.border_node_count - 1 - shown - answer.unreachable_count;
+    var footer = '';
+    if (others > 0) {
+        footer += '<div>and ' + others + ' further border nodes</div>';
+    }
+    if (answer.unreachable_count > 0) {
+        footer += '<div>' + answer.unreachable_count + ' not reachable within the cell</div>';
+    }
+    return '<div style="font: 12px/1.4 sans-serif">'
+        + '<div><b>node ' + answer.node + '</b> in cell ' + answer.cell + '</div>'
+        + '<div>' + answer.border_node_count + ' border nodes</div>'
+        + '<table style="margin-top:4px"><thead><tr><th>to</th><th>distance</th></tr></thead>'
+        + '<tbody>' + rows + '</tbody></table>'
+        + footer
+        + '</div>';
+}
+
+map.on('mousemove', 'border nodes', function (event) {
+    var feature = event.features && event.features[0];
+    if (!feature) {
+        return;
+    }
+    map.getCanvas().style.cursor = 'pointer';
+
+    var node = feature.properties.node;
+    if (node === shownNode) {
+        popup.setLngLat(event.lngLat);
+        return;
+    }
+    shownNode = node;
+
+    // drop the answer of a node the cursor has already left
+    var request = fetch('/node/' + node + '.json').then(function (response) {
+        return response.ok ? response.json() : null;
+    });
+    pending = request;
+    request.then(function (answer) {
+        if (pending !== request || answer === null || shownNode !== node) {
+            return;
+        }
+        popup.setLngLat([answer.coordinate[0], answer.coordinate[1]])
+             .setHTML(formatDistances(answer))
+             .addTo(map);
+    }).catch(function () { /* a debug server going away is not worth a dialog */ });
+});
+
+map.on('mouseleave', 'border nodes', function () {
+    map.getCanvas().style.cursor = '';
+    shownNode = null;
+    pending = null;
+    popup.remove();
+});
 </script>
 
 </body>

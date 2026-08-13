@@ -3,24 +3,26 @@ mod command_line;
 use actix_web::{App, HttpResponse, HttpServer, Responder, web};
 use command_line::Arguments;
 use env_logger::{Builder, Env};
-use log::info;
+use log::{debug, info, warn};
 use prost::Message;
 use rustc_hash::FxHashMap;
-use std::error::Error;
+use serde::Serialize;
+use std::{
+    error::Error,
+    sync::{Arc, Mutex},
+};
 use tile::{Feature, GeomType, Layer, Value};
 use toolbox_rs::{
-    cell::Cell,
     edge::InputEdge,
     geometry::FPCoordinate,
-    graph::Graph,
+    graph::{Graph, NodeID},
     io,
     mvt::GeometryEncoder,
     one_to_many_dijkstra::OneToManyDijkstra,
     partition_id::PartitionID,
-    r_tree::RTree,
-    run_iterator::RunIterator,
     static_graph::{self, StaticGraph},
-    unidirectional_dijkstra::UnidirectionalDijkstra,
+    vector_tile::{TILE_SIZE, degree_to_pixel_lat, degree_to_pixel_lon},
+    wgs84::{FloatLatitude, FloatLongitude},
 };
 
 // Include the generated protobuf code
@@ -28,52 +30,257 @@ include!(concat!(env!("OUT_DIR"), "/vector_tile.rs"));
 
 const INDEX_HTML: &str = include_str!("../client/index.html");
 
-/// The extent a tile is drawn on. Geometry is expressed in this grid rather
-/// than in the coordinate system of the tile, so a reader scales it to whatever
-/// size it renders at.
-const TILE_EXTENT: u32 = 4096;
+/// The extent a tile draws its geometry on. It matches the grid the pixel
+/// conversions of the library work in, so a global pixel coordinate minus the
+/// origin of the tile is already the number a tile carries.
+const TILE_EXTENT: u32 = TILE_SIZE as u32;
 
-/// Builds the tile that covers the given position of the tile pyramid.
-///
-/// TODO: this still draws a fixed square instead of the cells of the partition.
-/// It is wired to the geometry encoder so that the shape of the response is the
-/// one a reader expects once the real geometry is put in.
-fn build_tile(_zoom: u32, _x: u32, _y: u32) -> Tile {
-    let mut geometry = GeometryEncoder::new();
-    geometry.move_to(&[(5, 5)]);
-    geometry.line_to(&[(6, 5), (6, 6), (5, 6)]);
-    geometry.close_path();
+/// The name of the layer the cells are drawn into. The style of the client
+/// refers to it by this name.
+const CELL_LAYER: &str = "cells";
+
+/// The name of the layer the border nodes are drawn into.
+const BORDER_LAYER: &str = "border_nodes";
+
+/// How many distances a popup is handed. A cell can have far more border nodes
+/// than fit on a screen, so the closest ones are handed over and the rest is
+/// reported as a count.
+const POPUP_DISTANCES: usize = 12;
+
+/// How far outside of a tile geometry is still drawn, in tile units. Renderers
+/// need a margin to draw the width of a line whose center lies outside.
+const TILE_MARGIN: f64 = 128.;
+
+/// An arc of the graph whose endpoints lie in different cells, i.e. a piece of
+/// the boundary between two cells.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BoundaryArc {
+    source: FPCoordinate,
+    target: FPCoordinate,
+    cell: PartitionID,
+}
+
+/// A node that an arc leaves its cell on. The distances between the border
+/// nodes of a cell are what a cell is summarized by, so these are the nodes
+/// worth asking about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BorderNode {
+    coordinate: FPCoordinate,
+    cell: PartitionID,
+    node: NodeID,
+}
+
+/// The part of the input the tile requests are answered from.
+struct TileData {
+    boundary: Vec<BoundaryArc>,
+    border_nodes: Vec<BorderNode>,
+}
+
+impl TileData {
+    /// Collects the arcs that leave their cell together with the nodes they
+    /// leave on. Those arcs are what separates one cell from the next, so
+    /// drawing them draws the partition. Each pair of nodes is taken once, as
+    /// the graph holds both directions of an arc.
+    fn new(
+        graph: &StaticGraph<usize>,
+        coordinates: &[FPCoordinate],
+        partition_ids: &[PartitionID],
+    ) -> Self {
+        let mut boundary = Vec::new();
+        let mut border_nodes = Vec::new();
+        for source in graph.node_range() {
+            let mut leaves_cell = false;
+            for edge in graph.edge_range(source) {
+                let target = graph.target(edge);
+                if partition_ids[source] == partition_ids[target] {
+                    continue;
+                }
+                leaves_cell = true;
+                // the reverse of this arc carries the same segment
+                if source < target {
+                    boundary.push(BoundaryArc {
+                        source: coordinates[source],
+                        target: coordinates[target],
+                        cell: partition_ids[source],
+                    });
+                }
+            }
+            if leaves_cell {
+                border_nodes.push(BorderNode {
+                    coordinate: coordinates[source],
+                    cell: partition_ids[source],
+                    node: source,
+                });
+            }
+        }
+        boundary.shrink_to_fit();
+        border_nodes.shrink_to_fit();
+        Self {
+            boundary,
+            border_nodes,
+        }
+    }
+}
+
+/// Converts a coordinate into the grid that the tile at the given position
+/// draws on. Coordinates outside of the tile keep their offset instead of being
+/// clamped onto its border, which is what lets a line that crosses the border
+/// leave it at the right angle.
+fn to_tile_coordinate(coordinate: FPCoordinate, zoom: u32, tile_x: u32, tile_y: u32) -> (i32, i32) {
+    let (lon, lat) = coordinate.to_lon_lat_pair();
+    let x =
+        degree_to_pixel_lon(FloatLongitude(lon), zoom) - f64::from(tile_x) * f64::from(TILE_EXTENT);
+    let y =
+        degree_to_pixel_lat(FloatLatitude(lat), zoom) - f64::from(tile_y) * f64::from(TILE_EXTENT);
+
+    // the grid is far smaller than the range of an i32, but a coordinate of a
+    // broken input should not wrap around into a plausible looking one
+    (
+        x.round().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32,
+        y.round().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32,
+    )
+}
+
+/// Whether a position lies on the tile, margin included. A point either sits on
+/// the tile or it does not, so unlike a segment it cannot span it.
+fn is_within_tile(position: (i32, i32)) -> bool {
+    let low = -TILE_MARGIN;
+    let high = f64::from(TILE_EXTENT) + TILE_MARGIN;
+    let within = |value: i32| f64::from(value) >= low && f64::from(value) <= high;
+    within(position.0) && within(position.1)
+}
+
+/// Whether a segment is worth drawing on this tile: it has to touch the tile,
+/// and it has to be long enough to be visible on it. Dropping the segments that
+/// collapse onto a single position is what keeps a tile of a low zoom level
+/// from carrying the whole graph.
+fn is_visible(source: (i32, i32), target: (i32, i32)) -> bool {
+    // a segment whose ends round onto the same position of the grid draws
+    // nothing, which is what thins out a tile of a low zoom level
+    if source == target {
+        return false;
+    }
+
+    let low = -TILE_MARGIN;
+    let high = f64::from(TILE_EXTENT) + TILE_MARGIN;
+
+    // A segment can only miss the tile if both of its ends are off the same
+    // side of it. Ends on two different sides say nothing, as the segment
+    // between them may still cross the tile.
+    let off = |value: fn((i32, i32)) -> i32, beyond: fn(f64, f64) -> bool, edge: f64| {
+        beyond(f64::from(value(source)), edge) && beyond(f64::from(value(target)), edge)
+    };
+    let below = |value: f64, edge: f64| value < edge;
+    let above = |value: f64, edge: f64| value > edge;
+
+    !(off(|point| point.0, below, low)
+        || off(|point| point.0, above, high)
+        || off(|point| point.1, below, low)
+        || off(|point| point.1, above, high))
+}
+
+/// Builds the tile that covers the given position of the tile pyramid. The
+/// boundary arcs are grouped by the cell they belong to, so that a client can
+/// give each cell a color of its own.
+fn build_tile(data: &TileData, zoom: u32, x: u32, y: u32) -> Tile {
+    let mut geometries: FxHashMap<PartitionID, GeometryEncoder> = FxHashMap::default();
+
+    for arc in &data.boundary {
+        let source = to_tile_coordinate(arc.source, zoom, x, y);
+        let target = to_tile_coordinate(arc.target, zoom, x, y);
+        if !is_visible(source, target) {
+            continue;
+        }
+        // each arc is a line string of its own within the feature of its cell
+        let geometry = geometries.entry(arc.cell).or_default();
+        geometry.move_to(&[source]);
+        geometry.line_to(&[target]);
+    }
+
+    // the tags of a feature index into the key and value tables of its layer
+    let mut features = Vec::with_capacity(geometries.len());
+    let mut values = Vec::with_capacity(geometries.len());
+    for (cell, geometry) in geometries {
+        features.push(Feature {
+            id: Some(u64::from(cell.0)),
+            r#type: Some(GeomType::Linestring.into()),
+            geometry: geometry.build(),
+            tags: vec![
+                0,
+                u32::try_from(values.len()).expect("too many cells on one tile"),
+            ],
+        });
+        values.push(Value {
+            uint_value: Some(u64::from(cell.0)),
+            ..Default::default()
+        });
+    }
+
+    // The border nodes go into a layer of their own, so that the client can
+    // put a cursor on one and ask what the distances of its cell are.
+    let mut node_features = Vec::new();
+    let mut node_values = Vec::new();
+    for border in &data.border_nodes {
+        let position = to_tile_coordinate(border.coordinate, zoom, x, y);
+        if !is_within_tile(position) {
+            continue;
+        }
+        let mut geometry = GeometryEncoder::with_capacity(3);
+        geometry.move_to(&[position]);
+        node_features.push(Feature {
+            id: Some(border.node as u64),
+            r#type: Some(GeomType::Point.into()),
+            geometry: geometry.build(),
+            tags: vec![
+                0,
+                u32::try_from(node_values.len()).expect("too many border nodes on one tile"),
+                1,
+                u32::try_from(node_values.len() + 1).expect("too many border nodes on one tile"),
+            ],
+        });
+        node_values.push(Value {
+            uint_value: Some(u64::from(border.cell.0)),
+            ..Default::default()
+        });
+        node_values.push(Value {
+            uint_value: Some(border.node as u64),
+            ..Default::default()
+        });
+    }
 
     Tile {
-        layers: vec![Layer {
-            version: 2,
-            name: "speeds".to_string(),
-            extent: Some(TILE_EXTENT),
-            features: vec![Feature {
-                id: Some(1),
-                r#type: Some(GeomType::Polygon.into()),
-                geometry: geometry.build(),
-                // a tag is a pair of indices, the first into keys and the
-                // second into values
-                tags: vec![0, 0],
-            }],
-            keys: vec!["is_small".to_string()],
-            values: vec![Value {
-                bool_value: Some(true),
-                ..Default::default()
-            }],
-        }],
+        layers: vec![
+            Layer {
+                version: 2,
+                name: CELL_LAYER.to_string(),
+                extent: Some(TILE_EXTENT),
+                features,
+                keys: vec!["cell".to_string()],
+                values,
+            },
+            Layer {
+                version: 2,
+                name: BORDER_LAYER.to_string(),
+                extent: Some(TILE_EXTENT),
+                features: node_features,
+                keys: vec!["cell".to_string(), "node".to_string()],
+                values: node_values,
+            },
+        ],
     }
 }
 
 // Tile request handler
-async fn get_tile(path: web::Path<(String, u32, u32, u32)>) -> impl Responder {
+async fn get_tile(
+    path: web::Path<(String, u32, u32, u32)>,
+    state: web::Data<ServerState>,
+) -> impl Responder {
     let (tileset_id, zoom, x, y) = path.into_inner();
-    info!("requesting tile: {tileset_id} at z={zoom} x={x} y={y}");
+    debug!("requesting tile: {tileset_id} at z={zoom} x={x} y={y}");
 
     // Encode the tile to protobuf format
     let mut buf = Vec::new();
-    build_tile(zoom, x, y)
+    build_tile(&state.tiles, zoom, x, y)
         .encode(&mut buf)
         .expect("a tile does not fit into its buffer");
 
@@ -92,7 +299,236 @@ async fn index() -> HttpResponse {
 fn routes(config: &mut web::ServiceConfig) {
     config
         .route("/", web::get().to(index))
+        .route("/node/{node}.json", web::get().to(get_node_distances))
         .route("/{tileset_id}/{zoom}/{x}/{y}.mvt", web::get().to(get_tile));
+}
+
+/// The distances between the border nodes of one cell, in the order the border
+/// nodes are listed in.
+struct CellDistances {
+    border_nodes: Vec<NodeID>,
+    matrix: Vec<usize>,
+}
+
+impl CellDistances {
+    fn distance(&self, source: usize, target: usize) -> usize {
+        self.matrix[source * self.border_nodes.len() + target]
+    }
+}
+
+/// Everything the handlers are answered from.
+struct ServerState {
+    tiles: TileData,
+    graph: StaticGraph<usize>,
+    coordinates: Vec<FPCoordinate>,
+    partition_ids: Vec<PartitionID>,
+    /// the nodes of a cell, so that its subgraph can be built on request
+    nodes_by_cell: FxHashMap<PartitionID, Vec<NodeID>>,
+    /// A cell is tabulated the first time it is asked about and kept
+    /// afterwards. Doing it up front would mean walking every cell of the
+    /// input before the first tile can be served.
+    tabulated: Mutex<FxHashMap<PartitionID, Arc<CellDistances>>>,
+}
+
+impl ServerState {
+    fn new(
+        graph: StaticGraph<usize>,
+        coordinates: Vec<FPCoordinate>,
+        partition_ids: Vec<PartitionID>,
+    ) -> Self {
+        let tiles = TileData::new(&graph, &coordinates, &partition_ids);
+
+        let mut nodes_by_cell: FxHashMap<PartitionID, Vec<NodeID>> = FxHashMap::default();
+        for (node, cell) in partition_ids.iter().enumerate() {
+            nodes_by_cell.entry(*cell).or_default().push(node);
+        }
+
+        Self {
+            tiles,
+            graph,
+            coordinates,
+            partition_ids,
+            nodes_by_cell,
+            tabulated: Mutex::new(FxHashMap::default()),
+        }
+    }
+
+    /// Hands out the distances of a cell, tabulating them on the first request.
+    fn distances_of(&self, cell: PartitionID) -> Option<Arc<CellDistances>> {
+        if let Some(distances) = self
+            .tabulated
+            .lock()
+            .expect("the tabulation cache is poisoned")
+            .get(&cell)
+        {
+            return Some(distances.clone());
+        }
+
+        let distances = Arc::new(self.tabulate(cell)?);
+        self.tabulated
+            .lock()
+            .expect("the tabulation cache is poisoned")
+            .insert(cell, distances.clone());
+        Some(distances)
+    }
+
+    /// Builds the subgraph of a cell and runs a search from each of its border
+    /// nodes. A cell is a small part of the input, so this is quick enough to
+    /// happen while a request waits for it.
+    fn tabulate(&self, cell: PartitionID) -> Option<CellDistances> {
+        let nodes = self.nodes_by_cell.get(&cell)?;
+
+        // the border nodes lead the numbering, so that they are the leading
+        // rows and columns of the matrix
+        let mut border_nodes = Vec::new();
+        for &node in nodes {
+            if self
+                .graph
+                .edge_range(node)
+                .any(|edge| self.partition_ids[self.graph.target(edge)] != cell)
+            {
+                border_nodes.push(node);
+            }
+        }
+        if border_nodes.is_empty() {
+            debug!("cell {} has no border nodes", cell.0);
+            return None;
+        }
+
+        // the box the cell covers, in the order a bbox is usually written in
+        let mut west = f64::MAX;
+        let mut south = f64::MAX;
+        let mut east = f64::MIN;
+        let mut north = f64::MIN;
+        for &node in nodes {
+            let (lon, lat) = self.coordinates[node].to_lon_lat_pair();
+            west = west.min(lon);
+            east = east.max(lon);
+            south = south.min(lat);
+            north = north.max(lat);
+        }
+        info!(
+            "tabulating cell {} on level {}: {} nodes, {} of them on the border, bbox {west:.6},{south:.6},{east:.6},{north:.6}",
+            cell.0,
+            cell.level(),
+            nodes.len(),
+            border_nodes.len()
+        );
+
+        // TODO: faster hashmap implementation using tabhash or fibonacci hash
+        let mut node_map = FxHashMap::default();
+        for &node in &border_nodes {
+            node_map.insert(node, node_map.len());
+        }
+        let mut edges = Vec::new();
+        for &node in nodes {
+            for edge in self.graph.edge_range(node) {
+                let target = self.graph.target(edge);
+                if self.partition_ids[target] != cell {
+                    continue;
+                }
+                let next = node_map.len();
+                let source = *node_map.entry(node).or_insert(next);
+                let next = node_map.len();
+                let target = *node_map.entry(target).or_insert(next);
+                edges.push(InputEdge::new(source, target, *self.graph.data(edge)));
+            }
+        }
+
+        // TODO: find a way to avoid relocations
+        let cell_graph = StaticGraph::new(edges);
+        let border = (0..border_nodes.len()).collect::<Vec<_>>();
+        let mut matrix = vec![usize::MAX; border_nodes.len() * border_nodes.len()];
+        let mut dijkstra = OneToManyDijkstra::new();
+        for &source in &border {
+            dijkstra.run(&cell_graph, source, &border);
+            for &target in &border {
+                matrix[source * border_nodes.len() + target] = dijkstra.distance(target);
+            }
+        }
+
+        Some(CellDistances {
+            border_nodes,
+            matrix,
+        })
+    }
+}
+
+/// One row of the answer a popup shows: a border node of the same cell and how
+/// far it is from the one that was asked about.
+#[derive(Serialize)]
+struct Reachable {
+    node: NodeID,
+    coordinate: [f64; 2],
+    distance: usize,
+}
+
+/// The answer a popup shows.
+#[derive(Serialize)]
+struct NodeDistances {
+    node: NodeID,
+    cell: u32,
+    coordinate: [f64; 2],
+    border_node_count: usize,
+    /// the closest border nodes, at most [`POPUP_DISTANCES`] of them
+    nearest: Vec<Reachable>,
+    /// border nodes of the cell that this one cannot reach at all
+    unreachable_count: usize,
+}
+
+/// Answers what the distances from one border node into its cell are. The
+/// client asks for this when the cursor comes to rest on a node.
+async fn get_node_distances(
+    path: web::Path<NodeID>,
+    state: web::Data<ServerState>,
+) -> impl Responder {
+    let node = path.into_inner();
+    let Some(&cell) = state.partition_ids.get(node) else {
+        return HttpResponse::NotFound().body(format!("no node {node}"));
+    };
+    let Some(distances) = state.distances_of(cell) else {
+        return HttpResponse::NotFound().body(format!("cell {} has no border", cell.0));
+    };
+    let Some(source) = distances
+        .border_nodes
+        .iter()
+        .position(|&border| border == node)
+    else {
+        return HttpResponse::NotFound().body(format!("node {node} is not on the border"));
+    };
+
+    let coordinate = |node: NodeID| {
+        let (lon, lat) = state.coordinates[node].to_lon_lat_pair();
+        [lon, lat]
+    };
+
+    let mut nearest = distances
+        .border_nodes
+        .iter()
+        .enumerate()
+        .filter(|&(target, _)| target != source)
+        .map(|(target, &node)| Reachable {
+            node,
+            coordinate: coordinate(node),
+            distance: distances.distance(source, target),
+        })
+        .collect::<Vec<_>>();
+    let unreachable_count = nearest
+        .iter()
+        .filter(|reachable| reachable.distance == usize::MAX)
+        .count();
+    nearest.retain(|reachable| reachable.distance != usize::MAX);
+    nearest.sort_unstable_by_key(|reachable| reachable.distance);
+    nearest.truncate(POPUP_DISTANCES);
+
+    HttpResponse::Ok().json(NodeDistances {
+        node,
+        cell: cell.0,
+        coordinate: coordinate(node),
+        border_node_count: distances.border_nodes.len(),
+        nearest,
+        unreachable_count,
+    })
 }
 
 #[actix_web::main]
@@ -125,146 +561,40 @@ async fn main() -> Result<(), Box<dyn Error>> {
         static_graph.number_of_edges()
     );
 
-    let mut min_dist = f64::MAX;
-    let mut minumum = (
-        FPCoordinate::new_from_lat_lon(12., 12.),
-        PartitionID::new(123),
-    );
-    coordinates.iter().zip(&partition_ids).for_each(|(c, p)| {
-        let dist = c.distance_to(&FPCoordinate::new_from_lat_lon(50.20731, 8.57747));
-        if dist < min_dist {
-            min_dist = dist;
-            minumum = (*c, *p);
-        }
-    });
-    println!("min dist: {}, coordinate: {:?}", min_dist, minumum);
+    // the coordinate the debug output below reports on
+    let probe = FPCoordinate::new_from_lat_lon(50.20731, 8.57747);
+    let nearest = coordinates
+        .iter()
+        .zip(&partition_ids)
+        .min_by(|(left, _), (right, _)| {
+            left.distance_to(&probe)
+                .total_cmp(&right.distance_to(&probe))
+        });
+    if let Some((coordinate, cell)) = nearest {
+        info!(
+            "closest node to {probe}: {coordinate} in cell {}, {:.3} km away",
+            cell.0,
+            coordinate.distance_to(&probe)
+        );
+    }
 
-    // create r-tree for fast lookup of coordinates
-    let rtree = RTree::from_elements(
-        coordinates
-            .iter()
-            .cloned()
-            .zip(partition_ids.iter().cloned()),
-    );
-    let input_coordinate = FPCoordinate::new_from_lat_lon(50.20731, 8.57747);
-    let mut nearest = rtree.nearest_iter(&input_coordinate);
-    println!("nearest: {:?}", nearest.next());
-
-    println!("Starting tile server on http://127.0.0.1:5000");
-    println!("Press Ctrl+C to stop the server");
-
-    // Sort the partition ids by proxy in ascending order
-    let mut partition_id_proxy = (0..partition_ids.len()).collect::<Vec<_>>();
-    partition_id_proxy.sort_by_key(|&i| partition_ids[i]);
-
-    // Create a run iterator to find runs of equal partition ids
-    let cell_iterator = RunIterator::new_by(&partition_id_proxy, |&a, &b| {
-        partition_ids[a] == partition_ids[b]
-    });
-
-    let pb = indicatif::ProgressBar::new(273521);
-    // let mut cell_index = 0;
-    let mut border_nodes = Vec::new();
-    // let mut dijkstra = UnidirectionalDijkstra::new();
-    let mut otm_dijkstra = OneToManyDijkstra::new();
-
-    let mut cells = Vec::new();
-
-    let mut cell_map = FxHashMap::default();
-
-    // for run in cell_iterator {
-    cell_iterator.enumerate().for_each(|(cell_index, run)| {
-        border_nodes.clear();
-        pb.set_message(format!("cell #{cell_index}"));
-        // cell_index += 1;
-        pb.inc(1);
-
-        // extract the edges of the subgraph
-        let source_partition_id = partition_ids[run[0]];
-        let mut subgraph_edges = Vec::new();
-        for &node_id in run {
-            for edge in static_graph.edge_range(node_id) {
-                let target = static_graph.target(edge);
-                let target_partition_id = partition_ids[target];
-
-                if target_partition_id == source_partition_id {
-                    let data = static_graph.data(edge);
-                    subgraph_edges.push(InputEdge::new(node_id, target, *data));
-                } else {
-                    border_nodes.push(node_id);
-                }
-            }
-        }
-        border_nodes.sort_unstable();
-        border_nodes.dedup();
-
-        let cell_id = partition_ids[border_nodes[0]];
-        cell_map.insert(cell_id, cell_index - 1);
-        // renumber source and target nodes of edges to be zero-based
-        // TODO: faster hashmap implementation using tabhash or fibonacci hash
-        let mut node_map = FxHashMap::default();
-        for node_id in &border_nodes {
-            node_map.insert(*node_id, node_map.len());
-        }
-
-        let subgraph_edges_len = subgraph_edges.len();
-        for edge in &mut subgraph_edges {
-            let current_len = node_map.len();
-            edge.source = *node_map.entry(edge.source).or_insert(current_len);
-
-            let current_len = node_map.len();
-            edge.target = *node_map.entry(edge.target).or_insert(current_len);
-            assert!(edge.source < 2 * subgraph_edges_len);
-            assert!(edge.target < 2 * subgraph_edges_len);
-        }
-        // TODO: find a way to avoid relocations
-        let cell_graph = StaticGraph::new(subgraph_edges);
-        let mut cell = vec![0; border_nodes.len() * border_nodes.len()];
-        let border_node_ids = (0..border_nodes.len()).collect::<Vec<_>>();
-        for source in &border_node_ids {
-            otm_dijkstra.run(&cell_graph, *source, &border_node_ids);
-            for target in &border_node_ids {
-                cell[source * border_nodes.len() + target] = otm_dijkstra.distance(*target);
-            }
-            // TODO: if one-to-many search checks out to be fully correct and reliable.
-            // for target in &border_node_ids {
-            //     if source == target {
-            //         continue;
-            //     }
-
-            //     let distance = dijkstra.run(&cell_graph, *source, *target);
-            //     cell[source * border_nodes.len() + target] = distance;
-            // }
-        }
-        cells.push(Cell::new(border_nodes.clone(), cell, cell_index));
-        // println!("cell: {:?}", cell);
-        // panic!("stop");
-    });
-    info!("cells: {}", cells.len());
-    info!("cell map: {}", cell_map.len());
-    pb.finish_with_message("done");
-
-    let source = cells[0].border_nodes()[0];
-    let target =
-        cells[cells.len() - 1].border_nodes()[cells[cells.len() - 1].border_nodes().len() - 1];
+    let state = web::Data::new(ServerState::new(static_graph, coordinates, partition_ids));
     info!(
-        "first border node: {:?}, latlon: {}",
-        source, coordinates[source]
+        "{} arcs on the boundary between {} cells, on {} border nodes",
+        state.tiles.boundary.len(),
+        state.nodes_by_cell.len(),
+        state.tiles.border_nodes.len()
     );
-    info!(
-        "last border node: {:?}, latlon: {}",
-        target, coordinates[target]
-    );
+    if state.tiles.boundary.is_empty() {
+        warn!("the partition has no boundary, so the tiles will be empty");
+    }
 
-    // compute Dijkstra distance for first -> last
-    let mut dijkstra = UnidirectionalDijkstra::new();
-    let dijkstra_distance = dijkstra.run(&static_graph, source, target);
-    info!("Dijkstra distance: {}", dijkstra_distance);
+    let address = args.listen.clone();
+    info!("serving on http://{address}");
+    info!("press Ctrl+C to stop the server");
 
-    // compute Cell distance for first -> last
-
-    HttpServer::new(|| App::new().configure(routes))
-        .bind("127.0.0.1:5000")?
+    HttpServer::new(move || App::new().app_data(state.clone()).configure(routes))
+        .bind(address)?
         .run()
         .await?;
 
@@ -277,70 +607,285 @@ mod tests {
     // `test` is aliased, as importing it plainly would shadow the `#[test]`
     // attribute with the actix macro of the same name
     use actix_web::{App, body::to_bytes, http::StatusCode, test as actix_test};
-    use toolbox_rs::mvt::{CLOSE_PATH, LINE_TO, MOVE_TO, command_and_count};
+    use toolbox_rs::mvt::{LINE_TO, MOVE_TO, command_and_count};
 
-    #[actix_web::test]
-    async fn index_is_served() {
-        let app = actix_test::init_service(App::new().configure(routes)).await;
-        let request = actix_test::TestRequest::get().uri("/").to_request();
-        let response = actix_test::call_service(&app, request).await;
+    /// Two cells that meet in the middle of a tile of Frankfurt, with one arc
+    /// crossing between them.
+    const ZOOM: u32 = 14;
+    const LAT: f64 = 50.20731;
+    const LON: f64 = 8.57747;
 
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body()).await.expect("empty body");
-        assert!(String::from_utf8_lossy(&body).contains("<html"));
+    /// A state that only carries tiles, for the handlers that draw them.
+    fn state_with_one_arc() -> ServerState {
+        ServerState {
+            tiles: data_with_one_arc(),
+            graph: StaticGraph::default(),
+            coordinates: Vec::new(),
+            partition_ids: Vec::new(),
+            nodes_by_cell: FxHashMap::default(),
+            tabulated: Mutex::new(FxHashMap::default()),
+        }
     }
 
-    #[actix_web::test]
-    async fn tile_is_served_as_protobuf() {
-        let app = actix_test::init_service(App::new().configure(routes)).await;
-        let request = actix_test::TestRequest::get()
-            .uri("/cells/12/2200/1345.mvt")
-            .to_request();
-        let response = actix_test::call_service(&app, request).await;
+    fn cell_layer(tile: &Tile) -> &Layer {
+        tile.layers
+            .iter()
+            .find(|layer| layer.name == CELL_LAYER)
+            .expect("no cell layer")
+    }
 
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response
-                .headers()
-                .get("content-type")
-                .expect("no content type"),
-            "application/x-protobuf"
+    fn tile_of_probe() -> (u32, u32) {
+        use toolbox_rs::vector_tile::coordinate_to_tile_number;
+        use toolbox_rs::wgs84::FloatCoordinate;
+        coordinate_to_tile_number(
+            FloatCoordinate {
+                lat: FloatLatitude(LAT),
+                lon: FloatLongitude(LON),
+            },
+            ZOOM,
+        )
+    }
+
+    fn data_with_one_arc() -> TileData {
+        TileData {
+            boundary: vec![BoundaryArc {
+                source: FPCoordinate::new_from_lat_lon(LAT, LON),
+                target: FPCoordinate::new_from_lat_lon(LAT + 0.002, LON + 0.002),
+                cell: PartitionID::new(7),
+            }],
+            border_nodes: vec![BorderNode {
+                coordinate: FPCoordinate::new_from_lat_lon(LAT, LON),
+                cell: PartitionID::new(7),
+                node: 42,
+            }],
+        }
+    }
+
+    /// Two cells of two nodes each, joined by a single arc between them, so
+    /// that every node is a border node.
+    ///     0 - 1 === 2 - 3
+    fn state_of_two_cells() -> ServerState {
+        let edges = vec![
+            InputEdge::new(0, 1, 3_usize),
+            InputEdge::new(1, 0, 3_usize),
+            InputEdge::new(1, 2, 7_usize),
+            InputEdge::new(2, 1, 7_usize),
+            InputEdge::new(2, 3, 5_usize),
+            InputEdge::new(3, 2, 5_usize),
+        ];
+        let coordinates = (0..4)
+            .map(|index| FPCoordinate::new_from_lat_lon(LAT, LON + 0.001 * f64::from(index)))
+            .collect::<Vec<_>>();
+        let partition_ids = vec![
+            PartitionID::new(1),
+            PartitionID::new(1),
+            PartitionID::new(2),
+            PartitionID::new(2),
+        ];
+        ServerState::new(StaticGraph::new(edges), coordinates, partition_ids)
+    }
+
+    #[test]
+    fn boundary_holds_the_arcs_that_leave_their_cell() {
+        // 0 - 1 - 2, with the cut between node 1 and node 2
+        let edges = vec![
+            InputEdge::new(0, 1, 1_usize),
+            InputEdge::new(1, 0, 1_usize),
+            InputEdge::new(1, 2, 1_usize),
+            InputEdge::new(2, 1, 1_usize),
+        ];
+        let graph = StaticGraph::new(edges);
+        let coordinates = vec![
+            FPCoordinate::new_from_lat_lon(50.0, 8.0),
+            FPCoordinate::new_from_lat_lon(50.1, 8.1),
+            FPCoordinate::new_from_lat_lon(50.2, 8.2),
+        ];
+        let partition_ids = vec![
+            PartitionID::new(1),
+            PartitionID::new(1),
+            PartitionID::new(2),
+        ];
+
+        let data = TileData::new(&graph, &coordinates, &partition_ids);
+
+        // only the arc between the cells is on the boundary, and it is taken
+        // once although the graph holds both of its directions
+        assert_eq!(data.boundary.len(), 1);
+        assert_eq!(data.boundary[0].source, coordinates[1]);
+        assert_eq!(data.boundary[0].target, coordinates[2]);
+        assert_eq!(data.boundary[0].cell, PartitionID::new(1));
+    }
+
+    #[test]
+    fn a_partition_of_one_cell_has_no_boundary() {
+        let edges = vec![InputEdge::new(0, 1, 1_usize), InputEdge::new(1, 0, 1_usize)];
+        let graph = StaticGraph::new(edges);
+        let coordinates = vec![
+            FPCoordinate::new_from_lat_lon(50.0, 8.0),
+            FPCoordinate::new_from_lat_lon(50.1, 8.1),
+        ];
+        let partition_ids = vec![PartitionID::new(1), PartitionID::new(1)];
+
+        assert!(
+            TileData::new(&graph, &coordinates, &partition_ids)
+                .boundary
+                .is_empty()
         );
     }
 
-    /// The response has to survive the round trip through the wire format, as
-    /// that is all a client ever sees of it.
-    #[actix_web::test]
-    async fn served_tile_decodes_again() {
-        let app = actix_test::init_service(App::new().configure(routes)).await;
-        let request = actix_test::TestRequest::get()
-            .uri("/cells/12/2200/1345.mvt")
-            .to_request();
-        let response = actix_test::call_service(&app, request).await;
-        let body = to_bytes(response.into_body()).await.expect("empty body");
+    #[test]
+    fn the_corner_of_a_tile_sits_at_its_origin() {
+        let (x, y) = tile_of_probe();
+        let bounds = toolbox_rs::vector_tile::get_tile_bounds(ZOOM, x, y);
+        let corner = FPCoordinate::new_from_lat_lon(bounds.min_lat.0, bounds.min_lon.0);
 
-        let tile = Tile::decode(&body[..]).expect("served tile does not decode");
-        assert_eq!(tile.layers.len(), 1);
-        let layer = &tile.layers[0];
-        assert_eq!(layer.name, "speeds");
-        assert_eq!(layer.version, 2);
-        assert_eq!(layer.extent, Some(TILE_EXTENT));
-        assert_eq!(layer.features.len(), 1);
-        assert_eq!(layer.features[0].r#type, Some(i32::from(GeomType::Polygon)));
+        let (tile_x, tile_y) = to_tile_coordinate(corner, ZOOM, x, y);
+        // the north west corner of a tile is the origin of its grid
+        assert!(tile_x.abs() <= 1, "x of the corner is {tile_x}");
+        assert!(tile_y.abs() <= 1, "y of the corner is {tile_y}");
     }
 
-    /// Every tag is a pair of indices, and a reader that follows one out of
-    /// range has no way to recover.
+    #[test]
+    fn a_coordinate_of_the_tile_lands_inside_its_extent() {
+        let (x, y) = tile_of_probe();
+        let (tile_x, tile_y) =
+            to_tile_coordinate(FPCoordinate::new_from_lat_lon(LAT, LON), ZOOM, x, y);
+
+        assert!((0..TILE_EXTENT as i32).contains(&tile_x), "x is {tile_x}");
+        assert!((0..TILE_EXTENT as i32).contains(&tile_y), "y is {tile_y}");
+    }
+
+    #[test]
+    fn a_segment_that_draws_nothing_is_dropped() {
+        assert!(!is_visible((10, 10), (10, 10)));
+        assert!(is_visible((10, 10), (11, 10)));
+    }
+
+    #[test]
+    fn segments_off_one_side_are_dropped() {
+        let outside = TILE_EXTENT as i32 * 4;
+        assert!(!is_visible((-outside, 10), (-outside - 5, 10)));
+        assert!(!is_visible((outside, 10), (outside + 5, 10)));
+        assert!(!is_visible((10, -outside), (10, -outside - 5)));
+        assert!(!is_visible((10, outside), (10, outside + 5)));
+    }
+
+    #[test]
+    fn a_segment_across_the_tile_is_kept() {
+        let outside = TILE_EXTENT as i32 * 4;
+        // both ends are outside, but on opposite sides, so it crosses the tile
+        assert!(is_visible((-outside, 2048), (outside, 2048)));
+        assert!(is_visible((2048, -outside), (2048, outside)));
+    }
+
+    #[test]
+    fn a_cell_becomes_a_feature_of_the_tile() {
+        let (x, y) = tile_of_probe();
+        let tile = build_tile(&data_with_one_arc(), ZOOM, x, y);
+
+        assert_eq!(tile.layers.len(), 2, "one layer of cells, one of nodes");
+        let layer = cell_layer(&tile);
+        assert_eq!(layer.name, CELL_LAYER);
+        assert_eq!(layer.extent, Some(TILE_EXTENT));
+        assert_eq!(layer.features.len(), 1);
+        assert_eq!(layer.keys, vec!["cell".to_string()]);
+        assert_eq!(layer.values[0].uint_value, Some(7));
+        assert_eq!(
+            layer.features[0].r#type,
+            Some(i32::from(GeomType::Linestring))
+        );
+    }
+
+    #[test]
+    fn arcs_of_one_cell_share_a_feature() {
+        let mut data = data_with_one_arc();
+        // a second arc of the same cell, next to the first one
+        data.boundary.push(BoundaryArc {
+            source: FPCoordinate::new_from_lat_lon(LAT + 0.0005, LON),
+            target: FPCoordinate::new_from_lat_lon(LAT + 0.0025, LON + 0.002),
+            cell: PartitionID::new(7),
+        });
+        // and one of another cell
+        data.boundary.push(BoundaryArc {
+            source: FPCoordinate::new_from_lat_lon(LAT + 0.001, LON),
+            target: FPCoordinate::new_from_lat_lon(LAT + 0.003, LON + 0.002),
+            cell: PartitionID::new(8),
+        });
+
+        let (x, y) = tile_of_probe();
+        let tile = build_tile(&data, ZOOM, x, y);
+        let layer = cell_layer(&tile);
+
+        assert_eq!(layer.features.len(), 2, "one feature per cell");
+        let mut cells = layer
+            .values
+            .iter()
+            .map(|value| value.uint_value.expect("cell id is not a number"))
+            .collect::<Vec<_>>();
+        cells.sort_unstable();
+        assert_eq!(cells, vec![7, 8]);
+
+        // the cell of two arcs draws two line strings within one feature
+        let two = layer
+            .features
+            .iter()
+            .find(|feature| feature.id == Some(7))
+            .expect("cell 7 is missing");
+        let move_tos = commands_of(&two.geometry)
+            .iter()
+            .filter(|&&(id, _)| id == MOVE_TO)
+            .count();
+        assert_eq!(move_tos, 2);
+    }
+
+    #[test]
+    fn a_tile_elsewhere_stays_empty() {
+        // the same data, but a tile on the other side of the planet
+        let tile = build_tile(&data_with_one_arc(), ZOOM, 1, 1);
+        assert!(cell_layer(&tile).features.is_empty());
+        assert!(cell_layer(&tile).values.is_empty());
+    }
+
+    /// Walks a geometry and hands back the commands it is made of, checking
+    /// that each one is followed by the number of parameters it announces.
+    fn commands_of(geometry: &[u32]) -> Vec<(u32, u32)> {
+        let mut commands = Vec::new();
+        let mut index = 0;
+        while index < geometry.len() {
+            let (id, count) = command_and_count(geometry[index]);
+            assert!(count > 0, "a command that repeats zero times is rejected");
+            let parameters = match id {
+                MOVE_TO | LINE_TO => 2 * count as usize,
+                other => panic!("unexpected command id {other}"),
+            };
+            assert!(
+                index + 1 + parameters <= geometry.len(),
+                "command runs past the end of the geometry"
+            );
+            commands.push((id, count));
+            index += 1 + parameters;
+        }
+        commands
+    }
+
+    #[test]
+    fn geometry_is_a_well_formed_command_sequence() {
+        let (x, y) = tile_of_probe();
+        let tile = build_tile(&data_with_one_arc(), ZOOM, x, y);
+        // a single arc is one MoveTo onto its start and one LineTo to its end
+        assert_eq!(
+            commands_of(&cell_layer(&tile).features[0].geometry),
+            vec![(MOVE_TO, 1), (LINE_TO, 1)]
+        );
+    }
+
     #[test]
     fn tags_stay_within_keys_and_values() {
-        let tile = build_tile(12, 2200, 1345);
+        let (x, y) = tile_of_probe();
+        let tile = build_tile(&data_with_one_arc(), ZOOM, x, y);
         for layer in &tile.layers {
             for feature in &layer.features {
-                assert_eq!(
-                    feature.tags.len() % 2,
-                    0,
-                    "tags are pairs of a key and a value"
-                );
+                assert_eq!(feature.tags.len() % 2, 0, "tags are pairs");
                 for pair in feature.tags.chunks_exact(2) {
                     assert!((pair[0] as usize) < layer.keys.len(), "key out of range");
                     assert!(
@@ -352,47 +897,181 @@ mod tests {
         }
     }
 
-    /// The geometry has to be a sequence a reader can walk: a command followed
-    /// by exactly the number of parameters it announces.
-    #[test]
-    fn geometry_is_a_well_formed_command_sequence() {
-        let tile = build_tile(12, 2200, 1345);
-        let geometry = &tile.layers[0].features[0].geometry;
+    #[actix_web::test]
+    async fn index_is_served() {
+        let app = actix_test::init_service(App::new().configure(routes)).await;
+        let request = actix_test::TestRequest::get().uri("/").to_request();
+        let response = actix_test::call_service(&app, request).await;
 
-        let mut index = 0;
-        let mut commands = Vec::new();
-        while index < geometry.len() {
-            let (id, count) = command_and_count(geometry[index]);
-            assert!(count > 0, "a command that repeats zero times is rejected");
-            let parameters = match id {
-                MOVE_TO | LINE_TO => 2 * count as usize,
-                CLOSE_PATH => {
-                    assert_eq!(count, 1, "ClosePath does not repeat");
-                    0
-                }
-                other => panic!("unknown command id {other}"),
-            };
-            assert!(
-                index + 1 + parameters <= geometry.len(),
-                "command runs past the end of the geometry"
-            );
-            commands.push(id);
-            index += 1 + parameters;
-        }
-
-        // a polygon is a MoveTo, the line to its corners, and a closed ring
-        assert_eq!(commands, vec![MOVE_TO, LINE_TO, CLOSE_PATH]);
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body()).await.expect("empty body");
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains("<html"));
+        // the client asks for the layer the server actually serves
+        assert!(body.contains("/cells/{z}/{x}/{y}.mvt"));
+        // and keeps the position of the map in the URL
+        assert!(body.contains("hash: true"));
     }
 
-    /// A polygon has to start with a single MoveTo, or it is not one ring.
-    #[test]
-    fn polygon_starts_a_single_ring() {
-        let tile = build_tile(0, 0, 0);
-        let geometry = &tile.layers[0].features[0].geometry;
-        assert_eq!(command_and_count(geometry[0]), (MOVE_TO, 1));
+    #[actix_web::test]
+    async fn served_tile_decodes_again() {
+        let (x, y) = tile_of_probe();
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(state_with_one_arc()))
+                .configure(routes),
+        )
+        .await;
+        let request = actix_test::TestRequest::get()
+            .uri(&format!("/cells/{ZOOM}/{x}/{y}.mvt"))
+            .to_request();
+        let response = actix_test::call_service(&app, request).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
-            command_and_count(geometry[geometry.len() - 1]),
-            (CLOSE_PATH, 1)
+            response
+                .headers()
+                .get("content-type")
+                .expect("no content type"),
+            "application/x-protobuf"
         );
+
+        let body = to_bytes(response.into_body()).await.expect("empty body");
+        let tile = Tile::decode(&body[..]).expect("served tile does not decode");
+        assert_eq!(cell_layer(&tile).features.len(), 1);
+    }
+
+    #[test]
+    fn border_nodes_are_the_nodes_an_arc_leaves_on() {
+        let state = state_of_two_cells();
+        let mut nodes = state
+            .tiles
+            .border_nodes
+            .iter()
+            .map(|border| border.node)
+            .collect::<Vec<_>>();
+        nodes.sort_unstable();
+        // only the two nodes of the arc between the cells sit on a border
+        assert_eq!(nodes, vec![1, 2]);
+    }
+
+    #[test]
+    fn distances_within_a_cell_are_tabulated_on_request() {
+        let state = state_of_two_cells();
+        let distances = state
+            .distances_of(PartitionID::new(1))
+            .expect("cell 1 has a border");
+
+        // node 1 is the only border node of its cell, so the matrix is 1x1 and
+        // the distance to itself is zero
+        assert_eq!(distances.border_nodes, vec![1]);
+        assert_eq!(distances.distance(0, 0), 0);
+    }
+
+    #[test]
+    fn a_tabulated_cell_is_kept() {
+        let state = state_of_two_cells();
+        let first = state.distances_of(PartitionID::new(1)).expect("no cell 1");
+        let second = state.distances_of(PartitionID::new(1)).expect("no cell 1");
+        // the second request is answered from the same tabulation
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn a_cell_without_a_border_is_not_tabulated() {
+        // one cell holding the whole graph, so no arc ever leaves it
+        let edges = vec![InputEdge::new(0, 1, 1_usize), InputEdge::new(1, 0, 1_usize)];
+        let coordinates = vec![
+            FPCoordinate::new_from_lat_lon(LAT, LON),
+            FPCoordinate::new_from_lat_lon(LAT, LON + 0.001),
+        ];
+        let partition_ids = vec![PartitionID::new(1), PartitionID::new(1)];
+        let state = ServerState::new(StaticGraph::new(edges), coordinates, partition_ids);
+
+        assert!(state.distances_of(PartitionID::new(1)).is_none());
+    }
+
+    #[test]
+    fn border_nodes_reach_the_tile() {
+        let (x, y) = tile_of_probe();
+        let tile = build_tile(&data_with_one_arc(), ZOOM, x, y);
+
+        let layer = tile
+            .layers
+            .iter()
+            .find(|layer| layer.name == BORDER_LAYER)
+            .expect("no border node layer");
+        assert_eq!(layer.features.len(), 1);
+        assert_eq!(layer.features[0].id, Some(42));
+        assert_eq!(layer.features[0].r#type, Some(i32::from(GeomType::Point)));
+        assert_eq!(layer.keys, vec!["cell".to_string(), "node".to_string()]);
+
+        // the tags name the cell and the node, which is what the popup asks with
+        assert_eq!(layer.features[0].tags, vec![0, 0, 1, 1]);
+        assert_eq!(layer.values[0].uint_value, Some(7));
+        assert_eq!(layer.values[1].uint_value, Some(42));
+    }
+
+    #[test]
+    fn border_nodes_of_another_tile_are_left_out() {
+        let tile = build_tile(&data_with_one_arc(), ZOOM, 1, 1);
+        let layer = tile
+            .layers
+            .iter()
+            .find(|layer| layer.name == BORDER_LAYER)
+            .expect("no border node layer");
+        assert!(layer.features.is_empty());
+    }
+
+    #[actix_web::test]
+    async fn distances_of_a_border_node_are_served() {
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(state_of_two_cells()))
+                .configure(routes),
+        )
+        .await;
+        let request = actix_test::TestRequest::get()
+            .uri("/node/1.json")
+            .to_request();
+        let response = actix_test::call_service(&app, request).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body()).await.expect("empty body");
+        let answer = String::from_utf8_lossy(&body);
+        assert!(answer.contains("\"node\":1"), "{answer}");
+        assert!(answer.contains("\"cell\":1"), "{answer}");
+        assert!(answer.contains("\"border_node_count\":1"), "{answer}");
+    }
+
+    #[actix_web::test]
+    async fn a_node_off_the_border_is_reported() {
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(state_of_two_cells()))
+                .configure(routes),
+        )
+        .await;
+        // node 0 lies inside its cell, so it has no row of distances
+        let request = actix_test::TestRequest::get()
+            .uri("/node/0.json")
+            .to_request();
+        let response = actix_test::call_service(&app, request).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[actix_web::test]
+    async fn a_node_that_does_not_exist_is_reported() {
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(state_of_two_cells()))
+                .configure(routes),
+        )
+        .await;
+        let request = actix_test::TestRequest::get()
+            .uri("/node/99999.json")
+            .to_request();
+        let response = actix_test::call_service(&app, request).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }
