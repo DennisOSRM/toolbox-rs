@@ -51,8 +51,7 @@ var simple = {
             // origin so that it still follows whatever address the server was
             // told to listen on.
             "tiles": [location.origin + "/cells/{z}/{x}/{y}.mvt"],
-            "promoteId": undefined,
-            "minzoom": 12,
+            "minzoom": 6,
             "maxzoom": 19
         }
     },
@@ -69,7 +68,7 @@ var simple = {
             "type": "line",
             "source": "local-tiles",
             "source-layer": "interior",
-            "minzoom": 12,
+            "minzoom": 6,
             "layout": { "line-cap": "round", "line-join": "round" },
             "paint": {
                 "line-width": {
@@ -98,7 +97,7 @@ var simple = {
             "type": "circle",
             "source": "local-tiles",
             "source-layer": "border_nodes",
-            "minzoom": 12,
+            "minzoom": 6,
             "paint": {
                 "circle-radius": {
                     "base": 1.5,
@@ -114,7 +113,7 @@ var simple = {
             "type": "line",
             "source": "local-tiles",
             "source-layer": "cells",
-            "minzoom": 12,
+            "minzoom": 6,
             "layout": {
                 "visibility": "visible",
                 "line-cap": "round",

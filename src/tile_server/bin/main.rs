@@ -51,6 +51,12 @@ const BORDER_LAYER: &str = "border_nodes";
 /// dashes, whereas the arcs inside a cell fill it in and make it a region.
 const INTERIOR_LAYER: &str = "interior";
 
+/// The zoom level from which on the arcs inside a cell are drawn. Below it a
+/// cell covers a few pixels, its roads fall on top of each other, and drawing
+/// them costs megabytes per tile for a smear. The cut is drawn at every level,
+/// as that is what the shape of a cell is made of.
+const MIN_INTERIOR_ZOOM: u32 = 11;
+
 /// The zoom level the arcs are bucketed by. A request at this level or above
 /// falls into exactly one bucket, which is all that has to be looked at. The
 /// client asks for nothing below it.
@@ -94,6 +100,12 @@ struct TileData {
     /// the nodes that fall into a tile of [`INDEX_ZOOM`], so that a request
     /// only has to look at the arcs that can reach it
     nodes_by_tile: FxHashMap<(u32, u32), Vec<NodeID>>,
+    /// the bucket of each node, packed by [`pack_bucket`]
+    bucket_of_node: Vec<u32>,
+    /// the arcs of the cut that reach into a bucket, as offsets into
+    /// `boundary`. An arc is listed under both of its ends, so a request has
+    /// to weed out the ones it meets twice.
+    boundary_by_tile: FxHashMap<(u32, u32), Vec<u32>>,
 }
 
 /// The cell that a cell of the leaf level falls into at the given level of the
@@ -109,15 +121,29 @@ fn cell_at_level(cell: PartitionID, level: u32) -> PartitionID {
     PartitionID::new((cell.0 >> steps).max(PartitionID::root().0))
 }
 
-/// The tile of [`INDEX_ZOOM`] that the given tile lies in.
-fn index_tile_of(zoom: u32, x: u32, y: u32) -> (u32, u32) {
-    if zoom <= INDEX_ZOOM {
-        let up = INDEX_ZOOM - zoom;
-        (x << up, y << up)
-    } else {
+/// The range of [`INDEX_ZOOM`] tiles that the given tile covers, as the corners
+/// of a rectangle of buckets, both ends included.
+///
+/// A tile of a zoom level above the index falls into a single bucket. One below
+/// it spans four buckets per level of the difference, and every one of them has
+/// to be looked at or only a fraction of the arcs is drawn.
+fn index_tiles_of(zoom: u32, x: u32, y: u32) -> (u32, u32, u32, u32) {
+    if zoom >= INDEX_ZOOM {
         let down = zoom - INDEX_ZOOM;
-        (x >> down, y >> down)
+        let (x, y) = (x >> down, y >> down);
+        (x, y, x, y)
+    } else {
+        let up = INDEX_ZOOM - zoom;
+        let span = (1 << up) - 1;
+        (x << up, y << up, (x << up) + span, (y << up) + span)
     }
+}
+
+/// The bucket of a node, packed into one number. A tile number of
+/// [`INDEX_ZOOM`] needs twelve bits, so both of them fit next to each other and
+/// the bucket of every node costs four bytes rather than eight.
+const fn pack_bucket(x: u32, y: u32) -> u32 {
+    (x << INDEX_ZOOM) | y
 }
 
 impl TileData {
@@ -133,6 +159,7 @@ impl TileData {
         let mut boundary = Vec::new();
         let mut border_nodes = Vec::new();
         let mut nodes_by_tile: FxHashMap<(u32, u32), Vec<NodeID>> = FxHashMap::default();
+        let mut bucket_of_node = vec![0; graph.number_of_nodes()];
         for source in graph.node_range() {
             let (lon, lat) = coordinates[source].to_lon_lat_pair();
             let tile = coordinate_to_tile_number(
@@ -143,6 +170,7 @@ impl TileData {
                 INDEX_ZOOM,
             );
             nodes_by_tile.entry(tile).or_default().push(source);
+            bucket_of_node[source] = pack_bucket(tile.0, tile.1);
 
             let mut leaves_cell = false;
             for edge in graph.edge_range(source) {
@@ -169,6 +197,29 @@ impl TileData {
                 });
             }
         }
+        // the cut is indexed by both ends of its arcs, so that a tile only
+        // looks at the arcs that can reach it
+        let mut boundary_by_tile: FxHashMap<(u32, u32), Vec<u32>> = FxHashMap::default();
+        for (offset, arc) in boundary.iter().enumerate() {
+            let offset = u32::try_from(offset).expect("more arcs on the cut than fit into u32");
+            for coordinate in [arc.source, arc.target] {
+                let (lon, lat) = coordinate.to_lon_lat_pair();
+                let tile = coordinate_to_tile_number(
+                    FloatCoordinate {
+                        lat: FloatLatitude(lat),
+                        lon: FloatLongitude(lon),
+                    },
+                    INDEX_ZOOM,
+                );
+                boundary_by_tile.entry(tile).or_default().push(offset);
+            }
+        }
+        for arcs in boundary_by_tile.values_mut() {
+            arcs.sort_unstable();
+            arcs.dedup();
+            arcs.shrink_to_fit();
+        }
+
         boundary.shrink_to_fit();
         border_nodes.shrink_to_fit();
         for nodes in nodes_by_tile.values_mut() {
@@ -181,6 +232,8 @@ impl TileData {
             boundary,
             border_nodes,
             nodes_by_tile,
+            bucket_of_node,
+            boundary_by_tile,
         }
     }
 }
@@ -280,8 +333,25 @@ fn clip_to_tile(source: (i32, i32), target: (i32, i32)) -> Option<((i32, i32), (
 fn build_tile(state: &ServerState, level: u32, zoom: u32, x: u32, y: u32) -> Tile {
     let data = &state.tiles;
     let mut geometries: FxHashMap<PartitionID, GeometryEncoder> = FxHashMap::default();
+    let (from_x, from_y, to_x, to_y) = index_tiles_of(zoom, x, y);
 
-    for arc in &data.boundary {
+    // an arc of the cut is listed under both of its ends, so the offsets of the
+    // buckets this tile covers are collected and weeded out before drawing
+    let mut cut_arcs = Vec::new();
+    for bucket_x in from_x..=to_x {
+        for bucket_y in from_y..=to_y {
+            if let Some(arcs) = data.boundary_by_tile.get(&(bucket_x, bucket_y)) {
+                cut_arcs.extend_from_slice(arcs);
+            }
+        }
+    }
+    cut_arcs.sort_unstable();
+    cut_arcs.dedup();
+
+    for arc in cut_arcs
+        .iter()
+        .map(|&offset| &data.boundary[offset as usize])
+    {
         let cell = cell_at_level(arc.cell, level);
         if cell == cell_at_level(arc.other, level) {
             // both sides fall into the same cell here, so the arc separates
@@ -365,33 +435,42 @@ fn build_tile(state: &ServerState, level: u32, zoom: u32, x: u32, y: u32) -> Til
     // rather than as the handful of dashes its cut consists of. Only the nodes
     // of the index tile that this one falls into can reach it.
     let mut interior: FxHashMap<PartitionID, GeometryEncoder> = FxHashMap::default();
-    if let Some(nodes) = data.nodes_by_tile.get(&index_tile_of(zoom, x, y)) {
-        for &node in nodes {
-            let cell = cell_at_level(state.partition_ids[node], level);
-            let from = to_tile_coordinate(state.coordinates[node], zoom, x, y);
-            for edge in state.graph.edge_range(node) {
-                let target = state.graph.target(edge);
-                // the cut is drawn by the layer above this one
-                if cell_at_level(state.partition_ids[target], level) != cell {
-                    continue;
+    let covers = |node: NodeID| {
+        let bucket = data.bucket_of_node[node];
+        let (bucket_x, bucket_y) = (bucket >> INDEX_ZOOM, bucket & ((1 << INDEX_ZOOM) - 1));
+        (from_x..=to_x).contains(&bucket_x) && (from_y..=to_y).contains(&bucket_y)
+    };
+    for bucket_x in (from_x..=to_x).take_while(|_| zoom >= MIN_INTERIOR_ZOOM) {
+        for bucket_y in from_y..=to_y {
+            let Some(nodes) = data.nodes_by_tile.get(&(bucket_x, bucket_y)) else {
+                continue;
+            };
+            for &node in nodes {
+                let cell = cell_at_level(state.partition_ids[node], level);
+                let from = to_tile_coordinate(state.coordinates[node], zoom, x, y);
+                for edge in state.graph.edge_range(node) {
+                    let target = state.graph.target(edge);
+                    // the cut is drawn by the layer above this one
+                    if cell_at_level(state.partition_ids[target], level) != cell {
+                        continue;
+                    }
+                    // The graph holds both directions of an arc, so one of them
+                    // has to be dropped. Dropping by node id alone would drop an
+                    // arc whose other end lies outside of what this tile covers,
+                    // as nothing else draws it then, which tore a seam into every
+                    // boundary of the index. An arc is therefore only dropped
+                    // when the end it would be drawn from is covered too.
+                    if target <= node && covers(target) {
+                        continue;
+                    }
+                    let to = to_tile_coordinate(state.coordinates[target], zoom, x, y);
+                    let Some((from, to)) = clip_to_tile(from, to) else {
+                        continue;
+                    };
+                    let geometry = interior.entry(cell).or_default();
+                    geometry.move_to(&[from]);
+                    geometry.line_to(&[to]);
                 }
-                // The graph holds both directions of an arc, so one of them has
-                // to be dropped. Dropping by node id alone would drop an arc
-                // that leaves the bucket for good, as the bucket holding its
-                // other end is not the one being drawn, which tore a seam into
-                // every boundary between two buckets. An arc is therefore only
-                // dropped when the end it would be drawn from sits in this very
-                // bucket. The list is in node order, so it can be searched.
-                if target <= node && nodes.binary_search(&target).is_ok() {
-                    continue;
-                }
-                let to = to_tile_coordinate(state.coordinates[target], zoom, x, y);
-                let Some((from, to)) = clip_to_tile(from, to) else {
-                    continue;
-                };
-                let geometry = interior.entry(cell).or_default();
-                geometry.move_to(&[from]);
-                geometry.line_to(&[to]);
             }
         }
     }
@@ -903,6 +982,27 @@ mod tests {
                 node: 0,
             }],
             nodes_by_tile: FxHashMap::default(),
+            bucket_of_node: vec![0; 2],
+            // the one arc is listed under the bucket of each of its ends
+            boundary_by_tile: [
+                FPCoordinate::new_from_lat_lon(LAT, LON),
+                FPCoordinate::new_from_lat_lon(LAT + 0.002, LON + 0.002),
+            ]
+            .iter()
+            .map(|coordinate| {
+                let (lon, lat) = coordinate.to_lon_lat_pair();
+                (
+                    coordinate_to_tile_number(
+                        FloatCoordinate {
+                            lat: FloatLatitude(lat),
+                            lon: FloatLongitude(lon),
+                        },
+                        INDEX_ZOOM,
+                    ),
+                    vec![0],
+                )
+            })
+            .collect(),
         }
     }
 
@@ -1121,6 +1221,11 @@ mod tests {
         });
 
         let (x, y) = tile_of_probe();
+        // the arcs added above have to be reachable through the index too
+        let offsets = (0..data.boundary.len() as u32).collect::<Vec<_>>();
+        for arcs in data.boundary_by_tile.values_mut() {
+            arcs.clone_from(&offsets);
+        }
         let mut state = state_with_one_arc();
         state.tiles = data;
         let tile = build_tile(&state, LEAF_LEVEL, ZOOM, x, y);
