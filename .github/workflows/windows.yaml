@@ -29,9 +29,6 @@ jobs:
     - name: checkout
       uses: actions/checkout@v7
 
-    - name: Install protoc
-      run: choco install protoc
-
       # Run build
     - name: Install Rustup using win.rustup.rs
       run: |
@@ -45,4 +42,4 @@ jobs:
 
     - name: Build and Test
       shell: cmd
-      run: cargo test
+      run: cargo test --all-features
