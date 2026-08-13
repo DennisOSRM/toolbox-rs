@@ -9,7 +9,11 @@ use rustc_hash::FxHashMap;
 use serde::Serialize;
 use std::{
     error::Error,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+    },
+    time::{Duration, Instant},
 };
 use tile::{Feature, GeomType, Layer, Value};
 use toolbox_rs::{
@@ -461,10 +465,15 @@ struct ServerState {
     partition_ids: Vec<PartitionID>,
     /// the nodes of a cell, so that its subgraph can be built on request
     nodes_by_cell: FxHashMap<PartitionID, Vec<NodeID>>,
-    /// A cell is tabulated the first time it is asked about and kept
+    /// A cell is customized the first time it is asked about and kept
     /// afterwards. Doing it up front would mean walking every cell of the
     /// input before the first tile can be served.
     tabulated: Mutex<FxHashMap<PartitionID, Arc<CellDistances>>>,
+    /// how many cells have been customized so far, and how long that took in
+    /// total. The customization runs cell by cell as the cells are asked
+    /// about, so the sum is what the whole of it would have cost up front.
+    customized_cells: AtomicUsize,
+    customization_nanos: AtomicU64,
 }
 
 impl ServerState {
@@ -487,6 +496,8 @@ impl ServerState {
             partition_ids,
             nodes_by_cell,
             tabulated: Mutex::new(FxHashMap::default()),
+            customized_cells: AtomicUsize::new(0),
+            customization_nanos: AtomicU64::new(0),
         }
     }
 
@@ -513,6 +524,7 @@ impl ServerState {
     /// nodes. A cell is a small part of the input, so this is quick enough to
     /// happen while a request waits for it.
     fn tabulate(&self, cell: PartitionID) -> Option<CellDistances> {
+        let started = Instant::now();
         let nodes = self.nodes_by_cell.get(&cell)?;
 
         // the border nodes lead the numbering, so that they are the leading
@@ -544,14 +556,6 @@ impl ServerState {
             south = south.min(lat);
             north = north.max(lat);
         }
-        info!(
-            "tabulating cell {} on level {}: {} nodes, {} of them on the border, bbox {west:.6},{south:.6},{east:.6},{north:.6}",
-            cell.0,
-            cell.level(),
-            nodes.len(),
-            border_nodes.len()
-        );
-
         // TODO: faster hashmap implementation using tabhash or fibonacci hash
         let mut node_map = FxHashMap::default();
         for &node in &border_nodes {
@@ -583,6 +587,23 @@ impl ServerState {
                 matrix[source * border_nodes.len() + target] = dijkstra.distance(target);
             }
         }
+
+        // the searches are what the customization of a cell costs, so the
+        // clock is read once they are done
+        let elapsed = started.elapsed();
+        let cells = self.customized_cells.fetch_add(1, Ordering::Relaxed) + 1;
+        let total = Duration::from_nanos(
+            self.customization_nanos
+                .fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed),
+        ) + elapsed;
+        info!(
+            "customized cell {} on level {} in {elapsed:.1?}: {} nodes, {} of them on the border, bbox {west:.6},{south:.6},{east:.6},{north:.6}",
+            cell.0,
+            cell.level(),
+            nodes.len(),
+            border_nodes.len()
+        );
+        info!("customization so far: {cells} cells in {total:.1?}");
 
         Some(CellDistances {
             border_nodes,
@@ -761,6 +782,8 @@ mod tests {
             partition_ids: Vec::new(),
             nodes_by_cell: FxHashMap::default(),
             tabulated: Mutex::new(FxHashMap::default()),
+            customized_cells: AtomicUsize::new(0),
+            customization_nanos: AtomicU64::new(0),
         }
     }
 
@@ -1330,5 +1353,26 @@ mod tests {
                 "the arc is missing from the tile at {lon}"
             );
         }
+    }
+
+    #[test]
+    fn customization_is_counted_once_per_cell() {
+        let state = state_of_two_cells();
+        assert_eq!(state.customized_cells.load(Ordering::Relaxed), 0);
+
+        state.distances_of(PartitionID::new(1)).expect("no cell 1");
+        assert_eq!(state.customized_cells.load(Ordering::Relaxed), 1);
+        assert!(state.customization_nanos.load(Ordering::Relaxed) > 0);
+
+        // the second cell adds to the tally
+        state.distances_of(PartitionID::new(2)).expect("no cell 2");
+        assert_eq!(state.customized_cells.load(Ordering::Relaxed), 2);
+
+        // a cell that is answered from the tabulation of an earlier request
+        // was not customized again
+        let after = state.customization_nanos.load(Ordering::Relaxed);
+        state.distances_of(PartitionID::new(1)).expect("no cell 1");
+        assert_eq!(state.customized_cells.load(Ordering::Relaxed), 2);
+        assert_eq!(state.customization_nanos.load(Ordering::Relaxed), after);
     }
 }
