@@ -192,6 +192,181 @@ pub fn assemble(tree: &Tree, sizes: &[usize]) -> LevelDirectory {
     LevelDirectory::new(base, parents)
 }
 
+/// The graph on the cells a bisection left behind: how large each cell is, and
+/// how many arcs of the graph run between two of them.
+///
+/// This is what an assembly needs that the [`Tree`] does not carry. Merging two
+/// cells that share an arc keeps the result in one piece as long as both of
+/// them were, which is what a cell has to be for a search to cross it without
+/// leaving it.
+#[derive(Clone, Debug, Default)]
+pub struct CellGraph {
+    sizes: Vec<usize>,
+    /// the cells next to each one and how many arcs reach them, both ways round
+    neighbours: Vec<Vec<(usize, usize)>>,
+}
+
+impl CellGraph {
+    /// `arcs` holds how many arcs of the graph run between two cells, once per
+    /// pair and in either order.
+    #[must_use]
+    pub fn new(sizes: Vec<usize>, arcs: &[(usize, usize, usize)]) -> Self {
+        let mut neighbours = vec![Vec::new(); sizes.len()];
+        for &(left, right, weight) in arcs {
+            assert!(left != right, "a cell is not next to itself");
+            neighbours[left].push((right, weight));
+            neighbours[right].push((left, weight));
+        }
+        Self { sizes, neighbours }
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.sizes.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.sizes.is_empty()
+    }
+
+    #[must_use]
+    pub fn size_of(&self, cell: usize) -> usize {
+        self.sizes[cell]
+    }
+
+    #[must_use]
+    pub fn neighbours_of(&self, cell: usize) -> &[(usize, usize)] {
+        &self.neighbours[cell]
+    }
+
+    /// The arcs between two cells, each pair once.
+    fn arcs(&self) -> Vec<(usize, usize, usize)> {
+        let mut arcs = Vec::new();
+        for (left, neighbours) in self.neighbours.iter().enumerate() {
+            for &(right, weight) in neighbours {
+                if left < right {
+                    arcs.push((left, right, weight));
+                }
+            }
+        }
+        arcs
+    }
+}
+
+/// Merges neighbouring cells until none of them can take another without
+/// passing `size`, and hands back the cell each one ended up in.
+///
+/// The pairs are taken by how many arcs run between them, the heaviest first,
+/// which is the greedy agglomeration that the coarsening of a multilevel
+/// partitioner is built on. Only cells that share an arc are ever merged, so a
+/// cell of the result is a union of cells joined along arcs and stays in one
+/// piece as long as the cells it was built from were.
+#[must_use]
+pub fn agglomerate(graph: &CellGraph, size: usize) -> Vec<CellId> {
+    let mut arcs = graph.arcs();
+    // heaviest first, and by cell for a run that does not depend on the order
+    // the arcs happened to be collected in
+    arcs.sort_unstable_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)).then(a.1.cmp(&b.1)));
+
+    let mut union = crate::union_find::UnionFind::new(graph.len());
+    let mut merged_size = graph.sizes.clone();
+    for (left, right, _) in arcs {
+        let (left, right) = (union.find(left), union.find(right));
+        if left == right || merged_size[left] + merged_size[right] > size {
+            continue;
+        }
+        let total = merged_size[left] + merged_size[right];
+        union.union(left, right);
+        let root = union.find(left);
+        merged_size[root] = total;
+    }
+
+    // number the cells that are left, in the order their members appear
+    let mut cell_of_root = vec![CellId::MAX; graph.len()];
+    let mut cells = 0;
+    (0..graph.len())
+        .map(|cell| {
+            let root = union.find(cell);
+            if cell_of_root[root] == CellId::MAX {
+                cell_of_root[root] = cells;
+                cells += 1;
+            }
+            cell_of_root[root]
+        })
+        .collect()
+}
+
+/// Draws the cells of a graph together along the given assignment.
+#[must_use]
+pub fn contract(graph: &CellGraph, of: &[CellId]) -> CellGraph {
+    let cells = of.iter().copied().max().map_or(0, |cell| cell as usize + 1);
+    let mut sizes = vec![0; cells];
+    for (cell, size) in graph.sizes.iter().enumerate() {
+        sizes[of[cell] as usize] += size;
+    }
+
+    // the arcs between two cells of the result are the arcs between the cells
+    // they were built from, and the ones inside a cell are gone
+    let mut between: rustc_hash::FxHashMap<(usize, usize), usize> =
+        rustc_hash::FxHashMap::default();
+    for (left, right, weight) in graph.arcs() {
+        let (left, right) = (of[left] as usize, of[right] as usize);
+        if left == right {
+            continue;
+        }
+        let pair = (left.min(right), left.max(right));
+        *between.entry(pair).or_insert(0) += weight;
+    }
+
+    let mut arcs = between
+        .into_iter()
+        .map(|((left, right), weight)| (left, right, weight))
+        .collect::<Vec<_>>();
+    arcs.sort_unstable();
+    CellGraph::new(sizes, &arcs)
+}
+
+/// Assembles the levels by merging neighbouring cells, so that every cell of
+/// every level is a union of cells joined along arcs.
+///
+/// `cell_of_node` says which cell of `graph` each node of the graph sits in.
+/// `sizes` is read from the lowest level up.
+///
+/// # Panics
+///
+/// Panics if `sizes` is empty or does not grow.
+#[must_use]
+pub fn assemble_connected(
+    graph: &CellGraph,
+    cell_of_node: &[CellId],
+    sizes: &[usize],
+) -> LevelDirectory {
+    assert!(!sizes.is_empty(), "a hierarchy needs a level");
+    assert!(
+        sizes.windows(2).all(|pair| pair[0] <= pair[1]),
+        "the levels have to grow"
+    );
+
+    let mut current = graph.clone();
+    let mut base = Vec::new();
+    let mut parents = Vec::new();
+    for (level, &size) in sizes.iter().enumerate() {
+        let merged = agglomerate(&current, size);
+        if level == 0 {
+            base = cell_of_node
+                .iter()
+                .map(|&cell| merged[cell as usize])
+                .collect();
+        } else {
+            parents.push(merged.clone());
+        }
+        current = contract(&current, &merged);
+    }
+
+    LevelDirectory::new(base, parents)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,5 +641,194 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Whether every cell of every level is in one piece, checked by walking
+    /// the graph of the cells without leaving the cell of the level.
+    fn every_cell_is_connected(
+        graph: &CellGraph,
+        cell_of_node: &[CellId],
+        directory: &LevelDirectory,
+    ) -> bool {
+        for level in 0..directory.levels() {
+            // the cell of the level that each cell of the graph sits in
+            let mut of_cell = vec![CellId::MAX; graph.len()];
+            for (node, &cell) in cell_of_node.iter().enumerate() {
+                of_cell[cell as usize] = directory.cell_of(node, level);
+            }
+
+            let mut seen = vec![false; graph.len()];
+            let mut pieces = std::collections::HashMap::new();
+            for start in 0..graph.len() {
+                if seen[start] || of_cell[start] == CellId::MAX {
+                    continue;
+                }
+                let cell = of_cell[start];
+                seen[start] = true;
+                let mut stack = vec![start];
+                while let Some(current) = stack.pop() {
+                    for &(next, _) in graph.neighbours_of(current) {
+                        if !seen[next] && of_cell[next] == cell {
+                            seen[next] = true;
+                            stack.push(next);
+                        }
+                    }
+                }
+                // a second walk into the same cell means it fell apart
+                if !pieces.insert(cell, start).is_none() {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// A ring of eight cells, so that only neighbours share an arc.
+    fn ring(cells: usize) -> CellGraph {
+        let arcs = (0..cells)
+            .map(|cell| (cell, (cell + 1) % cells, 1))
+            .collect::<Vec<_>>();
+        CellGraph::new(vec![1; cells], &arcs)
+    }
+
+    #[test]
+    fn merging_follows_the_arcs_between_cells() {
+        // a line of four, so a cell of two can only be two that sit next to
+        // each other
+        let graph = CellGraph::new(vec![1, 1, 1, 1], &[(0, 1, 5), (1, 2, 1), (2, 3, 5)]);
+        let merged = agglomerate(&graph, 2);
+        assert_eq!(merged[0], merged[1], "the heaviest pair goes together");
+        assert_eq!(merged[2], merged[3]);
+        assert_ne!(merged[0], merged[2]);
+    }
+
+    #[test]
+    fn cells_that_share_no_arc_are_left_apart() {
+        let graph = CellGraph::new(vec![1, 1, 1], &[]);
+        let merged = agglomerate(&graph, 10);
+        assert_eq!(merged.len(), 3);
+        // nothing to merge along, so nothing is merged however large the size
+        assert_ne!(merged[0], merged[1]);
+        assert_ne!(merged[1], merged[2]);
+    }
+
+    #[test]
+    fn a_merge_never_passes_the_size() {
+        let graph = ring(8);
+        for size in 1..=8 {
+            let merged = agglomerate(&graph, size);
+            let mut held = vec![0; merged.iter().copied().max().unwrap() as usize + 1];
+            for &cell in &merged {
+                held[cell as usize] += 1;
+            }
+            assert!(
+                held.iter().all(|&count| count <= size),
+                "a cell of {} passed the size {size}",
+                held.iter().max().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn every_assembled_cell_is_in_one_piece() {
+        let mut rng = StdRng::seed_from_u64(0xC0117);
+        for round in 0..20 {
+            // a ring with a few extra arcs, so that merging along arcs matters
+            let cells = 24 + round;
+            let mut arcs = (0..cells)
+                .map(|cell| (cell, (cell + 1) % cells, 1 + rng.random_range(0..5)))
+                .collect::<Vec<_>>();
+            for _ in 0..round {
+                let left = rng.random_range(0..cells);
+                let right = rng.random_range(0..cells);
+                if left != right
+                    && !arcs
+                        .iter()
+                        .any(|&(a, b, _)| (a, b) == (left, right) || (a, b) == (right, left))
+                {
+                    arcs.push((left, right, 1 + rng.random_range(0..5)));
+                }
+            }
+            let graph = CellGraph::new(vec![1; cells], &arcs);
+            let cell_of_node = (0..cells).map(|cell| cell as CellId).collect::<Vec<_>>();
+
+            let directory = assemble_connected(&graph, &cell_of_node, &[2, 5, 12, cells]);
+            assert!(
+                every_cell_is_connected(&graph, &cell_of_node, &directory),
+                "round {round} left a cell in pieces"
+            );
+        }
+    }
+
+    /// What the assembly along the tree cannot promise, for contrast: it never
+    /// sees which cells are neighbours, so a cell of it can fall apart.
+    #[test]
+    fn the_assembly_along_the_tree_makes_no_such_promise() {
+        // two cells that share no arc, put together by the tree because they
+        // happen to be siblings
+        let graph = CellGraph::new(vec![1, 1], &[]);
+        let cell_of_node = vec![0, 1];
+        let tree = Tree::new(
+            vec![
+                Node {
+                    children: None,
+                    size: 1,
+                },
+                Node {
+                    children: None,
+                    size: 1,
+                },
+                Node {
+                    children: Some((0, 1)),
+                    size: 2,
+                },
+            ],
+            vec![0, 1],
+        );
+
+        let along_the_tree = assemble(&tree, &[2]);
+        assert!(
+            along_the_tree.same_cell(0, 1, 0),
+            "the tree puts them together"
+        );
+        assert!(
+            !every_cell_is_connected(&graph, &cell_of_node, &along_the_tree),
+            "and the cell it makes is in two pieces"
+        );
+
+        // merging along arcs leaves them apart, as there is no arc to merge on
+        let merged = assemble_connected(&graph, &cell_of_node, &[2]);
+        assert!(!merged.same_cell(0, 1, 0));
+        assert!(every_cell_is_connected(&graph, &cell_of_node, &merged));
+    }
+
+    #[test]
+    fn the_levels_of_an_agglomeration_nest() {
+        let graph = ring(16);
+        let cell_of_node = (0..16).map(|cell| cell as CellId).collect::<Vec<_>>();
+        let directory = assemble_connected(&graph, &cell_of_node, &[2, 4, 8, 16]);
+        for u in 0..16 {
+            for v in 0..16 {
+                let meeting = directory.common_level(u, v);
+                for level in 0..directory.levels() {
+                    assert_eq!(
+                        directory.same_cell(u, v, level),
+                        meeting.is_some_and(|first| level >= first)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn drawing_cells_together_keeps_the_arcs_between_them() {
+        let graph = CellGraph::new(vec![1, 1, 1, 1], &[(0, 1, 3), (1, 2, 7), (2, 3, 2)]);
+        // put 0 with 1 and 2 with 3
+        let contracted = contract(&graph, &[0, 0, 1, 1]);
+        assert_eq!(contracted.len(), 2);
+        assert_eq!(contracted.size_of(0), 2);
+        assert_eq!(contracted.size_of(1), 2);
+        // the arc inside a cell is gone, the one between them is kept
+        assert_eq!(contracted.neighbours_of(0), &[(1, 7)]);
     }
 }
