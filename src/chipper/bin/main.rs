@@ -20,12 +20,25 @@ use toolbox_rs::io;
 use toolbox_rs::{
     assembly,
     inertial_flow::{self, Flow, flow_cmp},
+    level_directory::CellId,
     partition_id::PartitionID,
 };
 use {
     command_line::Arguments,
     serialize::{write_level_directory, write_results},
 };
+
+/// Numbers whatever the bisection left behind from zero without a gap.
+fn compact(of_node: &[usize]) -> Vec<CellId> {
+    let mut cell_of = rustc_hash::FxHashMap::default();
+    of_node
+        .iter()
+        .map(|leaf| {
+            let next = cell_of.len() as CellId;
+            *cell_of.entry(*leaf).or_insert(next)
+        })
+        .collect()
+}
 
 fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
@@ -64,9 +77,11 @@ fn main() {
     // root job takes ownership of the edge set, which is only needed again if
     // the cut is to be written out.
     let id_vector = (0..coordinates.len()).collect_vec();
-    let input_edges = if args.cut_csv.is_empty() {
+    let input_edges = if args.cut_csv.is_empty() && args.level_sizes.is_empty() {
         Vec::new()
     } else {
+        // the assembly walks them to find which cells hang together and which
+        // of them are neighbours
         edges.clone()
     };
     let node_count = coordinates.len();
@@ -282,29 +297,22 @@ fn main() {
     }
 
     if !args.level_sizes.is_empty() {
-        // The tree was numbered as it grew, so a parent sits before its
-        // children. Reversing it puts every child before its parent, which is
-        // the order the assembly walks.
-        let last = tree_sizes.len() - 1;
-        let flip = |index: usize| last - index;
-        let nodes = tree_sizes
+        // The cells of the bisection need not hold together, as a minimum cut
+        // puts everything the source cannot reach on the other side whether it
+        // hangs together with the rest or not. Merging such a cell into a
+        // larger one carries the split upwards, so they are taken apart first.
+        let base_cells = compact(&leaf_of_node);
+        let cells_left = base_cells
             .iter()
-            .zip(&tree_children)
-            .map(|(&size, children)| assembly::Node {
-                size,
-                children: children.map(|(left, right)| (flip(left), flip(right))),
-            })
-            .rev()
-            .collect_vec();
-        let tree =
-            assembly::Tree::new(nodes, leaf_of_node.iter().map(|&leaf| flip(leaf)).collect());
-        info!(
-            "bisection left {} cells over {} nodes",
-            tree.number_of_cells(),
-            tree.number_of_nodes()
-        );
+            .copied()
+            .max()
+            .map_or(0, |c| c as usize + 1);
+        let pieces = assembly::fragments(node_count, &input_edges, &base_cells);
+        let piece_count = pieces.iter().copied().max().map_or(0, |p| p as usize + 1);
+        info!("bisection left {cells_left} cells, which hold together in {piece_count} pieces");
 
-        let directory = assembly::assemble(&tree, &args.level_sizes);
+        let cells = assembly::cell_graph(&input_edges, &pieces);
+        let directory = assembly::assemble_connected(&cells, &pieces, &args.level_sizes);
         for level in 0..directory.levels() {
             info!(
                 "level {level} of {} nodes: {} cells",
