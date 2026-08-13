@@ -189,33 +189,65 @@ fn is_within_tile(position: (i32, i32)) -> bool {
     within(position.0) && within(position.1)
 }
 
-/// Whether a segment is worth drawing on this tile: it has to touch the tile,
-/// and it has to be long enough to be visible on it. Dropping the segments that
-/// collapse onto a single position is what keeps a tile of a low zoom level
-/// from carrying the whole graph.
-fn is_visible(source: (i32, i32), target: (i32, i32)) -> bool {
-    // a segment whose ends round onto the same position of the grid draws
-    // nothing, which is what thins out a tile of a low zoom level
-    if source == target {
-        return false;
-    }
-
+/// Cuts a segment down to the part of it that lies on the tile, margin
+/// included, and hands back `None` for one that misses the tile altogether.
+///
+/// An arc of a road network is far longer than a tile at a low zoom level, and
+/// an endpoint of it can land thousands of units outside the grid. A reader
+/// only honours a buffer of its own around the tile and drops or mangles what
+/// reaches past it, so the part that hangs over is cut off here rather than
+/// handed over.
+///
+/// The segment is clipped against the four edges by the Liang-Barsky method:
+/// the segment is walked as `source + t * (target - source)` for `t` in
+/// `[0, 1]`, and each edge either moves the near end forward or the far end
+/// back until the interval either is the part that lies on the tile or has
+/// closed, in which case the segment never touches it.
+fn clip_to_tile(source: (i32, i32), target: (i32, i32)) -> Option<((i32, i32), (i32, i32))> {
     let low = -TILE_MARGIN;
     let high = f64::from(TILE_EXTENT) + TILE_MARGIN;
 
-    // A segment can only miss the tile if both of its ends are off the same
-    // side of it. Ends on two different sides say nothing, as the segment
-    // between them may still cross the tile.
-    let off = |value: fn((i32, i32)) -> i32, beyond: fn(f64, f64) -> bool, edge: f64| {
-        beyond(f64::from(value(source)), edge) && beyond(f64::from(value(target)), edge)
-    };
-    let below = |value: f64, edge: f64| value < edge;
-    let above = |value: f64, edge: f64| value > edge;
+    let (x, y) = (f64::from(source.0), f64::from(source.1));
+    let (dx, dy) = (f64::from(target.0) - x, f64::from(target.1) - y);
 
-    !(off(|point| point.0, below, low)
-        || off(|point| point.0, above, high)
-        || off(|point| point.1, below, low)
-        || off(|point| point.1, above, high))
+    let mut near = 0_f64;
+    let mut far = 1_f64;
+    // one pair per edge: how fast the segment approaches it, and how far the
+    // near end still is from it
+    for (speed, distance) in [
+        (-dx, x - low),
+        (dx, high - x),
+        (-dy, y - low),
+        (dy, high - y),
+    ] {
+        if speed == 0. {
+            // parallel to this edge, so it either lies on the tile or misses it
+            // no matter how far it is walked
+            if distance < 0. {
+                return None;
+            }
+            continue;
+        }
+        let crossing = distance / speed;
+        if speed < 0. {
+            if crossing > far {
+                return None;
+            }
+            near = near.max(crossing);
+        } else {
+            if crossing < near {
+                return None;
+            }
+            far = far.min(crossing);
+        }
+    }
+
+    let at = |t: f64| ((x + t * dx).round() as i32, (y + t * dy).round() as i32);
+    let (from, to) = (at(near), at(far));
+
+    // a segment whose ends round onto the same position of the grid draws
+    // nothing, which is what thins out a tile of a low zoom level
+    (from != to).then_some((from, to))
 }
 
 /// Builds the tile that covers the given position of the tile pyramid. The
@@ -226,11 +258,12 @@ fn build_tile(state: &ServerState, zoom: u32, x: u32, y: u32) -> Tile {
     let mut geometries: FxHashMap<PartitionID, GeometryEncoder> = FxHashMap::default();
 
     for arc in &data.boundary {
-        let source = to_tile_coordinate(arc.source, zoom, x, y);
-        let target = to_tile_coordinate(arc.target, zoom, x, y);
-        if !is_visible(source, target) {
+        let Some((source, target)) = clip_to_tile(
+            to_tile_coordinate(arc.source, zoom, x, y),
+            to_tile_coordinate(arc.target, zoom, x, y),
+        ) else {
             continue;
-        }
+        };
         // each arc is a line string of its own within the feature of its cell
         let geometry = geometries.entry(arc.cell).or_default();
         geometry.move_to(&[source]);
@@ -304,9 +337,9 @@ fn build_tile(state: &ServerState, zoom: u32, x: u32, y: u32) -> Tile {
                     continue;
                 }
                 let to = to_tile_coordinate(state.coordinates[target], zoom, x, y);
-                if !is_visible(from, to) {
+                let Some((from, to)) = clip_to_tile(from, to) else {
                     continue;
-                }
+                };
                 let geometry = interior.entry(cell).or_default();
                 geometry.move_to(&[from]);
                 geometry.line_to(&[to]);
@@ -850,25 +883,82 @@ mod tests {
 
     #[test]
     fn a_segment_that_draws_nothing_is_dropped() {
-        assert!(!is_visible((10, 10), (10, 10)));
-        assert!(is_visible((10, 10), (11, 10)));
+        assert!(clip_to_tile((10, 10), (10, 10)).is_none());
+        assert!(clip_to_tile((10, 10), (11, 10)).is_some());
     }
 
     #[test]
     fn segments_off_one_side_are_dropped() {
         let outside = TILE_EXTENT as i32 * 4;
-        assert!(!is_visible((-outside, 10), (-outside - 5, 10)));
-        assert!(!is_visible((outside, 10), (outside + 5, 10)));
-        assert!(!is_visible((10, -outside), (10, -outside - 5)));
-        assert!(!is_visible((10, outside), (10, outside + 5)));
+        assert!(clip_to_tile((-outside, 10), (-outside - 5, 10)).is_none());
+        assert!(clip_to_tile((outside, 10), (outside + 5, 10)).is_none());
+        assert!(clip_to_tile((10, -outside), (10, -outside - 5)).is_none());
+        assert!(clip_to_tile((10, outside), (10, outside + 5)).is_none());
+    }
+
+    /// The reason the clipping exists: an arc far longer than the tile has to
+    /// arrive cut down to the part of it that lies on the tile, or a reader
+    /// drops it for reaching past the buffer it keeps around the tile.
+    #[test]
+    fn a_segment_across_the_tile_is_cut_to_it() {
+        let outside = TILE_EXTENT as i32 * 4;
+        let extent = TILE_EXTENT as i32;
+        let margin = TILE_MARGIN as i32;
+
+        let (from, to) = clip_to_tile((-outside, 2048), (outside, 2048)).expect("crosses the tile");
+        assert_eq!(from, (-margin, 2048));
+        assert_eq!(to, (extent + margin, 2048));
+
+        let (from, to) = clip_to_tile((2048, -outside), (2048, outside)).expect("crosses the tile");
+        assert_eq!(from, (2048, -margin));
+        assert_eq!(to, (2048, extent + margin));
     }
 
     #[test]
-    fn a_segment_across_the_tile_is_kept() {
-        let outside = TILE_EXTENT as i32 * 4;
-        // both ends are outside, but on opposite sides, so it crosses the tile
-        assert!(is_visible((-outside, 2048), (outside, 2048)));
-        assert!(is_visible((2048, -outside), (2048, outside)));
+    fn only_the_end_that_hangs_over_is_cut() {
+        let extent = TILE_EXTENT as i32;
+        let margin = TILE_MARGIN as i32;
+        // starts on the tile and runs far off to the east
+        let (from, to) =
+            clip_to_tile((1000, 1000), (extent * 5, 1000)).expect("starts on the tile");
+        assert_eq!(from, (1000, 1000), "the end on the tile is left alone");
+        assert_eq!(to, (extent + margin, 1000), "the end off it is cut back");
+    }
+
+    #[test]
+    fn a_segment_within_the_tile_is_left_alone() {
+        let segment = ((100, 200), (3000, 3500));
+        assert_eq!(clip_to_tile(segment.0, segment.1), Some(segment));
+    }
+
+    #[test]
+    fn a_diagonal_keeps_its_direction_when_cut() {
+        let extent = TILE_EXTENT as i32;
+        let (from, to) = clip_to_tile((-extent, -extent), (2 * extent, 2 * extent))
+            .expect("crosses the tile diagonally");
+        // the segment runs at 45 degrees, so the cut ends do too
+        assert_eq!(from.0, from.1);
+        assert_eq!(to.0, to.1);
+        assert!(from.0 < to.0);
+    }
+
+    /// A clipped segment has to stay within the grid a reader accepts.
+    #[test]
+    fn what_is_handed_over_stays_within_the_margin() {
+        let outside = TILE_EXTENT as i32 * 9;
+        let bound = TILE_EXTENT as i32 + TILE_MARGIN as i32;
+        for segment in [
+            ((-outside, -outside), (outside, outside)),
+            ((-outside, 2048), (outside, 2048)),
+            ((2048, outside), (2048, -outside)),
+            ((-outside, 4095), (outside, 0)),
+        ] {
+            let (from, to) = clip_to_tile(segment.0, segment.1).expect("crosses the tile");
+            for point in [from, to] {
+                assert!(point.0 >= -bound && point.0 <= bound, "x of {point:?}");
+                assert!(point.1 >= -bound && point.1 <= bound, "y of {point:?}");
+            }
+        }
     }
 
     #[test]
