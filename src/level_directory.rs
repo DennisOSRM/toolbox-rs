@@ -1,46 +1,258 @@
-use crate::partition_id::PartitionID;
+//! Which cell a node sits in on each level of a nested partition, and the level
+//! on which two nodes first share one.
+//!
+//! # Shape
+//!
+//! The levels are nested: a cell of one level lies inside exactly one cell of
+//! the level above it. Only the lowest level is therefore stored per node. Each
+//! level above it is a table from the cells below to the cells above, which is
+//! as long as that level has cells rather than as long as the graph has nodes.
+//! A hierarchy of six levels over eighteen million nodes costs the eighteen
+//! million entries of the lowest level plus a few hundred thousand for the rest.
+//!
+//! # The level two nodes meet on
+//!
+//! Two nodes that share a cell on one level share one on every level above it,
+//! so the level they first meet on decides every question about them: it is the
+//! level a query between them has to climb to, and the levels below it are the
+//! ones a search may stay inside of. [`LevelDirectory::common_level`] walks both
+//! nodes up in step and reports the level they land in the same cell on.
+//!
+//! # Examples
+//!
+//! ```rust
+//! use toolbox_rs::level_directory::LevelDirectory;
+//!
+//! //  level 1:      0        1
+//! //               / \       |
+//! //  level 0:    0   1      2
+//! //             /|   |\     |
+//! //  nodes:    0 1   2 3    4
+//! let directory = LevelDirectory::new(vec![0, 0, 1, 1, 2], vec![vec![0, 0, 1]]);
+//!
+//! // nodes 0 and 1 share a cell on the lowest level already
+//! assert_eq!(directory.common_level(0, 1), Some(0));
+//! // nodes 1 and 2 are apart down there and meet one level up
+//! assert_eq!(directory.common_level(1, 2), Some(1));
+//! // node 4 sits under a root of its own and never meets them
+//! assert_eq!(directory.common_level(0, 4), None);
+//! ```
+use crate::graph::NodeID;
 
-/// Note: LevelDirectory is a poor naming choice.
-/// This struct encapsulates the logic to decide whether
-///  - two nodes are within the same cell at a given level
-///  - TBD.
-pub struct LevelDirectory<'a> {
-    partition_ids: &'a [PartitionID],
-    levels: &'a [u32],
+/// A cell of one level. Cells are numbered from zero per level, so an id only
+/// means something together with the level it belongs to.
+pub type CellId = u32;
+
+/// The cells of a nested partition, level by level.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LevelDirectory {
+    /// the cell of each node on the lowest level
+    base: Vec<CellId>,
+    /// for each level above the lowest, the cell of the next level up that each
+    /// of its cells belongs to
+    parents: Vec<Vec<CellId>>,
 }
 
-impl<'a> LevelDirectory<'a> {
-    pub fn new(partition_ids: &'a [PartitionID], levels: &'a [u32]) -> Self {
-        Self {
-            partition_ids,
-            levels,
-        }
-    }
-    pub fn crosses_at_level(&self, u: usize, v: usize, level: u32) -> bool {
-        let u_id = self.partition_ids[u];
-        let v_id = self.partition_ids[v];
-        let u_id = u_id.parent_at_level(level);
-        let v_id = v_id.parent_at_level(level);
-        u_id != v_id
+impl LevelDirectory {
+    /// # Panics
+    ///
+    /// Panics if a cell is said to lie in one that the level above it does not
+    /// have, as every query would run past the end of a table.
+    #[must_use]
+    pub fn new(base: Vec<CellId>, parents: Vec<Vec<CellId>>) -> Self {
+        let directory = Self { base, parents };
+        assert!(directory.is_consistent(), "the levels do not nest");
+        directory
     }
 
-    // return a slice of all the levels where two nodes are in different cells
-    pub fn get_crossing_levels(&self, u: usize, v: usize) -> &[u32] {
-        let mut i = 0;
-        for level in self.levels {
-            if self.crosses_at_level(u, v, *level) {
-                i += 1;
-            } else {
-                break;
+    /// Whether every cell lies in one that the level above it actually has.
+    fn is_consistent(&self) -> bool {
+        let mut below = self.base.iter().max().map_or(0, |cell| *cell as usize + 1);
+        for parents in &self.parents {
+            if parents.len() < below {
+                return false;
+            }
+            below = parents.iter().max().map_or(0, |cell| *cell as usize + 1);
+        }
+        true
+    }
+
+    /// How many levels the hierarchy has, the lowest one included.
+    #[must_use]
+    pub fn levels(&self) -> usize {
+        1 + self.parents.len()
+    }
+
+    #[must_use]
+    pub fn number_of_nodes(&self) -> usize {
+        self.base.len()
+    }
+
+    /// How many cells a level holds.
+    #[must_use]
+    pub fn cells_on_level(&self, level: usize) -> usize {
+        if level == 0 {
+            self.base.iter().max().map_or(0, |cell| *cell as usize + 1)
+        } else {
+            self.parents[level - 1]
+                .iter()
+                .max()
+                .map_or(0, |cell| *cell as usize + 1)
+        }
+    }
+
+    /// The cell a node sits in on the given level.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the hierarchy has no such level.
+    #[must_use]
+    pub fn cell_of(&self, node: NodeID, level: usize) -> CellId {
+        assert!(level < self.levels(), "no level {level} in the hierarchy");
+        let mut cell = self.base[node];
+        for parents in &self.parents[..level] {
+            cell = parents[cell as usize];
+        }
+        cell
+    }
+
+    /// Whether two nodes share a cell on the given level.
+    #[must_use]
+    pub fn same_cell(&self, u: NodeID, v: NodeID, level: usize) -> bool {
+        self.cell_of(u, level) == self.cell_of(v, level)
+    }
+
+    /// The lowest level on which two nodes share a cell, and `None` when they
+    /// share none at all. A pair that shares a cell on one level shares one on
+    /// every level above it, so this is the only level worth asking about.
+    #[must_use]
+    pub fn common_level(&self, u: NodeID, v: NodeID) -> Option<usize> {
+        let (mut left, mut right) = (self.base[u], self.base[v]);
+        if left == right {
+            return Some(0);
+        }
+        for (level, parents) in self.parents.iter().enumerate() {
+            left = parents[left as usize];
+            right = parents[right as usize];
+            if left == right {
+                return Some(level + 1);
             }
         }
-        &self.levels[..i]
+        None
     }
 }
 
-// TODO: Add tests
-// let id = PartitionID::new(0xffff_ffff);
-// for l in &levels {
-//     // TODO: remove
-//     println!("[{l:#02}] {:#032b}", id.parent_at_level(*l));
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ```text
+    ///  level 2:          0
+    ///                   / \
+    ///  level 1:        0   1
+    ///                 / \   \
+    ///  level 0:      0   1   2
+    ///               /|   |   |\
+    ///  nodes:      0 1   2   3 4
+    /// ```
+    fn directory() -> LevelDirectory {
+        LevelDirectory::new(vec![0, 0, 1, 2, 2], vec![vec![0, 0, 1], vec![0, 0]])
+    }
+
+    #[test]
+    fn a_node_sits_in_one_cell_per_level() {
+        let directory = directory();
+        assert_eq!(directory.levels(), 3);
+        assert_eq!(directory.number_of_nodes(), 5);
+
+        assert_eq!(directory.cell_of(0, 0), 0);
+        assert_eq!(directory.cell_of(0, 1), 0);
+        assert_eq!(directory.cell_of(0, 2), 0);
+
+        assert_eq!(directory.cell_of(3, 0), 2);
+        assert_eq!(directory.cell_of(3, 1), 1);
+        assert_eq!(directory.cell_of(3, 2), 0);
+    }
+
+    #[test]
+    fn the_levels_report_how_many_cells_they_hold() {
+        let directory = directory();
+        assert_eq!(directory.cells_on_level(0), 3);
+        assert_eq!(directory.cells_on_level(1), 2);
+        assert_eq!(directory.cells_on_level(2), 1);
+    }
+
+    #[test]
+    fn two_nodes_meet_on_the_level_their_cells_join() {
+        let directory = directory();
+        // together on the lowest level
+        assert_eq!(directory.common_level(0, 1), Some(0));
+        assert_eq!(directory.common_level(3, 4), Some(0));
+        // apart down there, together one level up
+        assert_eq!(directory.common_level(1, 2), Some(1));
+        // and only under the root
+        assert_eq!(directory.common_level(0, 3), Some(2));
+        assert_eq!(directory.common_level(2, 4), Some(2));
+    }
+
+    #[test]
+    fn a_node_meets_itself_at_the_bottom() {
+        let directory = directory();
+        for node in 0..directory.number_of_nodes() {
+            assert_eq!(directory.common_level(node, node), Some(0));
+        }
+    }
+
+    #[test]
+    fn the_level_two_nodes_meet_on_does_not_depend_on_their_order() {
+        let directory = directory();
+        for u in 0..directory.number_of_nodes() {
+            for v in 0..directory.number_of_nodes() {
+                assert_eq!(directory.common_level(u, v), directory.common_level(v, u));
+            }
+        }
+    }
+
+    /// The level two nodes meet on has to be the first one they share a cell
+    /// on, and they have to keep sharing one above it.
+    #[test]
+    fn nodes_stay_together_above_the_level_they_meet_on() {
+        let directory = directory();
+        for u in 0..directory.number_of_nodes() {
+            for v in 0..directory.number_of_nodes() {
+                let meeting = directory.common_level(u, v).expect("a shared root");
+                for level in 0..meeting {
+                    assert!(!directory.same_cell(u, v, level), "{u} and {v} at {level}");
+                }
+                for level in meeting..directory.levels() {
+                    assert!(directory.same_cell(u, v, level), "{u} and {v} at {level}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nodes_under_separate_roots_never_meet() {
+        // two hierarchies next to each other, with no level joining them
+        let directory = LevelDirectory::new(vec![0, 1, 2, 3], vec![vec![0, 0, 1, 1]]);
+        assert_eq!(directory.common_level(0, 1), Some(1));
+        assert_eq!(directory.common_level(2, 3), Some(1));
+        assert_eq!(directory.common_level(0, 2), None);
+        assert_eq!(directory.common_level(1, 3), None);
+    }
+
+    #[test]
+    fn one_level_is_a_hierarchy_of_its_own() {
+        let directory = LevelDirectory::new(vec![0, 0, 1], Vec::new());
+        assert_eq!(directory.levels(), 1);
+        assert_eq!(directory.common_level(0, 1), Some(0));
+        assert_eq!(directory.common_level(0, 2), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "the levels do not nest")]
+    fn a_cell_that_the_level_above_does_not_have_is_caught() {
+        // the lowest level has three cells, the table above it only two
+        let _ = LevelDirectory::new(vec![0, 1, 2], vec![vec![0, 0]]);
+    }
+}

@@ -1,5 +1,6 @@
 pub mod addressable_binary_heap;
 pub mod as_bytes;
+pub mod assembly;
 pub mod bfs;
 pub mod bin_pack;
 pub mod bit_weight_iterator;
