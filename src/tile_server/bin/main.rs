@@ -6,7 +6,7 @@ use env_logger::{Builder, Env};
 use log::{debug, info, warn};
 use prost::Message;
 use rustc_hash::FxHashMap;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
     sync::{
@@ -72,6 +72,9 @@ struct BoundaryArc {
     source: FPCoordinate,
     target: FPCoordinate,
     cell: PartitionID,
+    /// the cell on the other side, so that a level at which both sides fall
+    /// into the same cell can drop the arc
+    other: PartitionID,
 }
 
 /// A node that an arc leaves its cell on. The distances between the border
@@ -91,6 +94,19 @@ struct TileData {
     /// the nodes that fall into a tile of [`INDEX_ZOOM`], so that a request
     /// only has to look at the arcs that can reach it
     nodes_by_tile: FxHashMap<(u32, u32), Vec<NodeID>>,
+}
+
+/// The cell that a cell of the leaf level falls into at the given level of the
+/// hierarchy. An id carries one bit per level below the root, so walking up is
+/// dropping the lower ones. Note that this is not `parent_at_level`, which
+/// clears those bits instead of shifting them out and so keeps the id on the
+/// level it started at.
+fn cell_at_level(cell: PartitionID, level: u32) -> PartitionID {
+    let Some(steps) = u32::from(cell.level()).checked_sub(level) else {
+        // already at or above the level that was asked for
+        return cell;
+    };
+    PartitionID::new((cell.0 >> steps).max(PartitionID::root().0))
 }
 
 /// The tile of [`INDEX_ZOOM`] that the given tile lies in.
@@ -141,6 +157,7 @@ impl TileData {
                         source: coordinates[source],
                         target: coordinates[target],
                         cell: partition_ids[source],
+                        other: partition_ids[target],
                     });
                 }
             }
@@ -260,11 +277,17 @@ fn clip_to_tile(source: (i32, i32), target: (i32, i32)) -> Option<((i32, i32), (
 /// Builds the tile that covers the given position of the tile pyramid. The
 /// boundary arcs are grouped by the cell they belong to, so that a client can
 /// give each cell a color of its own.
-fn build_tile(state: &ServerState, zoom: u32, x: u32, y: u32) -> Tile {
+fn build_tile(state: &ServerState, level: u32, zoom: u32, x: u32, y: u32) -> Tile {
     let data = &state.tiles;
     let mut geometries: FxHashMap<PartitionID, GeometryEncoder> = FxHashMap::default();
 
     for arc in &data.boundary {
+        let cell = cell_at_level(arc.cell, level);
+        if cell == cell_at_level(arc.other, level) {
+            // both sides fall into the same cell here, so the arc separates
+            // nothing and belongs to the interior
+            continue;
+        }
         let Some((source, target)) = clip_to_tile(
             to_tile_coordinate(arc.source, zoom, x, y),
             to_tile_coordinate(arc.target, zoom, x, y),
@@ -272,7 +295,7 @@ fn build_tile(state: &ServerState, zoom: u32, x: u32, y: u32) -> Tile {
             continue;
         };
         // each arc is a line string of its own within the feature of its cell
-        let geometry = geometries.entry(arc.cell).or_default();
+        let geometry = geometries.entry(cell).or_default();
         geometry.move_to(&[source]);
         geometry.line_to(&[target]);
     }
@@ -305,6 +328,16 @@ fn build_tile(state: &ServerState, zoom: u32, x: u32, y: u32) -> Tile {
         if !is_within_tile(position) {
             continue;
         }
+        // a node of the leaf border only stays on the border while an arc of
+        // it still leaves the cell of this level
+        let cell = cell_at_level(border.cell, level);
+        if !state
+            .graph
+            .edge_range(border.node)
+            .any(|edge| cell_at_level(state.partition_ids[state.graph.target(edge)], level) != cell)
+        {
+            continue;
+        }
         let mut geometry = GeometryEncoder::with_capacity(3);
         geometry.move_to(&[position]);
         node_features.push(Feature {
@@ -319,7 +352,7 @@ fn build_tile(state: &ServerState, zoom: u32, x: u32, y: u32) -> Tile {
             ],
         });
         node_values.push(Value {
-            uint_value: Some(u64::from(border.cell.0)),
+            uint_value: Some(u64::from(cell.0)),
             ..Default::default()
         });
         node_values.push(Value {
@@ -334,12 +367,12 @@ fn build_tile(state: &ServerState, zoom: u32, x: u32, y: u32) -> Tile {
     let mut interior: FxHashMap<PartitionID, GeometryEncoder> = FxHashMap::default();
     if let Some(nodes) = data.nodes_by_tile.get(&index_tile_of(zoom, x, y)) {
         for &node in nodes {
-            let cell = state.partition_ids[node];
+            let cell = cell_at_level(state.partition_ids[node], level);
             let from = to_tile_coordinate(state.coordinates[node], zoom, x, y);
             for edge in state.graph.edge_range(node) {
                 let target = state.graph.target(edge);
                 // the cut is drawn by the layer above this one
-                if state.partition_ids[target] != cell {
+                if cell_at_level(state.partition_ids[target], level) != cell {
                     continue;
                 }
                 // The graph holds both directions of an arc, so one of them has
@@ -412,16 +445,25 @@ fn build_tile(state: &ServerState, zoom: u32, x: u32, y: u32) -> Tile {
 }
 
 // Tile request handler
+/// What a tile request may ask for beyond the tile itself.
+#[derive(Deserialize)]
+struct TileQuery {
+    /// the level of the hierarchy to look at, the leaves when absent
+    level: Option<u32>,
+}
+
 async fn get_tile(
     path: web::Path<(String, u32, u32, u32)>,
+    query: web::Query<TileQuery>,
     state: web::Data<ServerState>,
 ) -> impl Responder {
     let (tileset_id, zoom, x, y) = path.into_inner();
-    debug!("requesting tile: {tileset_id} at z={zoom} x={x} y={y}");
+    let level = state.level_or_leaves(query.level);
+    debug!("requesting tile: {tileset_id} at z={zoom} x={x} y={y} on level {level}");
 
     // Encode the tile to protobuf format
     let mut buf = Vec::new();
-    build_tile(&state, zoom, x, y)
+    build_tile(&state, level, zoom, x, y)
         .encode(&mut buf)
         .expect("a tile does not fit into its buffer");
 
@@ -434,12 +476,28 @@ async fn index() -> HttpResponse {
     HttpResponse::Ok().body(INDEX_HTML)
 }
 
+/// What the partition looks like, so that the client can offer the levels it
+/// actually has.
+#[derive(Serialize)]
+struct Meta {
+    max_level: u32,
+    cells: usize,
+}
+
+async fn get_meta(state: web::Data<ServerState>) -> impl Responder {
+    HttpResponse::Ok().json(Meta {
+        max_level: state.max_level,
+        cells: state.nodes_by_cell.len(),
+    })
+}
+
 /// Registers the routes of the server. Both the server and the tests below are
 /// built from this, so that a test cannot pass against a route that the server
 /// does not actually serve.
 fn routes(config: &mut web::ServiceConfig) {
     config
         .route("/", web::get().to(index))
+        .route("/meta.json", web::get().to(get_meta))
         .route("/node/{node}.json", web::get().to(get_node_distances))
         .route("/{tileset_id}/{zoom}/{x}/{y}.mvt", web::get().to(get_tile));
 }
@@ -474,6 +532,8 @@ struct ServerState {
     /// about, so the sum is what the whole of it would have cost up front.
     customized_cells: AtomicUsize,
     customization_nanos: AtomicU64,
+    /// the deepest level the partition carries, i.e. the level of its leaves
+    max_level: u32,
 }
 
 impl ServerState {
@@ -489,6 +549,12 @@ impl ServerState {
             nodes_by_cell.entry(*cell).or_default().push(node);
         }
 
+        let max_level = partition_ids
+            .iter()
+            .map(|cell| u32::from(cell.level()))
+            .max()
+            .unwrap_or(0);
+
         Self {
             tiles,
             graph,
@@ -498,7 +564,15 @@ impl ServerState {
             tabulated: Mutex::new(FxHashMap::default()),
             customized_cells: AtomicUsize::new(0),
             customization_nanos: AtomicU64::new(0),
+            max_level,
         }
+    }
+
+    /// The level a request is answered at: the one that was asked for, held
+    /// within what the partition carries, and the leaves when none was asked
+    /// for.
+    fn level_or_leaves(&self, level: Option<u32>) -> u32 {
+        level.unwrap_or(self.max_level).clamp(1, self.max_level)
     }
 
     /// Hands out the distances of a cell, tabulating them on the first request.
@@ -770,20 +844,29 @@ mod tests {
     /// Two cells that meet in the middle of a tile of Frankfurt, with one arc
     /// crossing between them.
     const ZOOM: u32 = 14;
+    /// the level the ids of the fixtures sit on
+    const LEAF_LEVEL: u32 = 2;
     const LAT: f64 = 50.20731;
     const LON: f64 = 8.57747;
 
-    /// A state that only carries tiles, for the handlers that draw them.
+    /// A state carrying one arc between two cells, for the handlers that draw
+    /// tiles. The graph holds that arc, as whether a node is still on the
+    /// border of the level being looked at is read off it.
     fn state_with_one_arc() -> ServerState {
+        let edges = vec![InputEdge::new(0, 1, 1_usize), InputEdge::new(1, 0, 1_usize)];
         ServerState {
             tiles: data_with_one_arc(),
-            graph: StaticGraph::default(),
-            coordinates: Vec::new(),
-            partition_ids: Vec::new(),
+            graph: StaticGraph::new(edges),
+            coordinates: vec![
+                FPCoordinate::new_from_lat_lon(LAT, LON),
+                FPCoordinate::new_from_lat_lon(LAT + 0.002, LON + 0.002),
+            ],
+            partition_ids: vec![PartitionID::new(7), PartitionID::new(6)],
             nodes_by_cell: FxHashMap::default(),
             tabulated: Mutex::new(FxHashMap::default()),
             customized_cells: AtomicUsize::new(0),
             customization_nanos: AtomicU64::new(0),
+            max_level: LEAF_LEVEL,
         }
     }
 
@@ -812,11 +895,12 @@ mod tests {
                 source: FPCoordinate::new_from_lat_lon(LAT, LON),
                 target: FPCoordinate::new_from_lat_lon(LAT + 0.002, LON + 0.002),
                 cell: PartitionID::new(7),
+                other: PartitionID::new(6),
             }],
             border_nodes: vec![BorderNode {
                 coordinate: FPCoordinate::new_from_lat_lon(LAT, LON),
                 cell: PartitionID::new(7),
-                node: 42,
+                node: 0,
             }],
             nodes_by_tile: FxHashMap::default(),
         }
@@ -999,7 +1083,7 @@ mod tests {
     #[test]
     fn a_cell_becomes_a_feature_of_the_tile() {
         let (x, y) = tile_of_probe();
-        let tile = build_tile(&state_with_one_arc(), ZOOM, x, y);
+        let tile = build_tile(&state_with_one_arc(), LEAF_LEVEL, ZOOM, x, y);
 
         assert_eq!(
             tile.layers.len(),
@@ -1026,18 +1110,20 @@ mod tests {
             source: FPCoordinate::new_from_lat_lon(LAT + 0.0005, LON),
             target: FPCoordinate::new_from_lat_lon(LAT + 0.0025, LON + 0.002),
             cell: PartitionID::new(7),
+            other: PartitionID::new(6),
         });
         // and one of another cell
         data.boundary.push(BoundaryArc {
             source: FPCoordinate::new_from_lat_lon(LAT + 0.001, LON),
             target: FPCoordinate::new_from_lat_lon(LAT + 0.003, LON + 0.002),
-            cell: PartitionID::new(8),
+            cell: PartitionID::new(6),
+            other: PartitionID::new(5),
         });
 
         let (x, y) = tile_of_probe();
         let mut state = state_with_one_arc();
         state.tiles = data;
-        let tile = build_tile(&state, ZOOM, x, y);
+        let tile = build_tile(&state, LEAF_LEVEL, ZOOM, x, y);
         let layer = cell_layer(&tile);
 
         assert_eq!(layer.features.len(), 2, "one feature per cell");
@@ -1047,7 +1133,7 @@ mod tests {
             .map(|value| value.uint_value.expect("cell id is not a number"))
             .collect::<Vec<_>>();
         cells.sort_unstable();
-        assert_eq!(cells, vec![7, 8]);
+        assert_eq!(cells, vec![6, 7]);
 
         // the cell of two arcs draws two line strings within one feature
         let two = layer
@@ -1065,7 +1151,7 @@ mod tests {
     #[test]
     fn a_tile_elsewhere_stays_empty() {
         // the same data, but a tile on the other side of the planet
-        let tile = build_tile(&state_with_one_arc(), ZOOM, 1, 1);
+        let tile = build_tile(&state_with_one_arc(), LEAF_LEVEL, ZOOM, 1, 1);
         assert!(cell_layer(&tile).features.is_empty());
         assert!(cell_layer(&tile).values.is_empty());
     }
@@ -1095,7 +1181,7 @@ mod tests {
     #[test]
     fn geometry_is_a_well_formed_command_sequence() {
         let (x, y) = tile_of_probe();
-        let tile = build_tile(&state_with_one_arc(), ZOOM, x, y);
+        let tile = build_tile(&state_with_one_arc(), LEAF_LEVEL, ZOOM, x, y);
         // a single arc is one MoveTo onto its start and one LineTo to its end
         assert_eq!(
             commands_of(&cell_layer(&tile).features[0].geometry),
@@ -1106,7 +1192,7 @@ mod tests {
     #[test]
     fn tags_stay_within_keys_and_values() {
         let (x, y) = tile_of_probe();
-        let tile = build_tile(&state_with_one_arc(), ZOOM, x, y);
+        let tile = build_tile(&state_with_one_arc(), LEAF_LEVEL, ZOOM, x, y);
         for layer in &tile.layers {
             for feature in &layer.features {
                 assert_eq!(feature.tags.len() % 2, 0, "tags are pairs");
@@ -1228,7 +1314,7 @@ mod tests {
     #[test]
     fn border_nodes_reach_the_tile() {
         let (x, y) = tile_of_probe();
-        let tile = build_tile(&state_with_one_arc(), ZOOM, x, y);
+        let tile = build_tile(&state_with_one_arc(), LEAF_LEVEL, ZOOM, x, y);
 
         let layer = tile
             .layers
@@ -1236,19 +1322,19 @@ mod tests {
             .find(|layer| layer.name == BORDER_LAYER)
             .expect("no border node layer");
         assert_eq!(layer.features.len(), 1);
-        assert_eq!(layer.features[0].id, Some(42));
+        assert_eq!(layer.features[0].id, Some(0));
         assert_eq!(layer.features[0].r#type, Some(i32::from(GeomType::Point)));
         assert_eq!(layer.keys, vec!["cell".to_string(), "node".to_string()]);
 
         // the tags name the cell and the node, which is what the popup asks with
         assert_eq!(layer.features[0].tags, vec![0, 0, 1, 1]);
         assert_eq!(layer.values[0].uint_value, Some(7));
-        assert_eq!(layer.values[1].uint_value, Some(42));
+        assert_eq!(layer.values[1].uint_value, Some(0));
     }
 
     #[test]
     fn border_nodes_of_another_tile_are_left_out() {
-        let tile = build_tile(&state_with_one_arc(), ZOOM, 1, 1);
+        let tile = build_tile(&state_with_one_arc(), LEAF_LEVEL, ZOOM, 1, 1);
         let layer = tile
             .layers
             .iter()
@@ -1341,7 +1427,7 @@ mod tests {
                 },
                 INDEX_ZOOM,
             );
-            let tile = build_tile(&state, INDEX_ZOOM, x, y);
+            let tile = build_tile(&state, LEAF_LEVEL, INDEX_ZOOM, x, y);
             let interior = tile
                 .layers
                 .iter()
@@ -1374,5 +1460,106 @@ mod tests {
         state.distances_of(PartitionID::new(1)).expect("no cell 1");
         assert_eq!(state.customized_cells.load(Ordering::Relaxed), 2);
         assert_eq!(state.customization_nanos.load(Ordering::Relaxed), after);
+    }
+
+    #[test]
+    fn a_cell_walks_up_the_hierarchy() {
+        // 0b1101 on level 3, so one step up is 0b110 and two are 0b11
+        let leaf = PartitionID::new(0b1101);
+        assert_eq!(leaf.level(), 3);
+        assert_eq!(cell_at_level(leaf, 3), leaf);
+        assert_eq!(cell_at_level(leaf, 2), PartitionID::new(0b110));
+        assert_eq!(cell_at_level(leaf, 1), PartitionID::new(0b11));
+        assert_eq!(cell_at_level(leaf, 0), PartitionID::root());
+        // a level below the root cannot be walked to
+        assert_eq!(cell_at_level(leaf, 9), leaf);
+    }
+
+    #[test]
+    fn siblings_meet_one_level_up() {
+        let (left, right) = PartitionID::new(0b110).children();
+        assert_ne!(cell_at_level(left, 3), cell_at_level(right, 3));
+        assert_eq!(cell_at_level(left, 2), cell_at_level(right, 2));
+    }
+
+    /// Two cells that are siblings share a parent, so the arc between them is
+    /// a cut at the level of the leaves and interior one level up.
+    #[test]
+    fn a_cut_between_siblings_closes_one_level_up() {
+        let state = state_with_one_arc();
+        let cut_at = |level: u32| {
+            let (x, y) = tile_of_probe();
+            let tile = build_tile(&state, level, ZOOM, x, y);
+            let cut = cell_layer(&tile).features.len();
+            let interior = tile
+                .layers
+                .iter()
+                .find(|layer| layer.name == INTERIOR_LAYER)
+                .expect("no interior layer")
+                .features
+                .len();
+            (cut, interior)
+        };
+
+        // cells 7 and 6 are the children of 3, so the arc separates them at
+        // the level of the leaves
+        assert_eq!(cut_at(LEAF_LEVEL).0, 1, "the arc is a cut at the leaves");
+        // one level up both ends fall into cell 3 and it separates nothing
+        assert_eq!(
+            cut_at(LEAF_LEVEL - 1).0,
+            0,
+            "the arc still cuts one level up"
+        );
+    }
+
+    #[test]
+    fn the_level_of_a_request_is_held_within_the_partition() {
+        let state = state_of_two_cells();
+        assert_eq!(state.max_level, 1);
+        // nothing asked for means the leaves
+        assert_eq!(state.level_or_leaves(None), 1);
+        // and anything past either end is pulled back onto the partition
+        assert_eq!(state.level_or_leaves(Some(0)), 1);
+        assert_eq!(state.level_or_leaves(Some(99)), 1);
+    }
+
+    #[actix_web::test]
+    async fn the_levels_of_the_partition_are_served() {
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(state_of_two_cells()))
+                .configure(routes),
+        )
+        .await;
+        let request = actix_test::TestRequest::get()
+            .uri("/meta.json")
+            .to_request();
+        let response = actix_test::call_service(&app, request).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body()).await.expect("empty body");
+        let answer = String::from_utf8_lossy(&body);
+        assert!(answer.contains("\"max_level\":1"), "{answer}");
+        assert!(answer.contains("\"cells\":2"), "{answer}");
+    }
+
+    #[actix_web::test]
+    async fn a_tile_can_be_asked_for_at_a_level() {
+        let (x, y) = tile_of_probe();
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(state_with_one_arc()))
+                .configure(routes),
+        )
+        .await;
+        for level in [LEAF_LEVEL, LEAF_LEVEL - 1] {
+            let request = actix_test::TestRequest::get()
+                .uri(&format!("/cells/{ZOOM}/{x}/{y}.mvt?level={level}"))
+                .to_request();
+            let response = actix_test::call_service(&app, request).await;
+            assert_eq!(response.status(), StatusCode::OK, "level {level}");
+            let body = to_bytes(response.into_body()).await.expect("empty body");
+            Tile::decode(&body[..]).expect("served tile does not decode");
+        }
     }
 }
