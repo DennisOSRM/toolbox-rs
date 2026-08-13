@@ -102,6 +102,22 @@ impl LevelDirectory {
         }
     }
 
+    /// For every cell of the given level, the cell of the level above that it
+    /// lies in. This is what lets the cells of one level be built out of the
+    /// cells of the one below it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the given level is the topmost one, which nothing lies above.
+    #[must_use]
+    pub fn parents_on_level(&self, level: usize) -> &[CellId] {
+        assert!(
+            level + 1 < self.levels(),
+            "level {level} is the topmost one"
+        );
+        &self.parents[level]
+    }
+
     /// The cell a node sits in on the given level.
     ///
     /// # Panics
@@ -459,5 +475,32 @@ mod tests {
                 assert_eq!(read.common_level(u, v), directory.common_level(u, v));
             }
         }
+    }
+
+    #[test]
+    fn a_level_says_which_cells_of_it_lie_in_which_cell_above() {
+        let directory = directory();
+        // cells 0 and 1 of the lowest level lie in cell 0 above, cell 2 in cell 1
+        assert_eq!(directory.parents_on_level(0), &[0, 0, 1]);
+        assert_eq!(directory.parents_on_level(1), &[0, 0]);
+    }
+
+    #[test]
+    fn the_cells_above_agree_with_walking_a_node_up() {
+        let mut rng = StdRng::seed_from_u64(0x11FE);
+        let directory = random_directory(&mut rng, 50, 4);
+        for level in 0..directory.levels() - 1 {
+            let parents = directory.parents_on_level(level);
+            for node in 0..directory.number_of_nodes() {
+                let below = directory.cell_of(node, level);
+                assert_eq!(parents[below as usize], directory.cell_of(node, level + 1));
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "level 2 is the topmost one")]
+    fn asking_above_the_topmost_level_is_caught() {
+        let _ = directory().parents_on_level(2);
     }
 }

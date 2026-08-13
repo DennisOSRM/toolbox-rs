@@ -577,11 +577,19 @@ impl CellDistances {
     }
 }
 
-/// The cells of one level: which one each node sits in, and which nodes each of
-/// them holds.
+/// The cells of one level: which one each node sits in, which nodes each of
+/// them holds, and which of those nodes sit on a border.
 struct Level {
     of_node: Vec<CellId>,
     nodes_of_cell: Vec<Vec<NodeID>>,
+    /// A node is on the border of its cell while an arc leaves it or reaches it
+    /// from outside. Both count: a road network is directed, and a node that
+    /// can only be entered from another cell is a way in that a path through
+    /// the cell above may take.
+    on_border: Vec<bool>,
+    /// the cells of the level below that each cell of this one is built from,
+    /// and empty on the finest level, which is built from the graph itself
+    built_from: Vec<Vec<CellId>>,
 }
 
 /// Everything the handlers are answered from.
@@ -660,9 +668,40 @@ impl ServerState {
         for (node, &cell) in of_node.iter().enumerate() {
             nodes_of_cell[cell as usize].push(node);
         }
+
+        // one walk of the arcs marks both ends of every arc that leaves a cell,
+        // which saves holding the arcs of the graph the other way round
+        let mut on_border = vec![false; of_node.len()];
+        for source in self.graph.node_range() {
+            for edge in self.graph.edge_range(source) {
+                let target = self.graph.target(edge);
+                if of_node[source] != of_node[target] {
+                    on_border[source] = true;
+                    on_border[target] = true;
+                }
+            }
+        }
+
+        let built_from = if level == 0 {
+            Vec::new()
+        } else {
+            let mut children = vec![Vec::new(); self.directory.cells_on_level(level)];
+            for (below, &above) in self
+                .directory
+                .parents_on_level(level - 1)
+                .iter()
+                .enumerate()
+            {
+                children[above as usize].push(below as CellId);
+            }
+            children
+        };
+
         let cells = Arc::new(Level {
             of_node,
             nodes_of_cell,
+            on_border,
+            built_from,
         });
         self.levels
             .lock()
@@ -700,16 +739,11 @@ impl ServerState {
 
         // the border nodes lead the numbering, so that they are the leading
         // rows and columns of the matrix
-        let mut border_nodes = Vec::new();
-        for &node in nodes {
-            if self
-                .graph
-                .edge_range(node)
-                .any(|edge| cells.of_node[self.graph.target(edge)] != cell)
-            {
-                border_nodes.push(node);
-            }
-        }
+        let border_nodes = nodes
+            .iter()
+            .copied()
+            .filter(|&node| cells.on_border[node])
+            .collect::<Vec<_>>();
         if border_nodes.is_empty() {
             debug!("cell {cell} of level {level} has no border nodes");
             return None;
@@ -727,28 +761,23 @@ impl ServerState {
             south = south.min(lat);
             north = north.max(lat);
         }
-        // TODO: faster hashmap implementation using tabhash or fibonacci hash
-        let mut node_map = FxHashMap::default();
-        for &node in &border_nodes {
-            node_map.insert(node, node_map.len());
-        }
-        let mut edges = Vec::new();
-        for &node in nodes {
-            for edge in self.graph.edge_range(node) {
-                let target = self.graph.target(edge);
-                if cells.of_node[target] != cell {
-                    continue;
-                }
-                let next = node_map.len();
-                let source = *node_map.entry(node).or_insert(next);
-                let next = node_map.len();
-                let target = *node_map.entry(target).or_insert(next);
-                edges.push(InputEdge::new(source, target, *self.graph.data(edge)));
-            }
-        }
 
-        // TODO: find a way to avoid relocations
-        let cell_graph = StaticGraph::new(edges);
+        let (cell_graph, of_node, searched) = if level == 0 {
+            (
+                self.subgraph_of(&cells, cell, nodes, &border_nodes),
+                None,
+                nodes.len(),
+            )
+        } else {
+            // A cell is built out of the cells below it: what a path does
+            // inside one of them is already tabulated, and what it does between
+            // them is an arc of the graph. Searching that instead of the nodes
+            // of the cell is what keeps a coarse level affordable.
+            let (graph, of_node, searched) = self.overlay_of(level, cell, &cells)?;
+            (graph, Some(of_node), searched)
+        };
+
+        // whichever graph it is, the border nodes lead its numbering
         let border = (0..border_nodes.len()).collect::<Vec<_>>();
         let mut matrix = vec![usize::MAX; border_nodes.len() * border_nodes.len()];
         let mut dijkstra = OneToManyDijkstra::new();
@@ -758,26 +787,135 @@ impl ServerState {
                 matrix[source * border_nodes.len() + target] = dijkstra.distance(target);
             }
         }
+        drop(of_node);
 
         // the searches are what the customization of a cell costs, so the
         // clock is read once they are done
         let elapsed = started.elapsed();
-        let cells = self.customized_cells.fetch_add(1, Ordering::Relaxed) + 1;
+        let count = self.customized_cells.fetch_add(1, Ordering::Relaxed) + 1;
         let total = Duration::from_nanos(
             self.customization_nanos
                 .fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed),
         ) + elapsed;
         info!(
-            "customized cell {cell} on level {level} in {elapsed:.1?}: {} nodes, {} of them on the border, bbox {west:.6},{south:.6},{east:.6},{north:.6}",
+            "customized cell {cell} on level {level} in {elapsed:.1?}: {} nodes, {} of them on the border, searched over {searched}, bbox {west:.6},{south:.6},{east:.6},{north:.6}",
             nodes.len(),
             border_nodes.len()
         );
-        info!("customization so far: {cells} cells in {total:.1?}");
+        info!("customization so far: {count} cells in {total:.1?}");
 
         Some(CellDistances {
             border_nodes,
             matrix,
         })
+    }
+
+    /// The arcs of the graph that stay inside a cell, with its border nodes
+    /// numbered first. This is what the finest level is built from, as there is
+    /// no level below it to take distances from.
+    fn subgraph_of(
+        &self,
+        cells: &Level,
+        cell: CellId,
+        nodes: &[NodeID],
+        border_nodes: &[NodeID],
+    ) -> StaticGraph<usize> {
+        // TODO: faster hashmap implementation using tabhash or fibonacci hash
+        let mut of_node = FxHashMap::default();
+        for &node in border_nodes {
+            of_node.insert(node, of_node.len());
+        }
+        let mut edges = Vec::new();
+        for &node in nodes {
+            for edge in self.graph.edge_range(node) {
+                let target = self.graph.target(edge);
+                if cells.of_node[target] != cell {
+                    continue;
+                }
+                let next = of_node.len();
+                let source = *of_node.entry(node).or_insert(next);
+                let next = of_node.len();
+                let target = *of_node.entry(target).or_insert(next);
+                edges.push(InputEdge::new(source, target, *self.graph.data(edge)));
+            }
+        }
+        // TODO: find a way to avoid relocations
+        StaticGraph::new(edges)
+    }
+
+    /// The graph a cell of a level above the finest is searched over: one arc
+    /// per pair of border nodes of a cell below, carrying what it costs to
+    /// cross that cell, and the arcs of the graph that run between two of them.
+    ///
+    /// A path through the cell alternates between the two: it crosses a cell
+    /// below from one of its border nodes to another, then takes an arc into
+    /// the next one. The border nodes of this cell are border nodes of the
+    /// cells below it too, so every search starts and ends on one.
+    fn overlay_of(
+        &self,
+        level: usize,
+        cell: CellId,
+        cells: &Level,
+    ) -> Option<(StaticGraph<usize>, FxHashMap<NodeID, usize>, usize)> {
+        let below = self.level(level - 1);
+
+        // the border nodes of this cell lead the numbering, the border nodes of
+        // the cells below follow
+        let mut of_node = FxHashMap::default();
+        for &node in cells.nodes_of_cell[cell as usize]
+            .iter()
+            .filter(|&&node| cells.on_border[node])
+        {
+            of_node.insert(node, of_node.len());
+        }
+
+        let mut edges = Vec::new();
+        for &child in &cells.built_from[cell as usize] {
+            let Some(distances) = self.distances_of(level - 1, child) else {
+                // a cell below with no border cannot be entered or left, so no
+                // path of this cell runs through it
+                continue;
+            };
+            for (source, &from) in distances.border_nodes.iter().enumerate() {
+                for (target, &to) in distances.border_nodes.iter().enumerate() {
+                    let weight = distances.distance(source, target);
+                    if source == target || weight == usize::MAX {
+                        continue;
+                    }
+                    let next = of_node.len();
+                    let from = *of_node.entry(from).or_insert(next);
+                    let next = of_node.len();
+                    let to = *of_node.entry(to).or_insert(next);
+                    edges.push(InputEdge::new(from, to, weight));
+                }
+            }
+        }
+
+        // the arcs that cross from one cell below into another one of this cell
+        for &child in &cells.built_from[cell as usize] {
+            for &node in &below.nodes_of_cell[child as usize] {
+                if !below.on_border[node] {
+                    continue;
+                }
+                for edge in self.graph.edge_range(node) {
+                    let target = self.graph.target(edge);
+                    if cells.of_node[target] != cell || below.of_node[target] == child {
+                        continue;
+                    }
+                    let next = of_node.len();
+                    let from = *of_node.entry(node).or_insert(next);
+                    let next = of_node.len();
+                    let to = *of_node.entry(target).or_insert(next);
+                    edges.push(InputEdge::new(from, to, *self.graph.data(edge)));
+                }
+            }
+        }
+
+        if edges.is_empty() {
+            return None;
+        }
+        let searched = of_node.len();
+        Some((StaticGraph::new(edges), of_node, searched))
     }
 }
 
@@ -1634,5 +1772,169 @@ mod tests {
             let body = to_bytes(response.into_body()).await.expect("empty body");
             Tile::decode(&body[..]).expect("served tile does not decode");
         }
+    }
+
+    /// A grid of nodes cut into cells of four and then into cells of sixteen,
+    /// so that a cell of the upper level is built out of four of the lower one.
+    fn state_of_a_grid(side: usize) -> ServerState {
+        state_of_a_grid_with(side, true)
+    }
+
+    /// `both_ways` decides whether the arcs running east carry a reverse. A
+    /// grid of one way streets makes the distances between two border nodes
+    /// differ by direction, which a grid of two way streets cannot show.
+    fn state_of_a_grid_with(side: usize, both_ways: bool) -> ServerState {
+        let node = |row: usize, column: usize| row * side + column;
+        let mut edges = Vec::new();
+        let mut coordinates = Vec::new();
+        for row in 0..side {
+            for column in 0..side {
+                coordinates.push(FPCoordinate::new_from_lat_lon(
+                    LAT + 0.001 * row as f64,
+                    LON + 0.001 * column as f64,
+                ));
+                if column + 1 < side {
+                    edges.push(InputEdge::new(node(row, column), node(row, column + 1), 1));
+                    if both_ways {
+                        edges.push(InputEdge::new(node(row, column + 1), node(row, column), 1));
+                    }
+                }
+                if row + 1 < side {
+                    edges.push(InputEdge::new(node(row, column), node(row + 1, column), 1));
+                    edges.push(InputEdge::new(node(row + 1, column), node(row, column), 1));
+                }
+            }
+        }
+
+        // squares of two by two on the finest level, of four by four above it
+        let finest = (0..side * side)
+            .map(|index| {
+                let (row, column) = (index / side, index % side);
+                ((row / 2) * (side / 2) + column / 2) as CellId
+            })
+            .collect::<Vec<_>>();
+        let coarser = (0..(side / 2) * (side / 2))
+            .map(|cell| {
+                let (row, column) = (cell / (side / 2), cell % (side / 2));
+                ((row / 2) * (side / 4) + column / 2) as CellId
+            })
+            .collect::<Vec<_>>();
+        let top = vec![0; (side / 4) * (side / 4)];
+
+        ServerState::new(
+            StaticGraph::new(edges),
+            coordinates,
+            LevelDirectory::new(finest, vec![coarser, top]),
+        )
+    }
+
+    /// Searching the graph of a cell and searching the cells below it have to
+    /// give the same distances, or a level built on the one below it says
+    /// something else than the graph does.
+    #[test]
+    fn a_cell_built_from_the_cells_below_says_what_the_graph_says() {
+        let state = state_of_a_grid(8);
+        let cells = state.level(1);
+
+        for cell in 0..cells.nodes_of_cell.len() as CellId {
+            let Some(built_up) = state.distances_of(1, cell) else {
+                continue;
+            };
+
+            // the same cell, searched over its own nodes instead
+            let nodes = &cells.nodes_of_cell[cell as usize];
+            let border = nodes
+                .iter()
+                .copied()
+                .filter(|&node| cells.on_border[node])
+                .collect::<Vec<_>>();
+            let graph = state.subgraph_of(&cells, cell, nodes, &border);
+            let indices = (0..border.len()).collect::<Vec<_>>();
+            let mut dijkstra = OneToManyDijkstra::new();
+
+            assert_eq!(built_up.border_nodes, border, "cell {cell}");
+            for (source, _) in border.iter().enumerate() {
+                dijkstra.run(&graph, source, &indices);
+                for (target, _) in border.iter().enumerate() {
+                    assert_eq!(
+                        built_up.distance(source, target),
+                        dijkstra.distance(target),
+                        "cell {cell}, from {source} to {target}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_border_node_is_one_an_arc_reaches_as_well_as_one_it_leaves() {
+        // 0 -> 1 only, and the two sit in different cells. Node 1 can only be
+        // entered from outside, and is a way into its cell all the same.
+        let edges = vec![InputEdge::new(0, 1, 1_usize)];
+        let coordinates = vec![
+            FPCoordinate::new_from_lat_lon(LAT, LON),
+            FPCoordinate::new_from_lat_lon(LAT, LON + 0.001),
+        ];
+        let directory = LevelDirectory::new(vec![0, 1], vec![vec![0, 0]]);
+        let state = ServerState::new(StaticGraph::new(edges), coordinates, directory);
+
+        let cells = state.level(0);
+        assert!(cells.on_border[0], "the node the arc leaves");
+        assert!(cells.on_border[1], "the node the arc reaches");
+    }
+
+    #[test]
+    fn a_cell_knows_the_cells_it_is_built_from() {
+        let state = state_of_a_grid(8);
+        let cells = state.level(1);
+        // four cells of the finest level make up one of the level above
+        for children in &cells.built_from {
+            assert_eq!(children.len(), 4);
+        }
+        // and the finest level is built from the graph rather than from cells
+        assert!(state.level(0).built_from.is_empty());
+    }
+
+    /// The same check on a graph of one way streets, where the distance from
+    /// one border node to another differs from the distance back. A grid of two
+    /// way streets cannot tell a matrix from its transpose.
+    #[test]
+    fn a_cell_of_one_way_streets_says_what_the_graph_says() {
+        let state = state_of_a_grid_with(8, false);
+        let cells = state.level(1);
+
+        let mut asymmetric = 0;
+        for cell in 0..cells.nodes_of_cell.len() as CellId {
+            let Some(built_up) = state.distances_of(1, cell) else {
+                continue;
+            };
+            let nodes = &cells.nodes_of_cell[cell as usize];
+            let border = nodes
+                .iter()
+                .copied()
+                .filter(|&node| cells.on_border[node])
+                .collect::<Vec<_>>();
+            let graph = state.subgraph_of(&cells, cell, nodes, &border);
+            let indices = (0..border.len()).collect::<Vec<_>>();
+            let mut dijkstra = OneToManyDijkstra::new();
+
+            for source in 0..border.len() {
+                dijkstra.run(&graph, source, &indices);
+                for target in 0..border.len() {
+                    assert_eq!(
+                        built_up.distance(source, target),
+                        dijkstra.distance(target),
+                        "cell {cell}, from {source} to {target}"
+                    );
+                    if built_up.distance(source, target) != built_up.distance(target, source) {
+                        asymmetric += 1;
+                    }
+                }
+            }
+        }
+        assert!(
+            asymmetric > 0,
+            "the graph has to hold a pair whose distance differs by direction"
+        );
     }
 }
