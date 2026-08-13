@@ -38,13 +38,14 @@
 //! assert_eq!(directory.common_level(0, 4), None);
 //! ```
 use crate::graph::NodeID;
+use rkyv::{Archive, Deserialize, Serialize};
 
 /// A cell of one level. Cells are numbered from zero per level, so an id only
 /// means something together with the level it belongs to.
 pub type CellId = u32;
 
 /// The cells of a nested partition, level by level.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Archive, Serialize, Deserialize)]
 pub struct LevelDirectory {
     /// the cell of each node on the lowest level
     base: Vec<CellId>,

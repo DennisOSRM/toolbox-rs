@@ -18,10 +18,14 @@ use std::sync::{
 use toolbox_rs::geometry::FPCoordinate;
 use toolbox_rs::io;
 use toolbox_rs::{
+    assembly,
     inertial_flow::{self, Flow, flow_cmp},
     partition_id::PartitionID,
 };
-use {command_line::Arguments, serialize::write_results};
+use {
+    command_line::Arguments,
+    serialize::{write_level_directory, write_results},
+};
 
 fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
@@ -65,7 +69,37 @@ fn main() {
     } else {
         edges.clone()
     };
-    let job = (edges, id_vector);
+    let node_count = coordinates.len();
+    // The size a cell has to reach before the cutting stops. Assembling a level
+    // out of cells a quarter of its size leaves the assembly room to come close
+    // to the size that was asked for.
+    let base_cell_size = args
+        .level_sizes
+        .iter()
+        .min()
+        .map_or(args.minimum_cell_size, |smallest| (smallest / 4).max(1));
+    if !args.level_sizes.is_empty() {
+        info!(
+            "cutting down to cells of {base_cell_size} nodes, then assembling {:?}",
+            args.level_sizes
+        );
+    }
+
+    // The tree the cutting leaves behind, in the order the cells are created,
+    // so a parent always comes before its children. The root holds everything.
+    let mut tree_sizes = vec![node_count];
+    let mut tree_children: Vec<Option<(usize, usize)>> = vec![None];
+    let mut leaf_of_node = vec![0_usize; node_count];
+
+    // Without level sizes the cutting stops where it always did, so a run that
+    // asks for nothing new behaves as it did before.
+    let stop_at = if args.level_sizes.is_empty() {
+        args.minimum_cell_size
+    } else {
+        base_cell_size
+    };
+
+    let job = (edges, id_vector, 0_usize);
     let mut current_job_queue = vec![job];
 
     let sty = ProgressStyle::default_spinner()
@@ -87,10 +121,10 @@ fn main() {
         let pb = ProgressBar::new(current_job_queue.len() as u64);
         pb.set_style(sty.clone());
 
-        let next_job_queue = current_job_queue
+        let outcomes: Vec<_> = current_job_queue
             .par_iter_mut()
             .enumerate()
-            .flat_map(|(id, job)| {
+            .map(|(id, job)| {
                 pb.set_message(format!("cell #{id}"));
                 pb.inc(1);
 
@@ -123,7 +157,7 @@ fn main() {
                         id.make_leftmost_descendant(level_difference);
                         store(*i, id);
                     }
-                    return Vec::new();
+                    return (job.2, None, std::mem::take(&mut job.1));
                 };
                 debug!(
                     "best max-flow: {}, balance: {:.3}",
@@ -165,42 +199,115 @@ fn main() {
                 }
                 debug!("generating next level ids");
 
-                // iterate on left half if larger than the minimum cell size
-                let mut next_jobs = Vec::new();
+                // A half is cut further while it is larger than the size a cell
+                // has to reach, and settles where it is otherwise. The ids of a
+                // half that settles are pushed to the bottom of the hierarchy,
+                // so that every node ends up on the same level and the ids stay
+                // what they were before the levels were assembled.
                 let level_difference = (args.recursion_depth - current_level - 1) as usize;
-                if result.left_ids.len() > args.minimum_cell_size {
-                    next_jobs.push((left_edges, result.left_ids));
-                } else {
+                if result.left_ids.len() <= stop_at {
                     for i in &result.left_ids {
                         let mut id = load(*i);
                         id.make_leftmost_descendant(level_difference);
                         store(*i, id);
                     }
                 }
-                // iterate on right half if larger than the minimum cell size
-                if result.right_ids.len() > args.minimum_cell_size {
-                    next_jobs.push((right_edges, result.right_ids));
-                } else {
+                if result.right_ids.len() <= stop_at {
                     for i in &result.right_ids {
                         let mut id = load(*i);
                         id.make_rightmost_descendant(level_difference);
                         store(*i, id);
                     }
                 }
-                next_jobs
+                (
+                    job.2,
+                    Some((left_edges, result.left_ids, right_edges, result.right_ids)),
+                    Vec::new(),
+                )
             })
             .collect();
+
+        // Grow the tree and lay out the next level. The cells are numbered as
+        // they are created, so a parent always comes before its children.
+        let mut next_job_queue = Vec::new();
+        for (parent, cut, uncut_ids) in outcomes {
+            let Some((left_edges, left_ids, right_edges, right_ids)) = cut else {
+                // a cell that could not be cut stays a cell of the tree as it is
+                for &node in &uncut_ids {
+                    leaf_of_node[node] = parent;
+                }
+                continue;
+            };
+
+            let left = tree_sizes.len();
+            tree_sizes.push(left_ids.len());
+            tree_children.push(None);
+            let right = tree_sizes.len();
+            tree_sizes.push(right_ids.len());
+            tree_children.push(None);
+            tree_children[parent] = Some((left, right));
+
+            for (index, ids, edges) in [
+                (left, left_ids, left_edges),
+                (right, right_ids, right_edges),
+            ] {
+                for &node in &ids {
+                    leaf_of_node[node] = index;
+                }
+                if ids.len() > stop_at {
+                    next_job_queue.push((edges, ids, index));
+                }
+            }
+        }
         current_level += 1;
         pb.finish_with_message(format!("level {current_level} done"));
         current_job_queue = next_job_queue;
+    }
+
+    if !args.level_sizes.is_empty() {
+        // The tree was numbered as it grew, so a parent sits before its
+        // children. Reversing it puts every child before its parent, which is
+        // the order the assembly walks.
+        let last = tree_sizes.len() - 1;
+        let flip = |index: usize| last - index;
+        let nodes = tree_sizes
+            .iter()
+            .zip(&tree_children)
+            .map(|(&size, children)| assembly::Node {
+                size,
+                children: children.map(|(left, right)| (flip(left), flip(right))),
+            })
+            .rev()
+            .collect_vec();
+        let tree =
+            assembly::Tree::new(nodes, leaf_of_node.iter().map(|&leaf| flip(leaf)).collect());
+        info!(
+            "bisection left {} cells over {} nodes",
+            tree.number_of_cells(),
+            tree.number_of_nodes()
+        );
+
+        let directory = assembly::assemble(&tree, &args.level_sizes);
+        for level in 0..directory.levels() {
+            info!(
+                "level {level} of {} nodes: {} cells",
+                args.level_sizes[level],
+                directory.cells_on_level(level)
+            );
+        }
+        if !args.level_directory.is_empty() {
+            write_level_directory(&args.level_directory, &directory);
+        }
     }
 
     let partition_ids_vec = partition_ids
         .iter()
         .map(|id| PartitionID(id.load(Ordering::Relaxed)))
         .collect_vec();
-    for id in &partition_ids_vec {
-        debug_assert_eq!(id.level(), args.recursion_depth);
+    if args.level_sizes.is_empty() {
+        for id in &partition_ids_vec {
+            debug_assert_eq!(id.level(), args.recursion_depth);
+        }
     }
 
     write_results(&args, &partition_ids_vec, &coordinates, &input_edges);

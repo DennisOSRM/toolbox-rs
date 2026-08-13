@@ -4,7 +4,10 @@ use std::{
     fs::File,
     io::{BufWriter, Write},
 };
-use toolbox_rs::{edge::TrivialEdge, geometry::FPCoordinate, partition_id::PartitionID};
+use toolbox_rs::{
+    edge::TrivialEdge, geometry::FPCoordinate, level_directory::LevelDirectory,
+    partition_id::PartitionID,
+};
 
 use crate::command_line::Arguments;
 
@@ -104,4 +107,13 @@ pub fn write_results(
         info!("writing partition ids to {}", &args.partition_file);
         binary_partition_file(&args.partition_file, partition_ids);
     }
+}
+
+/// Writes the cells of every level, so that a query can look up which cell a
+/// node sits in on a level and which level two nodes meet on.
+pub fn write_level_directory(path: &str, directory: &LevelDirectory) {
+    info!("writing level directory to {path}");
+    let mut file = BufWriter::new(File::create(path).expect("output file cannot be opened"));
+    let bytes = rkyv::to_bytes::<rancor::Error>(directory).unwrap();
+    file.write_all(&bytes).unwrap();
 }

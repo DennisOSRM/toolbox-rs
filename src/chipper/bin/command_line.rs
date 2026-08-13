@@ -72,6 +72,18 @@ pub struct Arguments {
     /// Minimum size of a cell
     #[clap(short, long, default_value_t = 50, action)]
     pub minimum_cell_size: usize,
+
+    /// Sizes of the levels to assemble, from the finest up, e.g.
+    /// 50,250,1000,10000,100000,1000000. Giving them cuts the graph down to
+    /// cells of a quarter of the finest size instead of to a fixed depth, and
+    /// assembles the levels out of those cells. The recursion depth still caps
+    /// how deep the cutting may go.
+    #[clap(short = 'L', long, value_delimiter = ',')]
+    pub level_sizes: Vec<usize>,
+
+    /// path to the level directory
+    #[clap(short = 'd', long, default_value_t = String::new(), action)]
+    pub level_directory: String,
 }
 
 impl Display for Arguments {
@@ -93,6 +105,12 @@ impl Display for Arguments {
         writeln!(f, "coordinates: {}", self.coordinates)?;
         writeln!(f, "recursion depth: {}", self.recursion_depth)?;
         writeln!(f, "balance factor: {}", self.b_factor)?;
+        if !self.level_sizes.is_empty() {
+            writeln!(f, "level sizes: {:?}", self.level_sizes)?;
+        }
+        if !self.level_directory.is_empty() {
+            writeln!(f, "level directory: {}", self.level_directory)?;
+        }
         writeln!(f, "minimum_cell_size: {}", self.minimum_cell_size)
     }
 }
