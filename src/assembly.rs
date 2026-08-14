@@ -79,6 +79,79 @@ impl CellGraph {
     }
 }
 
+/// Merges neighbouring cells until none of them can take another without
+/// passing `size`, and hands back the cell each one ended up in.
+///
+/// The pairs are taken by how many arcs run between them, the heaviest first,
+/// which is the greedy agglomeration that the coarsening of a multilevel
+/// partitioner is built on. Only cells that share an arc are ever merged, so a
+/// cell of the result is a union of cells joined along arcs and stays in one
+/// piece as long as the cells it was built from were.
+#[must_use]
+pub fn agglomerate(graph: &CellGraph, size: usize) -> Vec<CellId> {
+    let mut arcs = graph.arcs();
+    // heaviest first, and by cell for a run that does not depend on the order
+    // the arcs happened to be collected in
+    arcs.sort_unstable_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)).then(a.1.cmp(&b.1)));
+
+    let mut union = crate::union_find::UnionFind::new(graph.len());
+    let mut merged_size = graph.sizes.clone();
+    for (left, right, _) in arcs {
+        let (left, right) = (union.find(left), union.find(right));
+        if left == right || merged_size[left] + merged_size[right] > size {
+            continue;
+        }
+        let total = merged_size[left] + merged_size[right];
+        union.union(left, right);
+        let root = union.find(left);
+        merged_size[root] = total;
+    }
+
+    // number the cells that are left, in the order their members appear
+    let mut cell_of_root = vec![CellId::MAX; graph.len()];
+    let mut cells = 0;
+    (0..graph.len())
+        .map(|cell| {
+            let root = union.find(cell);
+            if cell_of_root[root] == CellId::MAX {
+                cell_of_root[root] = cells;
+                cells += 1;
+            }
+            cell_of_root[root]
+        })
+        .collect()
+}
+
+/// Draws the cells of a graph together along the given assignment.
+#[must_use]
+pub fn contract(graph: &CellGraph, of: &[CellId]) -> CellGraph {
+    let cells = of.iter().copied().max().map_or(0, |cell| cell as usize + 1);
+    let mut sizes = vec![0; cells];
+    for (cell, size) in graph.sizes.iter().enumerate() {
+        sizes[of[cell] as usize] += size;
+    }
+
+    // the arcs between two cells of the result are the arcs between the cells
+    // they were built from, and the ones inside a cell are gone
+    let mut between: rustc_hash::FxHashMap<(usize, usize), usize> =
+        rustc_hash::FxHashMap::default();
+    for (left, right, weight) in graph.arcs() {
+        let (left, right) = (of[left] as usize, of[right] as usize);
+        if left == right {
+            continue;
+        }
+        let pair = (left.min(right), left.max(right));
+        *between.entry(pair).or_insert(0) += weight;
+    }
+
+    let mut arcs = between
+        .into_iter()
+        .map(|((left, right), weight)| (left, right, weight))
+        .collect::<Vec<_>>();
+    arcs.sort_unstable();
+    CellGraph::new(sizes, &arcs)
+}
+
 /// Splits the cells of a partition into the pieces they consist of, so that
 /// every piece is in one piece.
 ///
@@ -197,6 +270,105 @@ pub fn cell_graph(arcs: &[TrivialEdge], cell_of_node: &[CellId]) -> CellGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::{RngExt, SeedableRng, prelude::StdRng};
+
+    fn ring(cells: usize) -> CellGraph {
+        let arcs = (0..cells)
+            .map(|cell| (cell, (cell + 1) % cells, 1))
+            .collect::<Vec<_>>();
+        CellGraph::new(vec![1; cells], &arcs)
+    }
+
+    #[test]
+    fn merging_follows_the_arcs_between_cells() {
+        // a line of four, so a cell of two can only be two that sit next to
+        // each other
+        let graph = CellGraph::new(vec![1, 1, 1, 1], &[(0, 1, 5), (1, 2, 1), (2, 3, 5)]);
+        let merged = agglomerate(&graph, 2);
+        assert_eq!(merged[0], merged[1], "the heaviest pair goes together");
+        assert_eq!(merged[2], merged[3]);
+        assert_ne!(merged[0], merged[2]);
+    }
+
+    #[test]
+    fn cells_that_share_no_arc_are_left_apart() {
+        let graph = CellGraph::new(vec![1, 1, 1], &[]);
+        let merged = agglomerate(&graph, 10);
+        assert_eq!(merged.len(), 3);
+        // nothing to merge along, so nothing is merged however large the size
+        assert_ne!(merged[0], merged[1]);
+        assert_ne!(merged[1], merged[2]);
+    }
+
+    #[test]
+    fn a_merge_never_passes_the_size() {
+        let graph = ring(8);
+        for size in 1..=8 {
+            let merged = agglomerate(&graph, size);
+            let mut held = vec![0; merged.iter().copied().max().unwrap() as usize + 1];
+            for &cell in &merged {
+                held[cell as usize] += 1;
+            }
+            assert!(
+                held.iter().all(|&count| count <= size),
+                "a cell of {} passed the size {size}",
+                held.iter().max().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn drawing_cells_together_keeps_the_arcs_between_them() {
+        let graph = CellGraph::new(vec![1, 1, 1, 1], &[(0, 1, 3), (1, 2, 7), (2, 3, 2)]);
+        // put 0 with 1 and 2 with 3
+        let contracted = contract(&graph, &[0, 0, 1, 1]);
+        assert_eq!(contracted.len(), 2);
+        assert_eq!(contracted.size_of(0), 2);
+        assert_eq!(contracted.size_of(1), 2);
+        // the arc inside a cell is gone, the one between them is kept
+        assert_eq!(contracted.neighbours_of(0), &[(1, 7)]);
+    }
+
+    #[test]
+    fn merging_carries_on_while_there_is_room() {
+        let mut rng = StdRng::seed_from_u64(0x57A11);
+        for round in 0..10 {
+            let cells = 64;
+            // a path, so everything can reach everything, with weights that
+            // send the order jumping around it
+            let arcs = (0..cells - 1)
+                .map(|cell| (cell, cell + 1, 1 + rng.random_range(0..50)))
+                .collect::<Vec<_>>();
+            let graph = CellGraph::new(vec![1; cells], &arcs);
+
+            // a size that holds the whole path has to leave one cell
+            let merged = agglomerate(&graph, cells);
+            let left = merged.iter().copied().max().unwrap() + 1;
+            assert_eq!(
+                left, 1,
+                "round {round} left {left} cells of a path of {cells}"
+            );
+        }
+    }
+
+    #[test]
+    fn merging_fills_the_size_it_is_given() {
+        let mut rng = StdRng::seed_from_u64(0xF111);
+        let cells = 96;
+        let arcs = (0..cells - 1)
+            .map(|cell| (cell, cell + 1, 1 + rng.random_range(0..50)))
+            .collect::<Vec<_>>();
+        let graph = CellGraph::new(vec![1; cells], &arcs);
+
+        // a path cut into cells of twelve leaves eight of them, give or take
+        // the ends that cannot grow further
+        let merged = agglomerate(&graph, 12);
+        let left = merged.iter().copied().max().unwrap() as usize + 1;
+        assert!(
+            left <= cells / 6,
+            "a path of {cells} left {left} cells of at most 12"
+        );
+    }
 
     fn edge(source: usize, target: usize) -> TrivialEdge {
         TrivialEdge { source, target }
