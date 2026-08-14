@@ -86,6 +86,22 @@ impl<T: Ord + Copy> StaticGraph<T> {
         Self::new_from_sorted_list(input)
     }
 
+    /// Assembles a graph that holds at least `nodes` nodes, whether or not an
+    /// arc reaches the last of them.
+    ///
+    /// [`Self::new`] counts the nodes off the arcs it is handed, which is one
+    /// short of what a caller means whenever the highest numbered node has no
+    /// arc at all. Such a node is not a curiosity: a node of a cell whose only
+    /// arcs leave the cell has none inside it, and a search started there would
+    /// read past the end of the node array.
+    pub fn new_with_nodes(
+        nodes: usize,
+        mut input: Vec<impl Edge<ID = NodeID> + EdgeData<DATA = T> + Ord>,
+    ) -> Self {
+        input.sort();
+        Self::assemble(nodes, input)
+    }
+
     /// Assembles a graph from a prebuilt adjacency array. The caller has to
     /// guarantee that `node_array` is non-decreasing, starts at zero, ends at
     /// `edge_array.len()` and that the targets within each adjacency block are
@@ -107,9 +123,18 @@ impl<T: Ord + Copy> StaticGraph<T> {
     pub fn new_from_sorted_list(
         input: Vec<impl Edge<ID = NodeID> + EdgeData<DATA = T> + Ord>,
     ) -> Self {
+        Self::assemble(0, input)
+    }
+
+    /// Builds the adjacency array out of a sorted arc list, over as many nodes
+    /// as the arcs reach or as many as were asked for, whichever is more.
+    fn assemble(
+        nodes: usize,
+        input: Vec<impl Edge<ID = NodeID> + EdgeData<DATA = T> + Ord>,
+    ) -> Self {
         // TODO: renumber IDs if necessary
         let number_of_edges = input.len();
-        let mut number_of_nodes = 0;
+        let mut number_of_nodes = nodes.saturating_sub(1);
         for edge in &input {
             number_of_nodes = max(edge.source(), number_of_nodes);
             number_of_nodes = max(edge.target(), number_of_nodes);
@@ -323,5 +348,38 @@ mod tests {
         // non-existing edge out of range
         assert_eq!(graph.find_edge_unchecked(16, 17), EdgeID::MAX);
         assert!(graph.find_edge(16, 17).is_none());
+    }
+
+    #[test]
+    fn a_graph_holds_the_nodes_it_was_asked_for() {
+        // an arc list that reaches nodes 0 and 1 only, over a graph of five
+        let edges = vec![InputEdge::new(0, 1, 3), InputEdge::new(1, 0, 3)];
+        let graph = StaticGraph::<i32>::new_with_nodes(5, edges);
+
+        assert_eq!(graph.number_of_nodes(), 5);
+        assert_eq!(graph.number_of_edges(), 2);
+        // the nodes no arc reaches are there and hold none
+        for node in 2..5 {
+            assert_eq!(graph.edge_range(node).count(), 0);
+        }
+        assert_eq!(graph.out_degree(0), 1);
+    }
+
+    #[test]
+    fn asking_for_fewer_nodes_than_the_arcs_reach_changes_nothing() {
+        let edges = vec![InputEdge::new(0, 4, 3), InputEdge::new(4, 0, 3)];
+        let asked = StaticGraph::<i32>::new_with_nodes(2, edges.clone());
+        let counted = StaticGraph::<i32>::new(edges);
+
+        assert_eq!(asked.number_of_nodes(), counted.number_of_nodes());
+        assert_eq!(asked.number_of_nodes(), 5);
+    }
+
+    #[test]
+    fn a_graph_of_no_arcs_still_holds_its_nodes() {
+        let graph = StaticGraph::<i32>::new_with_nodes(3, Vec::<InputEdge<i32>>::new());
+        assert_eq!(graph.number_of_nodes(), 3);
+        assert_eq!(graph.number_of_edges(), 0);
+        assert_eq!(graph.edge_range(2).count(), 0);
     }
 }
