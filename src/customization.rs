@@ -291,8 +291,12 @@ impl Customization {
                 edges.push(InputEdge::new(source, target, *self.graph.data(edge)));
             }
         }
+        // A border node whose arcs all leave the cell has none inside it and so
+        // appears in no arc here. The graph is asked for the nodes the cell
+        // has all the same, or a search started from that node would read past
+        // the end of it.
         // TODO: find a way to avoid relocations
-        StaticGraph::new(edges)
+        StaticGraph::new_with_nodes(of_node.len().max(border_nodes.len()), edges)
     }
 }
 
@@ -422,6 +426,33 @@ mod tests {
         assert!(!Arc::ptr_eq(&first, &second), "the cell was kept");
         assert_eq!(first.border_nodes, second.border_nodes);
         assert_eq!(customization.customized_cells(), 2);
+    }
+
+    /// A border node whose arcs all leave its cell has none inside it, so it
+    /// turns up in no arc of the subgraph. The graph still has to hold it, or
+    /// a search started there reads past the end of the node array.
+    #[test]
+    fn a_cell_whose_arcs_all_leave_it_is_still_tabulated() {
+        // nodes 0 and 1 sit in one cell and are joined only through node 2,
+        // which sits in another, so the first cell holds no arc at all
+        let edges = vec![
+            InputEdge::new(0, 2, 1_usize),
+            InputEdge::new(2, 0, 1_usize),
+            InputEdge::new(1, 2, 1_usize),
+            InputEdge::new(2, 1, 1_usize),
+        ];
+        let directory = LevelDirectory::new(vec![0, 0, 1], vec![vec![0, 0]]);
+        let customization = Customization::new(StaticGraph::new(edges), directory);
+
+        let distances = customization
+            .distances_of(0, 0)
+            .expect("both are border nodes");
+        assert_eq!(distances.border_nodes, vec![0, 1]);
+        // each reaches itself and neither reaches the other without leaving
+        assert_eq!(distances.distance(0, 0), 0);
+        assert_eq!(distances.distance(1, 1), 0);
+        assert_eq!(distances.distance(0, 1), usize::MAX);
+        assert_eq!(distances.distance(1, 0), usize::MAX);
     }
 
     #[test]
