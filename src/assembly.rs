@@ -10,7 +10,10 @@
 //! crosses a cell has to be able to do it without leaving the cell, and a cell
 //! that falls into pieces cannot promise that.
 
-use crate::{edge::TrivialEdge, level_directory::CellId};
+use crate::{
+    edge::TrivialEdge,
+    level_directory::{CellId, LevelDirectory},
+};
 
 /// The graph on the cells a partition left behind: how large each cell is, and
 /// how many arcs of the graph run between two of them.
@@ -152,6 +155,59 @@ pub fn contract(graph: &CellGraph, of: &[CellId]) -> CellGraph {
     CellGraph::new(sizes, &arcs)
 }
 
+/// Assembles the levels by merging neighbouring cells, so that every cell of
+/// every level is a union of cells joined along arcs.
+///
+/// `cell_of_node` says which cell of `graph` each node of the graph sits in.
+/// `sizes` is read from the lowest level up.
+///
+/// # Panics
+///
+/// Panics if `sizes` is empty or holds a level finer than the one below it.
+/// Two levels of the same size are allowed: the second is merged out of the
+/// first rather than out of the cells the first was merged from, and greedy
+/// merging under the same bound can find pairs on the coarser graph that it
+/// could not on the finer one.
+#[must_use]
+pub fn assemble_connected(
+    graph: &CellGraph,
+    cell_of_node: &[CellId],
+    sizes: &[usize],
+) -> LevelDirectory {
+    assert!(!sizes.is_empty(), "a hierarchy needs a level");
+    assert!(
+        sizes.windows(2).all(|pair| pair[0] <= pair[1]),
+        "a level cannot be finer than the one below it"
+    );
+
+    let mut current = graph.clone();
+    let mut base = Vec::new();
+    let mut parents = Vec::new();
+    for (level, &size) in sizes.iter().enumerate() {
+        log::debug!(
+            "level {level}: merging {} cells joined by {} arcs, up to {size} nodes",
+            current.len(),
+            current.arcs().len()
+        );
+        let merged = agglomerate(&current, size);
+        if level == 0 {
+            base = cell_of_node
+                .iter()
+                .map(|&cell| merged[cell as usize])
+                .collect();
+        } else {
+            parents.push(merged.clone());
+        }
+        // the topmost level has nothing built on it, and drawing the graph
+        // together once more would walk every arc of it for nobody
+        if level + 1 < sizes.len() {
+            current = contract(&current, &merged);
+        }
+    }
+
+    LevelDirectory::new(base, parents)
+}
+
 /// Splits the cells of a partition into the pieces they consist of, so that
 /// every piece is in one piece.
 ///
@@ -272,6 +328,45 @@ mod tests {
     use super::*;
     use rand::{RngExt, SeedableRng, prelude::StdRng};
 
+    fn every_cell_is_connected(
+        graph: &CellGraph,
+        cell_of_node: &[CellId],
+        directory: &LevelDirectory,
+    ) -> bool {
+        for level in 0..directory.levels() {
+            // the cell of the level that each cell of the graph sits in
+            let mut of_cell = vec![CellId::MAX; graph.len()];
+            for (node, &cell) in cell_of_node.iter().enumerate() {
+                of_cell[cell as usize] = directory.cell_of(node, level);
+            }
+
+            let mut seen = vec![false; graph.len()];
+            let mut pieces = std::collections::HashMap::new();
+            for start in 0..graph.len() {
+                if seen[start] || of_cell[start] == CellId::MAX {
+                    continue;
+                }
+                let cell = of_cell[start];
+                seen[start] = true;
+                let mut stack = vec![start];
+                while let Some(current) = stack.pop() {
+                    for &(next, _) in graph.neighbours_of(current) {
+                        if !seen[next] && of_cell[next] == cell {
+                            seen[next] = true;
+                            stack.push(next);
+                        }
+                    }
+                }
+                // a second walk into the same cell means it fell apart
+                if !pieces.insert(cell, start).is_none() {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// A ring of eight cells, so that only neighbours share an arc.
     fn ring(cells: usize) -> CellGraph {
         let arcs = (0..cells)
             .map(|cell| (cell, (cell + 1) % cells, 1))
@@ -368,6 +463,148 @@ mod tests {
             left <= cells / 6,
             "a path of {cells} left {left} cells of at most 12"
         );
+    }
+
+    #[test]
+    fn every_assembled_cell_is_in_one_piece() {
+        let mut rng = StdRng::seed_from_u64(0xC0117);
+        for round in 0..20 {
+            // a ring with a few extra arcs, so that merging along arcs matters
+            let cells = 24 + round;
+            let mut arcs = (0..cells)
+                .map(|cell| (cell, (cell + 1) % cells, 1 + rng.random_range(0..5)))
+                .collect::<Vec<_>>();
+            for _ in 0..round {
+                let left = rng.random_range(0..cells);
+                let right = rng.random_range(0..cells);
+                if left != right
+                    && !arcs
+                        .iter()
+                        .any(|&(a, b, _)| (a, b) == (left, right) || (a, b) == (right, left))
+                {
+                    arcs.push((left, right, 1 + rng.random_range(0..5)));
+                }
+            }
+            let graph = CellGraph::new(vec![1; cells], &arcs);
+            let cell_of_node = (0..cells).map(|cell| cell as CellId).collect::<Vec<_>>();
+
+            let directory = assemble_connected(&graph, &cell_of_node, &[2, 5, 12, cells]);
+            assert!(
+                every_cell_is_connected(&graph, &cell_of_node, &directory),
+                "round {round} left a cell in pieces"
+            );
+        }
+    }
+
+    #[test]
+    fn two_levels_of_one_size_are_not_a_repeat() {
+        // merging a ring of sixteen under a bound of four twice over: the
+        // second pass works on the graph the first left, where pairs that were
+        // too large before now fit
+        let graph = ring(16);
+        let cell_of_node = (0..16).map(|cell| cell as CellId).collect::<Vec<_>>();
+        let directory = assemble_connected(&graph, &cell_of_node, &[4, 4]);
+        assert!(
+            directory.cells_on_level(1) <= directory.cells_on_level(0),
+            "the second level of the same size left more cells than the first"
+        );
+    }
+
+    #[test]
+    fn the_levels_of_an_agglomeration_nest() {
+        let graph = ring(16);
+        let cell_of_node = (0..16).map(|cell| cell as CellId).collect::<Vec<_>>();
+        let directory = assemble_connected(&graph, &cell_of_node, &[2, 4, 8, 16]);
+        for u in 0..16 {
+            for v in 0..16 {
+                let meeting = directory.common_level(u, v);
+                for level in 0..directory.levels() {
+                    assert_eq!(
+                        directory.same_cell(u, v, level),
+                        meeting.is_some_and(|first| level >= first)
+                    );
+                }
+            }
+        }
+    }
+
+    /// What the pieces are for: taking a partition whose cells fall apart,
+    /// splitting them and assembling on top of that leaves every cell of every
+    /// level in one piece.
+    #[test]
+    fn assembling_on_the_pieces_leaves_every_cell_whole() {
+        let mut rng = StdRng::seed_from_u64(0xF1A6);
+        for round in 0..10 {
+            // a line of nodes, so which nodes hang together is plain
+            let nodes = 40 + round;
+            let mut arcs = Vec::new();
+            for node in 0..nodes - 1 {
+                arcs.push(edge(node, node + 1));
+                arcs.push(edge(node + 1, node));
+            }
+
+            // cells that pay no attention to the line, so many fall apart
+            let cells = (0..nodes)
+                .map(|_| rng.random_range(0..4) as CellId)
+                .collect::<Vec<_>>();
+
+            let pieces = fragments(nodes, &arcs, &cells);
+            let graph = cell_graph(&arcs, &pieces);
+            let directory = assemble_connected(&graph, &pieces, &[3, 9, nodes]);
+
+            // every cell of every level has to be a stretch of the line
+            for level in 0..directory.levels() {
+                let mut seen = std::collections::HashMap::new();
+                let mut previous = None;
+                for node in 0..nodes {
+                    let cell = directory.cell_of(node, level);
+                    if previous != Some(cell) {
+                        assert!(
+                            seen.insert(cell, node).is_none(),
+                            "round {round}: cell {cell} of level {level} comes in pieces"
+                        );
+                    }
+                    previous = Some(cell);
+                }
+            }
+        }
+    }
+
+    /// A single pass over the arcs strands cells: a pair skipped because it was
+    /// too large at that moment is never looked at again, although both of them
+    /// may still have room once the pass is over.
+    /// A grid is what a road network looks like from far enough away. The
+    /// levels have to keep coarsening on one, and the graph of the cells has to
+    /// stay joined up while they do.
+    #[test]
+    fn a_grid_keeps_coarsening() {
+        let side = 64;
+        let cells = side * side;
+        let mut arcs = Vec::new();
+        for row in 0..side {
+            for column in 0..side {
+                let cell = row * side + column;
+                if column + 1 < side {
+                    arcs.push((cell, cell + 1, 1));
+                }
+                if row + 1 < side {
+                    arcs.push((cell, cell + side, 1));
+                }
+            }
+        }
+        let graph = CellGraph::new(vec![1; cells], &arcs);
+        let of_node = (0..cells).map(|cell| cell as CellId).collect::<Vec<_>>();
+
+        let sizes = [4, 16, 64, 256, 1024, 4096];
+        let directory = assemble_connected(&graph, &of_node, &sizes);
+        for (level, &size) in sizes.iter().enumerate() {
+            let held = directory.cells_on_level(level);
+            let ideal = cells.div_ceil(size);
+            assert!(
+                held <= ideal * 4,
+                "level {level} of {size} left {held} cells where {ideal} would do"
+            );
+        }
     }
 
     fn edge(source: usize, target: usize) -> TrivialEdge {
