@@ -28,6 +28,10 @@ name = "solver"
 path = "src/solver/bin/main.rs"
 
 [[bin]]
+name = "sound"
+path = "src/sound/bin/main.rs"
+
+[[bin]]
 name = "tile_server"
 path = "src/tile_server/bin/main.rs"
 required-features = ["tile_server"]

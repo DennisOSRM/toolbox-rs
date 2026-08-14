@@ -37,6 +37,15 @@ Generate GeoJSON file visualizing the cells:
 $ cargo r --release --bin scaffold -- -c /path/to/USA-road-d.USA.co.toolbox -g /path/to/USA-road-d.USA.gr.toolbox -p /path/to/USA-r30-m100.assignment.bin --convex-cells-geojson /path/to/bbox.geojson
 ```
 
+Check that the distances across the cells of a level say what the graph says:
+```
+$ cargo r --release --bin sound -- -g /path/to/USA-road-d.USA.gr.toolbox -d /path/to/USA-levels.bin -l 2
+```
+Each cell is worked out the way a query would have it, out of the cells below
+it, and then again from each of its border nodes by a plain search over the
+graph that knows nothing of levels. Leaving out `-l` checks every level, which
+on a coarse level of a continent is a long wait.
+
 
 ## Convex Hull Visualization
 ![Convex Hulls USA](https://user-images.githubusercontent.com/1067895/175577261-55e38f44-07ae-4ab2-b344-23d15f5d5c89.png)
