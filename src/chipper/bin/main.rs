@@ -13,7 +13,7 @@ use log::{debug, info};
 use rayon::prelude::*;
 use std::sync::{
     Arc,
-    atomic::{AtomicI32, AtomicU32, Ordering},
+    atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering},
 };
 use toolbox_rs::geometry::FPCoordinate;
 use toolbox_rs::io;
@@ -83,6 +83,19 @@ fn main() {
     let load = |index: usize| PartitionID(partition_ids[index].load(Ordering::Relaxed));
     let store = |index: usize, id: PartitionID| partition_ids[index].store(id.0, Ordering::Relaxed);
 
+    // The side of the latest cut that a node ended up on, which is all that
+    // splitting the edge set needs. Reading it off the partition id instead
+    // only works while the id has room: it shifts left by one per level and
+    // packs the whole path into a u32, so it cannot record a bisection deeper
+    // than 31 and the lowest bit stops meaning the latest cut.
+    const LEFT: u8 = 0;
+    const RIGHT: u8 = 1;
+    let sides = (0..coordinates.len())
+        .map(|_| AtomicU8::new(LEFT))
+        .collect_vec();
+    let side_of = |index: usize| sides[index].load(Ordering::Relaxed);
+    let set_side = |index: usize, side: u8| sides[index].store(side, Ordering::Relaxed);
+
     while !current_job_queue.is_empty() && current_level < args.recursion_depth {
         let pb = ProgressBar::new(current_job_queue.len() as u64);
         pb.set_style(sty.clone());
@@ -136,11 +149,13 @@ fn main() {
                     let mut id = load(*i);
                     id.make_left_child();
                     store(*i, id);
+                    set_side(*i, LEFT);
                 });
                 (result.right_ids).iter().for_each(|i| {
                     let mut id = load(*i);
                     id.make_right_child();
                     store(*i, id);
+                    set_side(*i, RIGHT);
                 });
 
                 // Partition edge and node id sets for the next iteration. The
@@ -153,11 +168,11 @@ fn main() {
                 let mut left_edges = Vec::new();
                 let mut right_edges = Vec::new();
                 for edge in std::mem::take(&mut job.0) {
-                    let tail_is_left = load(edge.source).is_left_child();
-                    if tail_is_left != load(edge.target).is_left_child() {
+                    let tail_side = side_of(edge.source);
+                    if tail_side != side_of(edge.target) {
                         continue;
                     }
-                    if tail_is_left {
+                    if tail_side == LEFT {
                         left_edges.push(edge);
                     } else {
                         right_edges.push(edge);
