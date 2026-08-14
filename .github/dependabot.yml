@@ -1,14 +1,43 @@
 version: 2
 updates:
-- package-ecosystem: cargo
-  directory: "/"
-  schedule:
-    interval: daily
-    time: "01:00"
-# Enable version updates for Actions
-- package-ecosystem: "github-actions"
-  # Look for `.github/workflows` in the `root` directory
-  directory: "/"
-  # Check for updates once a week
-  schedule:
-    interval: "weekly"
+  # The crates the toolbox is built on. Checked every day, and the routine
+  # bumps arrive together rather than one pull request per crate: a dozen
+  # patch releases in a week are a dozen runs of the whole test suite and a
+  # dozen merges, for changes nobody reads one at a time.
+  #
+  # A major bump is left on its own. That is the one that breaks a build, and
+  # it is worth having by itself where it can be read, tried and reverted
+  # without holding up everything else in the batch.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: daily
+      time: "01:00"
+    # raise the requirement in Cargo.toml rather than only the lock file, so
+    # that what is built here is what a fresh checkout resolves to as well
+    versioning-strategy: increase
+    # the default of five is reached quickly once a batch and a few major
+    # bumps are open at the same time, and dependabot then stops looking
+    open-pull-requests-limit: 10
+    groups:
+      cargo-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  # The actions the workflows run. Same reasoning, and they move rarely
+  # enough that once a week is often enough to hear about it.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
