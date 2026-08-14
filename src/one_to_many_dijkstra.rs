@@ -130,7 +130,7 @@ impl OneToManyDijkstra {
 #[cfg(test)]
 mod tests {
     use crate::{
-        edge::InputEdge, graph::Graph, one_to_many_dijkstra::OneToManyDijkstra,
+        edge::InputEdge, graph::Graph, graph::NodeID, one_to_many_dijkstra::OneToManyDijkstra,
         static_graph::StaticGraph,
     };
 
@@ -406,5 +406,99 @@ mod tests {
         let success = dijkstra.run(&graph, 1, &[19]);
         assert!(success);
         assert_eq!(dijkstra.distance(19), 21109);
+    }
+
+    /// What a Dijkstra over a standard library heap makes of a graph, which
+    /// is the answer both searches of this crate have to give as well.
+    ///
+    /// Checking the two of them against each other is not enough: they share
+    /// a heap, so a fault in it moves both the same way and they go on
+    /// agreeing. This reference shares nothing with either.
+    fn distances_from<G: Graph<usize>>(graph: &G, source: NodeID) -> Vec<usize> {
+        use std::{cmp::Reverse, collections::BinaryHeap};
+
+        let mut settled = vec![usize::MAX; graph.number_of_nodes()];
+        let mut queue = BinaryHeap::new();
+        queue.push(Reverse((0_usize, source)));
+        while let Some(Reverse((cost, node))) = queue.pop() {
+            if settled[node] != usize::MAX {
+                continue;
+            }
+            settled[node] = cost;
+            for edge in graph.edge_range(node) {
+                let target = graph.target(edge);
+                if settled[target] == usize::MAX {
+                    queue.push(Reverse((cost + *graph.data(edge), target)));
+                }
+            }
+        }
+        settled
+    }
+
+    /// Both searches of the crate, over graphs drawn without a pattern, held
+    /// against a search that has nothing in common with them.
+    ///
+    /// The graphs are drawn so that a search has to choose between two ways to
+    /// a node rather than walk one path, which is what puts the ordering of the
+    /// heap to work. That the ordering is really what this covers is easiest
+    /// seen by breaking it: with the weight of a lowered key left stale in the
+    /// heap, this test fails and every older search test still passes.
+    #[test]
+    fn both_searches_agree_with_a_search_that_shares_nothing_with_them() {
+        use crate::unidirectional_dijkstra::UnidirectionalDijkstra;
+        use rand::{RngExt, SeedableRng, prelude::StdRng};
+
+        let mut rng = StdRng::seed_from_u64(0x0217);
+        let mut shortcuts = 0;
+        for round in 0..20 {
+            let nodes = 12 + round;
+            // a path through every node, so nothing is out of reach, and then
+            // arcs thrown in at random, which is what gives a search the
+            // chance to reach a node once and then reach it again cheaper
+            let mut edges = Vec::new();
+            for node in 0..nodes - 1 {
+                edges.push(InputEdge::new(node, node + 1, 1 + rng.random_range(0..9)));
+            }
+            for _ in 0..nodes * 2 {
+                let source = rng.random_range(0..nodes);
+                let target = rng.random_range(0..nodes);
+                if source != target {
+                    edges.push(InputEdge::new(source, target, 1 + rng.random_range(0..20)));
+                }
+            }
+            let graph = StaticGraph::<usize>::new(edges);
+
+            let targets = (0..nodes).collect::<Vec<_>>();
+            let mut one_to_many = OneToManyDijkstra::new();
+            let mut one_to_one = UnidirectionalDijkstra::new();
+            for source in 0..nodes {
+                let expected = distances_from(&graph, source);
+                one_to_many.run(&graph, source, &targets);
+                for (target, &cost) in expected.iter().enumerate() {
+                    assert_eq!(
+                        one_to_many.distance(target),
+                        cost,
+                        "one to many, round {round}: from {source} to {target}"
+                    );
+                    assert_eq!(
+                        one_to_one.run(&graph, source, target),
+                        cost,
+                        "one to one, round {round}: from {source} to {target}"
+                    );
+                    // a target that came out cheaper than walking the path
+                    // through every node says the arcs thrown in are worth
+                    // taking, i.e. that a search over this graph has more than
+                    // one way to reach a node
+                    if target > source && cost < target - source {
+                        shortcuts += 1;
+                    }
+                }
+            }
+        }
+        assert!(
+            shortcuts > 0,
+            "every graph in this test was walked best along its path, so none \
+             of them made a search choose between two ways to a node"
+        );
     }
 }
