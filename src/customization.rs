@@ -61,13 +61,20 @@ impl CellDistances {
 ///
 /// The nodes reached are held in a map rather than an array over the graph, as
 /// a cell is a small part of it and the walk never steps outside.
-pub fn distances_within_cell(
+///
+/// # Panics
+///
+/// Panics in a debug build if the node it starts from is not in the cell,
+/// which would answer about a cell the caller did not ask about.
+pub(crate) fn distances_within_cell(
     graph: &StaticGraph<usize>,
     of_node: &[CellId],
     cell: CellId,
     from: NodeID,
 ) -> FxHashMap<NodeID, usize> {
     use std::{cmp::Reverse, collections::BinaryHeap};
+
+    debug_assert_eq!(of_node[from], cell, "the node is not in the cell");
 
     let mut settled = FxHashMap::default();
     let mut queue = BinaryHeap::new();
