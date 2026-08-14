@@ -13,9 +13,6 @@ updates:
     schedule:
       interval: daily
       time: "01:00"
-    # raise the requirement in Cargo.toml rather than only the lock file, so
-    # that what is built here is what a fresh checkout resolves to as well
-    versioning-strategy: increase
     # the default of five is reached quickly once a batch and a few major
     # bumps are open at the same time, and dependabot then stops looking
     open-pull-requests-limit: 10
