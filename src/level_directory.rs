@@ -348,6 +348,139 @@ mod tests {
         let _ = directory().parents_on_level(2);
     }
 
+    use rand::{RngExt, SeedableRng, prelude::StdRng};
+
+    /// Builds a hierarchy by grouping the cells of one level into the next,
+    /// which is the shape a real one has: nested, and every cell of a level in
+    /// exactly one of the level above.
+    fn random_directory(rng: &mut StdRng, nodes: usize, levels: usize) -> LevelDirectory {
+        let mut base = Vec::with_capacity(nodes);
+        let mut cells = 0;
+        for _ in 0..nodes {
+            // start a new cell now and then, so cells come out of different sizes
+            if cells == 0 || rng.random_range(0..100) < 40 {
+                cells += 1;
+            }
+            base.push(cells - 1);
+        }
+
+        let mut parents = Vec::new();
+        let mut below = cells as usize;
+        for _ in 1..levels {
+            let mut table = Vec::with_capacity(below);
+            let mut above = 0;
+            for _ in 0..below {
+                if above == 0 || rng.random_range(0..100) < 50 {
+                    above += 1;
+                }
+                table.push(above - 1);
+            }
+            below = above as usize;
+            parents.push(table);
+        }
+        LevelDirectory::new(base, parents)
+    }
+
+    /// The level two nodes meet on, read off the cells of every level rather
+    /// than walked, so that the walk has something to be checked against.
+    fn meeting_level_by_hand(directory: &LevelDirectory, u: NodeID, v: NodeID) -> Option<usize> {
+        (0..directory.levels()).find(|&level| directory.same_cell(u, v, level))
+    }
+
+    #[test]
+    fn the_walk_agrees_with_reading_off_the_levels() {
+        let mut rng = StdRng::seed_from_u64(0x1E7E1);
+        for round in 0..20 {
+            let directory = random_directory(&mut rng, 40, 1 + round % 5);
+            for u in 0..directory.number_of_nodes() {
+                for v in 0..directory.number_of_nodes() {
+                    assert_eq!(
+                        directory.common_level(u, v),
+                        meeting_level_by_hand(&directory, u, v),
+                        "round {round}, nodes {u} and {v}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cells_only_ever_join_going_up() {
+        let mut rng = StdRng::seed_from_u64(0xC0FFEE);
+        for round in 0..20 {
+            let directory = random_directory(&mut rng, 40, 4);
+            for u in 0..directory.number_of_nodes() {
+                for v in 0..directory.number_of_nodes() {
+                    let mut together = false;
+                    for level in 0..directory.levels() {
+                        let same = directory.same_cell(u, v, level);
+                        assert!(
+                            !together || same,
+                            "round {round}: {u} and {v} fell apart above level {level}"
+                        );
+                        together |= same;
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_level_holds_every_node_in_exactly_one_cell() {
+        let mut rng = StdRng::seed_from_u64(0xBEEF);
+        for _ in 0..10 {
+            let directory = random_directory(&mut rng, 60, 4);
+            for level in 0..directory.levels() {
+                let cells = (0..directory.number_of_nodes())
+                    .map(|node| directory.cell_of(node, level))
+                    .collect::<std::collections::HashSet<_>>();
+                // the cells of a level are numbered from zero without a gap
+                assert_eq!(cells.len(), directory.cells_on_level(level));
+                assert_eq!(
+                    cells
+                        .iter()
+                        .copied()
+                        .max()
+                        .map_or(0, |cell| cell as usize + 1),
+                    directory.cells_on_level(level)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn levels_never_grow_in_the_number_of_cells() {
+        let mut rng = StdRng::seed_from_u64(0xF00D);
+        for _ in 0..10 {
+            let directory = random_directory(&mut rng, 60, 5);
+            for level in 1..directory.levels() {
+                assert!(
+                    directory.cells_on_level(level) <= directory.cells_on_level(level - 1),
+                    "level {level} holds more cells than the one below it"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_node_sits_in_the_cell_its_own_cell_lies_in() {
+        let mut rng = StdRng::seed_from_u64(0xD00D);
+        let directory = random_directory(&mut rng, 50, 4);
+        for level in 1..directory.levels() {
+            let parents = directory.parents_on_level(level - 1);
+            for node in 0..directory.number_of_nodes() {
+                // taking the cell of a node one level up has to land where
+                // walking all the way up from the node lands
+                let below = directory.cell_of(node, level - 1);
+                assert_eq!(
+                    parents[below as usize],
+                    directory.cell_of(node, level),
+                    "node {node} at level {level}"
+                );
+            }
+        }
+    }
+
     #[test]
     #[should_panic(expected = "no level 7 in the hierarchy")]
     fn asking_for_a_level_that_is_not_there_says_so() {
