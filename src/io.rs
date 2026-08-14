@@ -48,11 +48,42 @@ where
     rkyv::from_bytes::<Vec<T>, rancor::Error>(&buf).unwrap()
 }
 
+/// Reads a single value that was written by rkyv, as opposed to a list of
+/// them.
+///
+/// # Panics
+///
+/// Panics if the file cannot be read or does not hold what was asked for.
+pub fn read_from_file<T>(filename: &str) -> T
+where
+    T: rkyv::Archive,
+    <T as rkyv::Archive>::Archived: for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rancor::Error>>
+        + rkyv::Deserialize<T, rkyv::api::high::HighDeserializer<rancor::Error>>,
+{
+    let mut reader = BufReader::new(File::open(filename).unwrap());
+    let mut buf = Vec::new();
+    reader.read_to_end(&mut buf).unwrap();
+    rkyv::from_bytes::<T, rancor::Error>(&buf).unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn a_single_value_survives_the_file() {
+        use crate::geometry::FPCoordinate;
+        let coordinate = FPCoordinate::new(1_234_567, -7_654_321);
+
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_str().unwrap().to_string();
+        let bytes = rkyv::to_bytes::<rancor::Error>(&coordinate).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+
+        assert_eq!(read_from_file::<FPCoordinate>(&path), coordinate);
+    }
 
     // Test `read_lines` function
     #[test]
