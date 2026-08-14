@@ -1,4 +1,7 @@
-//! Which cell a node sits in on each level of a nested partition.
+//! Which cell a node sits in on each level of a nested partition, and the level
+//! on which two nodes first share one.
+//!
+//! # Shape
 //!
 //! The levels are nested: a cell of one level lies inside exactly one cell of
 //! the level above it. Only the lowest level is therefore stored per node. Each
@@ -6,6 +9,14 @@
 //! as long as that level has cells rather than as long as the graph has nodes.
 //! A hierarchy of six levels over eighteen million nodes costs the eighteen
 //! million entries of the lowest level plus a few hundred thousand for the rest.
+//!
+//! # The level two nodes meet on
+//!
+//! Two nodes that share a cell on one level share one on every level above it,
+//! so the level they first meet on decides every question about them: it is the
+//! level a query between them has to climb to, and the levels below it are the
+//! ones a search may stay inside of. [`LevelDirectory::common_level`] walks both
+//! nodes up in step and reports the level they land in the same cell on.
 //!
 //! # Examples
 //!
@@ -23,6 +34,13 @@
 //! // node 3 sits in cell 1 down below, which lies in cell 0 above
 //! assert_eq!(directory.cell_of(3, 0), 1);
 //! assert_eq!(directory.cell_of(3, 1), 0);
+//!
+//! // nodes 0 and 1 share a cell on the lowest level already
+//! assert_eq!(directory.common_level(0, 1), Some(0));
+//! // nodes 1 and 2 are apart down there and meet one level up
+//! assert_eq!(directory.common_level(1, 2), Some(1));
+//! // node 4 sits under a root of its own and never meets them
+//! assert_eq!(directory.common_level(0, 4), None);
 //! ```
 use crate::graph::NodeID;
 use rkyv::{Archive, Deserialize, Serialize};
@@ -108,6 +126,31 @@ impl LevelDirectory {
         }
         cell
     }
+
+    /// Whether two nodes share a cell on the given level.
+    #[must_use]
+    pub fn same_cell(&self, u: NodeID, v: NodeID, level: usize) -> bool {
+        self.cell_of(u, level) == self.cell_of(v, level)
+    }
+
+    /// The lowest level on which two nodes share a cell, and `None` when they
+    /// share none at all. A pair that shares a cell on one level shares one on
+    /// every level above it, so this is the only level worth asking about.
+    #[must_use]
+    pub fn common_level(&self, u: NodeID, v: NodeID) -> Option<usize> {
+        let (mut left, mut right) = (self.base[u], self.base[v]);
+        if left == right {
+            return Some(0);
+        }
+        for (level, parents) in self.parents.iter().enumerate() {
+            left = parents[left as usize];
+            right = parents[right as usize];
+            if left == right {
+                return Some(level + 1);
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]
@@ -151,10 +194,85 @@ mod tests {
     }
 
     #[test]
+    fn two_nodes_meet_on_the_level_their_cells_join() {
+        let directory = directory();
+        // together on the lowest level
+        assert_eq!(directory.common_level(0, 1), Some(0));
+        assert_eq!(directory.common_level(3, 4), Some(0));
+        // apart down there, together one level up
+        assert_eq!(directory.common_level(1, 2), Some(1));
+        // and only under the root
+        assert_eq!(directory.common_level(0, 3), Some(2));
+        assert_eq!(directory.common_level(2, 4), Some(2));
+    }
+
+    #[test]
+    fn a_node_meets_itself_at_the_bottom() {
+        let directory = directory();
+        for node in 0..directory.number_of_nodes() {
+            assert_eq!(directory.common_level(node, node), Some(0));
+        }
+    }
+
+    #[test]
+    fn the_level_two_nodes_meet_on_does_not_depend_on_their_order() {
+        let directory = directory();
+        for u in 0..directory.number_of_nodes() {
+            for v in 0..directory.number_of_nodes() {
+                assert_eq!(directory.common_level(u, v), directory.common_level(v, u));
+            }
+        }
+    }
+
+    /// The level two nodes meet on has to be the first one they share a cell
+    /// on, and they have to keep sharing one above it.
+    #[test]
+    fn nodes_stay_together_above_the_level_they_meet_on() {
+        let directory = directory();
+        for u in 0..directory.number_of_nodes() {
+            for v in 0..directory.number_of_nodes() {
+                let meeting = directory.common_level(u, v).expect("a shared root");
+                for level in 0..meeting {
+                    assert!(!directory.same_cell(u, v, level), "{u} and {v} at {level}");
+                }
+                for level in meeting..directory.levels() {
+                    assert!(directory.same_cell(u, v, level), "{u} and {v} at {level}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nodes_under_separate_roots_never_meet() {
+        // two hierarchies next to each other, with no level joining them
+        let directory = LevelDirectory::new(vec![0, 1, 2, 3], vec![vec![0, 0, 1, 1]]);
+        assert_eq!(directory.common_level(0, 1), Some(1));
+        assert_eq!(directory.common_level(2, 3), Some(1));
+        assert_eq!(directory.common_level(0, 2), None);
+        assert_eq!(directory.common_level(1, 3), None);
+    }
+
+    #[test]
+    fn every_node_alone_on_every_level_never_meets() {
+        let directory = LevelDirectory::new(vec![0, 1, 2], vec![vec![0, 1, 2], vec![0, 1, 2]]);
+        assert_eq!(directory.cells_on_level(2), 3);
+        for u in 0..3 {
+            for v in 0..3 {
+                assert_eq!(
+                    directory.common_level(u, v),
+                    if u == v { Some(0) } else { None }
+                );
+            }
+        }
+    }
+
+    #[test]
     fn one_level_is_a_hierarchy_of_its_own() {
         let directory = LevelDirectory::new(vec![0, 0, 1], Vec::new());
         assert_eq!(directory.levels(), 1);
         assert_eq!(directory.cells_on_level(0), 2);
+        assert_eq!(directory.common_level(0, 1), Some(0));
+        assert_eq!(directory.common_level(0, 2), None);
     }
 
     #[test]
