@@ -114,7 +114,7 @@ pub struct Level {
 /// What is called with each cell as it is worked out.
 type Reporter = Box<dyn Fn(&CellReport) + Send + Sync>;
 
-/// What a cell cost to work out, handed to whoever is watching.
+/// What a cell costs to work out, handed to whoever is watching.
 pub struct CellReport<'a> {
     pub level: usize,
     pub cell: CellId,
@@ -174,7 +174,10 @@ impl Customization {
         }
     }
 
-    /// Hands every cell to the given function as it is worked out.
+    /// Hands each cell to the given function as it is worked out.
+    ///
+    /// A cell with no border node is not reported, as there is nothing to work
+    /// out for it and no table is made.
     #[must_use]
     pub fn watched_by(mut self, report: impl Fn(&CellReport) + Send + Sync + 'static) -> Self {
         self.report = Some(Box::new(report));
