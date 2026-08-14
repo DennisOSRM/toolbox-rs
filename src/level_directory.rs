@@ -77,8 +77,13 @@ impl LevelDirectory {
     }
 
     /// How many cells a level holds.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the hierarchy has no such level.
     #[must_use]
     pub fn cells_on_level(&self, level: usize) -> usize {
+        assert!(level < self.levels(), "no level {level} in the hierarchy");
         if level == 0 {
             self.base.iter().max().map_or(0, |cell| *cell as usize + 1)
         } else {
@@ -93,7 +98,7 @@ impl LevelDirectory {
     ///
     /// # Panics
     ///
-    /// Panics if the hierarchy has no such level.
+    /// Panics if the hierarchy has no such level, or if it holds no such node.
     #[must_use]
     pub fn cell_of(&self, node: NodeID, level: usize) -> CellId {
         assert!(level < self.levels(), "no level {level} in the hierarchy");
@@ -171,6 +176,12 @@ mod tests {
     #[should_panic(expected = "no level 3 in the hierarchy")]
     fn a_level_the_hierarchy_does_not_have_is_caught() {
         let _ = directory().cell_of(0, 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "no level 3 in the hierarchy")]
+    fn counting_the_cells_of_a_level_that_is_not_there_is_caught() {
+        let _ = directory().cells_on_level(3);
     }
 
     #[test]
