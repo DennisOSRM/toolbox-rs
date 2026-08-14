@@ -249,7 +249,7 @@ impl Customization {
             // inside one of them is already tabulated, and what it does between
             // them is an arc of the graph. Searching that instead of the nodes
             // of the cell is what keeps a coarse level affordable.
-            let (graph, of_node, searched) = self.overlay_of(level, cell, &cells)?;
+            let (graph, of_node, searched) = self.overlay_of(level, cell, &cells);
             (graph, Some(of_node), searched)
         };
 
@@ -333,7 +333,7 @@ impl Customization {
         level: usize,
         cell: CellId,
         cells: &Level,
-    ) -> Option<(StaticGraph<usize>, FxHashMap<NodeID, usize>, usize)> {
+    ) -> (StaticGraph<usize>, FxHashMap<NodeID, usize>, usize) {
         let below = self.level(level - 1);
 
         // the border nodes of this cell lead the numbering, the border nodes of
@@ -388,11 +388,17 @@ impl Customization {
             }
         }
 
-        if edges.is_empty() {
-            return None;
-        }
+        // A cell whose parts have nothing running between them has an overlay
+        // of no arcs, and the answer for it is a table saying each border node
+        // reaches itself and nothing else. That is a table all the same, so it
+        // is worked out rather than refused.
+        //
+        // The graph is asked for the nodes the overlay has, as a border node
+        // that no arc of it touches would otherwise be missing from it and a
+        // search started there would read past its end.
         let searched = of_node.len();
-        Some((StaticGraph::new(edges), of_node, searched))
+        let graph = StaticGraph::new_with_nodes(searched, edges);
+        (graph, of_node, searched)
     }
 }
 
@@ -580,6 +586,31 @@ mod tests {
         customization.distances_of(0, 0).expect("no cell 0");
         assert_eq!(customization.customized_cells(), 2);
         assert_eq!(customization.customization_time(), after);
+    }
+
+    /// A coarse cell whose parts have nothing running between them is still a
+    /// cell with a table: every border node reaches itself and no other.
+    #[test]
+    fn a_cell_whose_parts_are_not_joined_is_still_tabulated() {
+        // two cells of the finest level under one cell above, joined to the
+        // world outside but not to each other
+        let edges = vec![
+            InputEdge::new(0, 2, 1_usize),
+            InputEdge::new(2, 0, 1_usize),
+            InputEdge::new(1, 2, 1_usize),
+            InputEdge::new(2, 1, 1_usize),
+        ];
+        // nodes 0 and 1 in cells 0 and 1, which meet above; node 2 sits apart
+        let directory = LevelDirectory::new(vec![0, 1, 2], vec![vec![0, 0, 1]]);
+        let customization = Customization::new(StaticGraph::new(edges), directory);
+
+        let distances = customization
+            .distances_of(1, 0)
+            .expect("the cell has border nodes");
+        assert_eq!(distances.border_nodes, vec![0, 1]);
+        assert_eq!(distances.distance(0, 0), 0);
+        assert_eq!(distances.distance(1, 1), 0);
+        assert_eq!(distances.distance(0, 1), usize::MAX);
     }
 
     #[test]
