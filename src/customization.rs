@@ -111,6 +111,27 @@ pub struct Level {
     pub built_from: Vec<Vec<CellId>>,
 }
 
+/// What is called with each cell as it is worked out.
+type Reporter = Box<dyn Fn(&CellReport) + Send + Sync>;
+
+/// What a cell cost to work out, handed to whoever is watching.
+pub struct CellReport<'a> {
+    pub level: usize,
+    pub cell: CellId,
+    /// the nodes the cell holds
+    pub nodes: &'a [NodeID],
+    /// how many of them sit on its border, which is the side of its matrix
+    pub border_nodes: usize,
+    /// how many nodes the search ran over, which on a level above the finest
+    /// is the border nodes of the cells below rather than all of their nodes
+    pub searched: usize,
+    pub elapsed: Duration,
+    /// how many cells have been worked out so far, this one included
+    pub customized_cells: usize,
+    /// what all of them together have cost
+    pub total: Duration,
+}
+
 /// The cells of a partition, worked out level by level as they are asked for.
 pub struct Customization {
     graph: StaticGraph<usize>,
@@ -119,6 +140,10 @@ pub struct Customization {
     /// first time that level is asked about. Walking the directory per node
     /// per arc would otherwise be paid on every request.
     levels: Mutex<FxHashMap<usize, Arc<Level>>>,
+    /// called once per cell as it is worked out, for a caller that wants to
+    /// report on it. What a cell is worth saying about differs by caller, and
+    /// the bounding box a map wants means nothing to a checker.
+    report: Option<Reporter>,
     /// A cell is customized the first time it is asked about and kept
     /// afterwards. Doing it up front would mean walking every cell of the
     /// input before the first request can be answered.
@@ -142,10 +167,18 @@ impl Customization {
             graph,
             directory,
             levels: Mutex::new(FxHashMap::default()),
+            report: None,
             tabulated: Mutex::new(FxHashMap::default()),
             customized_cells: AtomicUsize::new(0),
             customization_nanos: AtomicU64::new(0),
         }
+    }
+
+    /// Hands every cell to the given function as it is worked out.
+    #[must_use]
+    pub fn watched_by(mut self, report: impl Fn(&CellReport) + Send + Sync + 'static) -> Self {
+        self.report = Some(Box::new(report));
+        self
     }
 
     /// the graph the partition was built over
@@ -315,17 +348,33 @@ impl Customization {
         }
         drop(of_node);
 
-        debug!(
-            "cell {cell} of level {level}: {} nodes, {} of them on the border, searched over {searched}",
-            nodes.len(),
-            border_nodes.len()
-        );
-
         // the searches are what the customization of a cell costs, so the
         // clock is read once they are done
-        self.customized_cells.fetch_add(1, Ordering::Relaxed);
-        self.customization_nanos
-            .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        let elapsed = started.elapsed();
+        let customized_cells = self.customized_cells.fetch_add(1, Ordering::Relaxed) + 1;
+        let total = Duration::from_nanos(
+            self.customization_nanos
+                .fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed),
+        ) + elapsed;
+
+        if let Some(report) = &self.report {
+            report(&CellReport {
+                level,
+                cell,
+                nodes,
+                border_nodes: border_nodes.len(),
+                searched,
+                elapsed,
+                customized_cells,
+                total,
+            });
+        } else {
+            debug!(
+                "cell {cell} of level {level}: {} nodes, {} of them on the border, searched over {searched}",
+                nodes.len(),
+                border_nodes.len()
+            );
+        }
 
         Some(CellDistances {
             border_nodes,
@@ -583,6 +632,30 @@ mod tests {
 
     fn grid(side: usize) -> Customization {
         grid_with(side, true)
+    }
+
+    #[test]
+    fn every_cell_is_reported_to_whoever_watches() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let heard = seen.clone();
+        let customization = two_cells().watched_by(move |report| {
+            heard.lock().expect("the log is poisoned").push((
+                report.level,
+                report.cell,
+                report.nodes.len(),
+            ));
+        });
+
+        customization.distances_of(0, 0).expect("no cell 1");
+        customization.distances_of(0, 1).expect("no cell 2");
+        // the cell that was kept is not worked out again, so it is not
+        // reported again either
+        customization.distances_of(0, 0).expect("no cell 1");
+
+        assert_eq!(
+            *seen.lock().expect("the log is poisoned"),
+            vec![(0, 0, 2), (0, 1, 2)]
+        );
     }
 
     #[test]
