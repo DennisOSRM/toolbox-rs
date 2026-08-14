@@ -9,7 +9,7 @@ use env_logger::Env;
 use itertools::Itertools;
 
 use indicatif::{ProgressBar, ProgressStyle};
-use log::{debug, info};
+use log::{debug, info, warn};
 use rayon::prelude::*;
 use rustc_hash::FxHashSet;
 use std::sync::{
@@ -19,10 +19,27 @@ use std::sync::{
 use toolbox_rs::geometry::FPCoordinate;
 use toolbox_rs::io;
 use toolbox_rs::{
+    assembly,
     inertial_flow::{self, Flow, flow_cmp},
+    level_directory::CellId,
     partition_id::PartitionID,
 };
-use {command_line::Arguments, serialize::write_results};
+use {
+    command_line::Arguments,
+    serialize::{write_level_directory, write_results},
+};
+
+/// Numbers whatever the bisection left behind from zero without a gap.
+fn compact(of_node: &[usize]) -> Vec<CellId> {
+    let mut cell_of = rustc_hash::FxHashMap::default();
+    of_node
+        .iter()
+        .map(|leaf| {
+            let next = cell_of.len() as CellId;
+            *cell_of.entry(*leaf).or_insert(next)
+        })
+        .collect()
+}
 
 fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
@@ -61,11 +78,31 @@ fn main() {
     // root job takes ownership of the edge set, which is only needed again if
     // the cut is to be written out.
     let id_vector = (0..coordinates.len()).collect_vec();
-    let input_edges = if args.cut_csv.is_empty() {
+    // The assembly walks the arcs to find which cells hold together and which
+    // of them are neighbours, so they are kept for it as well as for the cut
+    // csv. Nothing else needs them and a copy of the arcs of a continent is
+    // not worth keeping for nobody.
+    let input_edges = if args.cut_csv.is_empty() && args.level_sizes.is_empty() {
         Vec::new()
     } else {
         edges.clone()
     };
+    let node_count = coordinates.len();
+    // The size a cell has to reach before the cutting stops. Assembling a level
+    // out of cells a quarter of its size leaves the assembly room to come close
+    // to the size that was asked for.
+    let stop_at = args
+        .level_sizes
+        .iter()
+        .min()
+        .map_or(args.minimum_cell_size, |smallest| (smallest / 4).max(1));
+    if !args.level_sizes.is_empty() {
+        info!(
+            "cutting down to cells of {stop_at} nodes, then assembling {:?}",
+            args.level_sizes
+        );
+    }
+
     // Which cell of the bisection each node has ended up in so far. A cell is
     // numbered when it is created, so the number of a node is the number of the
     // deepest cell it has landed in, and after the cutting that is its leaf.
@@ -188,14 +225,14 @@ fn main() {
                 debug!("generating next level ids");
 
                 let level_difference = (args.recursion_depth - current_level - 1) as usize;
-                if result.left_ids.len() <= args.minimum_cell_size {
+                if result.left_ids.len() <= stop_at {
                     for i in &result.left_ids {
                         let mut id = load(*i);
                         id.make_leftmost_descendant(level_difference);
                         store(*i, id);
                     }
                 }
-                if result.right_ids.len() <= args.minimum_cell_size {
+                if result.right_ids.len() <= stop_at {
                     for i in &result.right_ids {
                         let mut id = load(*i);
                         id.make_rightmost_descendant(level_difference);
@@ -229,7 +266,7 @@ fn main() {
                 for &node in &ids {
                     leaf_of_node[node] = cell;
                 }
-                if ids.len() > args.minimum_cell_size {
+                if ids.len() > stop_at {
                     next_job_queue.push((edges, ids, cell));
                 }
             }
@@ -244,6 +281,32 @@ fn main() {
     // read off the tally.
     let leaves = leaf_of_node.iter().copied().collect::<FxHashSet<_>>().len();
     info!("the cutting left {leaves} cells over {cells_created} it made on the way");
+
+    if !args.level_sizes.is_empty() {
+        // The cells of the bisection need not hold together, as a minimum cut
+        // puts everything the source cannot reach on the far side whether it
+        // hangs together with the rest or not. Merging such a cell into a
+        // larger one carries the split upwards, so they are taken apart first.
+        let base_cells = compact(&leaf_of_node);
+        let pieces = assembly::fragments(node_count, &input_edges, &base_cells);
+        let piece_count = pieces.iter().copied().max().map_or(0, |p| p as usize + 1);
+        info!("those cells hold together in {piece_count} pieces");
+
+        let cells = assembly::cell_graph(&input_edges, &pieces);
+        let directory = assembly::assemble_connected(&cells, &pieces, &args.level_sizes);
+        for level in 0..directory.levels() {
+            info!(
+                "level {level} of {} nodes: {} cells",
+                args.level_sizes[level],
+                directory.cells_on_level(level)
+            );
+        }
+        if args.level_directory.is_empty() {
+            warn!("no level directory was asked for, so the levels are dropped");
+        } else {
+            write_level_directory(&args.level_directory, &directory);
+        }
+    }
 
     let partition_ids_vec = partition_ids
         .iter()
