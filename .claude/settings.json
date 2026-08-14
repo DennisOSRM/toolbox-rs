@@ -1,0 +1,19 @@
+{
+  "attribution": {
+    "commit": ""
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "c=$(jq -r '.tool_input.command // empty'); printf '%s' \"$c\" | grep -q 'git commit' && printf '%s' \"$c\" | grep -qiE 'co-authored-by:[[:space:]]*claude|claude-session:' && printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"This repo does not sign commits as an agent (see AGENTS.md). Drop the Co-Authored-By: Claude and Claude-Session trailers from the commit message and commit again. The agent-assistance note and the session link belong in the pull request description instead.\"}}'; exit 0",
+            "statusMessage": "Checking commit message for agent trailers"
+          }
+        ]
+      }
+    ]
+  }
+}
