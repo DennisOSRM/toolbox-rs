@@ -11,6 +11,7 @@ use itertools::Itertools;
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{debug, info};
 use rayon::prelude::*;
+use rustc_hash::FxHashSet;
 use std::sync::{
     Arc,
     atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering},
@@ -65,7 +66,13 @@ fn main() {
     } else {
         edges.clone()
     };
-    let job = (edges, id_vector);
+    // Which cell of the bisection each node has ended up in so far. A cell is
+    // numbered when it is created, so the number of a node is the number of the
+    // deepest cell it has landed in, and after the cutting that is its leaf.
+    let mut leaf_of_node = vec![0_usize; coordinates.len()];
+    let mut cells_created = 1;
+
+    let job = (edges, id_vector, 0_usize);
     let mut current_job_queue = vec![job];
 
     let sty = ProgressStyle::default_spinner()
@@ -100,10 +107,10 @@ fn main() {
         let pb = ProgressBar::new(current_job_queue.len() as u64);
         pb.set_style(sty.clone());
 
-        let next_job_queue = current_job_queue
+        let outcomes: Vec<_> = current_job_queue
             .par_iter_mut()
             .enumerate()
-            .flat_map(|(id, job)| {
+            .map(|(id, job)| {
                 pb.set_message(format!("cell #{id}"));
                 pb.inc(1);
 
@@ -136,7 +143,7 @@ fn main() {
                         id.make_leftmost_descendant(level_difference);
                         store(*i, id);
                     }
-                    return Vec::new();
+                    return (job.2, None, std::mem::take(&mut job.1));
                 };
                 debug!(
                     "best max-flow: {}, balance: {:.3}",
@@ -180,35 +187,63 @@ fn main() {
                 }
                 debug!("generating next level ids");
 
-                // iterate on left half if larger than the minimum cell size
-                let mut next_jobs = Vec::new();
                 let level_difference = (args.recursion_depth - current_level - 1) as usize;
-                if result.left_ids.len() > args.minimum_cell_size {
-                    next_jobs.push((left_edges, result.left_ids));
-                } else {
+                if result.left_ids.len() <= args.minimum_cell_size {
                     for i in &result.left_ids {
                         let mut id = load(*i);
                         id.make_leftmost_descendant(level_difference);
                         store(*i, id);
                     }
                 }
-                // iterate on right half if larger than the minimum cell size
-                if result.right_ids.len() > args.minimum_cell_size {
-                    next_jobs.push((right_edges, result.right_ids));
-                } else {
+                if result.right_ids.len() <= args.minimum_cell_size {
                     for i in &result.right_ids {
                         let mut id = load(*i);
                         id.make_rightmost_descendant(level_difference);
                         store(*i, id);
                     }
                 }
-                next_jobs
+                (
+                    job.2,
+                    Some((left_edges, result.left_ids, right_edges, result.right_ids)),
+                    Vec::new(),
+                )
             })
             .collect();
+
+        // The halves are numbered here rather than in the threads above, so
+        // that a cell gets the same number whichever order the jobs finish in.
+        let mut next_job_queue = Vec::new();
+        for (parent, cut, uncut_ids) in outcomes {
+            let Some((left_edges, left_ids, right_edges, right_ids)) = cut else {
+                // a cell that could not be cut stays as it is and its nodes
+                // stay in it
+                for &node in &uncut_ids {
+                    leaf_of_node[node] = parent;
+                }
+                continue;
+            };
+
+            for (ids, edges) in [(left_ids, left_edges), (right_ids, right_edges)] {
+                let cell = cells_created;
+                cells_created += 1;
+                for &node in &ids {
+                    leaf_of_node[node] = cell;
+                }
+                if ids.len() > args.minimum_cell_size {
+                    next_job_queue.push((edges, ids, cell));
+                }
+            }
+        }
         current_level += 1;
         pb.finish_with_message(format!("level {current_level} done"));
         current_job_queue = next_job_queue;
     }
+
+    // Cells are numbered as they are created, and the ones that were cut again
+    // are not cells of the result, so the leaves have to be counted rather than
+    // read off the tally.
+    let leaves = leaf_of_node.iter().copied().collect::<FxHashSet<_>>().len();
+    info!("the cutting left {leaves} cells over {cells_created} it made on the way");
 
     let partition_ids_vec = partition_ids
         .iter()
