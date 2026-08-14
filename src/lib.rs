@@ -10,6 +10,7 @@ pub mod cell;
 pub mod complete_graph;
 pub mod convex_hull;
 pub mod count_min_sketch;
+pub mod customization;
 pub mod cycle_check;
 pub mod ddsg;
 pub mod dfs;
