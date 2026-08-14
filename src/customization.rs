@@ -46,6 +46,56 @@ impl CellDistances {
     }
 }
 
+/// What it costs to reach every node of a cell from one of its nodes without
+/// leaving the cell, worked out on the graph itself with a plain Dijkstra over
+/// a standard library heap.
+///
+/// This is the slow answer that the one built out of the cells below has to
+/// match, and it deliberately walks a heap the crate has no hand in. The two
+/// searches the crate ships sit on one heap of its own, so a reference built
+/// on either of them goes wrong exactly where the customization does and
+/// agrees with it for the wrong reason. That is not a hypothetical: the first
+/// run of this check reported a cell distance of 32 against a graph that
+/// offered 25, and the fault was in `decrease_key` of that heap rather than
+/// anywhere near the overlay.
+///
+/// The nodes reached are held in a map rather than an array over the graph, as
+/// a cell is a small part of it and the walk never steps outside.
+///
+/// # Panics
+///
+/// Panics in a debug build if the node it starts from is not in the cell,
+/// which would answer about a cell the caller did not ask about.
+pub(crate) fn distances_within_cell(
+    graph: &StaticGraph<usize>,
+    of_node: &[CellId],
+    cell: CellId,
+    from: NodeID,
+) -> FxHashMap<NodeID, usize> {
+    use std::{cmp::Reverse, collections::BinaryHeap};
+
+    debug_assert_eq!(of_node[from], cell, "the node is not in the cell");
+
+    let mut settled = FxHashMap::default();
+    let mut queue = BinaryHeap::new();
+    queue.push(Reverse((0_usize, from)));
+    while let Some(Reverse((cost, node))) = queue.pop() {
+        if settled.contains_key(&node) {
+            continue;
+        }
+        settled.insert(node, cost);
+        for edge in graph.edge_range(node) {
+            let target = graph.target(edge);
+            // a path of a cell may not step outside of it
+            if of_node[target] != cell || settled.contains_key(&target) {
+                continue;
+            }
+            queue.push(Reverse((cost + *graph.data(edge), target)));
+        }
+    }
+    settled
+}
+
 /// The cells of one level: which one each node sits in, which nodes each of
 /// them holds, and which of those nodes sit on a border.
 pub struct Level {
@@ -402,9 +452,73 @@ impl Customization {
     }
 }
 
+/// A cell distance that is not what the graph says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Mismatch {
+    pub cell: CellId,
+    pub from: NodeID,
+    pub to: NodeID,
+    /// what the customization worked out
+    pub built: usize,
+    /// what a search over the graph itself found, `usize::MAX` for a border
+    /// node the other one cannot reach without leaving the cell
+    pub expected: usize,
+}
+
+/// What checking one cell came to.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CellCheck {
+    /// how many ordered pairs of border nodes were held against the graph
+    pub pairs: u64,
+    pub mismatches: Vec<Mismatch>,
+    /// whether the cell has a border at all. One without cannot be entered or
+    /// left, so there is nothing to tabulate and nothing to check.
+    pub has_border: bool,
+}
+
+impl Customization {
+    /// Holds every distance of a cell against a search over the graph itself.
+    ///
+    /// This is the slow way round and the point of it: the cell is worked out
+    /// the way a query would have it, out of the cells below, and then again
+    /// from each of its border nodes by a walk of the graph that knows nothing
+    /// of levels. On the finest level the two are close relatives, so it says
+    /// little there; above it they share nothing but the input.
+    pub fn check(&self, level: usize, cell: CellId) -> CellCheck {
+        let cells = self.level(level);
+        let Some(built) = self.distances_of(level, cell) else {
+            return CellCheck::default();
+        };
+
+        let mut check = CellCheck {
+            has_border: true,
+            ..Default::default()
+        };
+        for (source, &from) in built.border_nodes.iter().enumerate() {
+            let reached = distances_within_cell(&self.graph, &cells.of_node, cell, from);
+            for (target, &to) in built.border_nodes.iter().enumerate() {
+                let expected = reached.get(&to).copied().unwrap_or(usize::MAX);
+                let built = built.distance(source, target);
+                if built != expected {
+                    check.mismatches.push(Mismatch {
+                        cell,
+                        from,
+                        to,
+                        built,
+                        expected,
+                    });
+                }
+                check.pairs += 1;
+            }
+        }
+        check
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::{RngExt, SeedableRng, prelude::StdRng};
 
     /// A square grid of `side` by `side` nodes, cut into squares of two by two
     /// on the finest level and of four by four above it. The arcs of a row run
@@ -688,6 +802,73 @@ mod tests {
         );
     }
 
+    /// A graph and a hierarchy over it, both drawn without a pattern. A grid
+    /// cut into squares is regular enough to get right by accident, and this
+    /// is what says otherwise.
+    fn random(rng: &mut StdRng, nodes: usize, levels: usize) -> Customization {
+        let mut edges = Vec::new();
+        // a path through every node first, so that most of the graph hangs
+        // together, then arcs that go wherever
+        for node in 0..nodes - 1 {
+            edges.push(InputEdge::new(node, node + 1, 1 + rng.random_range(0..9)));
+            if rng.random_range(0..100) < 70 {
+                edges.push(InputEdge::new(node + 1, node, 1 + rng.random_range(0..9)));
+            }
+        }
+        for _ in 0..nodes {
+            let source = rng.random_range(0..nodes);
+            let target = rng.random_range(0..nodes);
+            if source != target {
+                edges.push(InputEdge::new(source, target, 1 + rng.random_range(0..9)));
+            }
+        }
+
+        // cells that are cut out of the numbering rather than out of the graph
+        let mut cells = 0;
+        let base = (0..nodes)
+            .map(|node| {
+                if node == 0 || rng.random_range(0..100) < 25 {
+                    cells += 1;
+                }
+                cells - 1
+            })
+            .collect::<Vec<_>>();
+        let mut parents = Vec::new();
+        let mut below = cells as usize;
+        for _ in 1..levels {
+            let mut above = 0;
+            let table = (0..below)
+                .map(|cell| {
+                    if cell == 0 || rng.random_range(0..100) < 40 {
+                        above += 1;
+                    }
+                    above - 1
+                })
+                .collect::<Vec<_>>();
+            below = above as usize;
+            parents.push(table);
+        }
+
+        Customization::new(StaticGraph::new(edges), LevelDirectory::new(base, parents))
+    }
+
+    /// Holds every cell of every level against the graph.
+    fn check_against_the_graph(customization: &Customization, what: &str) {
+        let mut checked = 0;
+        for level in 0..customization.directory().levels() {
+            for cell in 0..customization.directory().cells_on_level(level) as CellId {
+                let check = customization.check(level, cell);
+                assert!(
+                    check.mismatches.is_empty(),
+                    "{what}: level {level}, {:?}",
+                    check.mismatches.first()
+                );
+                checked += check.pairs;
+            }
+        }
+        assert!(checked > 0, "{what}: nothing was checked");
+    }
+
     #[test]
     fn a_level_is_worked_out_once_and_kept() {
         let customization = grid(8);
@@ -715,5 +896,62 @@ mod tests {
         let edges = vec![InputEdge::new(0, 1, 1_usize), InputEdge::new(1, 0, 1_usize)];
         let directory = LevelDirectory::new(vec![0, 0, 1], Vec::new());
         let _ = Customization::new(StaticGraph::new(edges), directory);
+    }
+
+    #[test]
+    fn every_cell_of_a_grid_says_what_the_graph_says() {
+        check_against_the_graph(&grid(8), "a grid of two way streets");
+        check_against_the_graph(&grid_with(8, false), "a grid of one way streets");
+    }
+
+    #[test]
+    fn every_cell_of_a_graph_without_a_pattern_says_what_the_graph_says() {
+        let mut rng = StdRng::seed_from_u64(0x_1234_5678);
+        for round in 0..8 {
+            let customization = random(&mut rng, 60 + round * 20, 3 + round % 3);
+            check_against_the_graph(&customization, &format!("round {round}"));
+        }
+    }
+
+    #[test]
+    fn a_cell_that_disagrees_with_the_graph_is_reported() {
+        // The check has to fail on tables that are wrong, or its passing says
+        // nothing. The table of one cell is bent by hand and put back where
+        // the check reads it from.
+        //
+        // It is this cell's own table that is bent rather than one of the
+        // cells below it. Bending a cell below only makes the overlay route
+        // around it, and on a grid there is always a way round.
+        let customization = grid(8);
+        let built = customization.distances_of(1, 0).expect("no cell to bend");
+        assert!(
+            built.border_nodes.len() > 1,
+            "a 1x1 matrix holds only a zero"
+        );
+
+        let mut matrix = built.matrix.clone();
+        matrix[1] += 100;
+        customization
+            .tabulated
+            .lock()
+            .expect("the tabulation cache is poisoned")
+            .insert(
+                (1, 0),
+                Arc::new(CellDistances {
+                    border_nodes: built.border_nodes.clone(),
+                    matrix,
+                }),
+            );
+
+        let check = customization.check(1, 0);
+        assert_eq!(
+            check.mismatches.len(),
+            1,
+            "the check passed on a table that was bent"
+        );
+        let wrong = check.mismatches[0];
+        assert_eq!(wrong.built, wrong.expected + 100);
+        assert_eq!(wrong.from, built.border_nodes[0]);
+        assert_eq!(wrong.to, built.border_nodes[1]);
     }
 }
