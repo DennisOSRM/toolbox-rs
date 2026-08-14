@@ -14,12 +14,36 @@
 //! path through the level above may take.
 
 use crate::{
+    edge::InputEdge,
     graph::{Graph, NodeID},
     level_directory::{CellId, LevelDirectory},
+    one_to_many_dijkstra::OneToManyDijkstra,
     static_graph::StaticGraph,
 };
+use log::debug;
 use rustc_hash::FxHashMap;
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+    },
+    time::{Duration, Instant},
+};
+
+/// The distances between the border nodes of one cell, in the order the border
+/// nodes are listed in.
+pub struct CellDistances {
+    pub border_nodes: Vec<NodeID>,
+    matrix: Vec<usize>,
+}
+
+impl CellDistances {
+    /// What it costs to get from one border node of the cell to another,
+    /// both given as their place in `border_nodes`.
+    pub fn distance(&self, source: usize, target: usize) -> usize {
+        self.matrix[source * self.border_nodes.len() + target]
+    }
+}
 
 /// The cells of one level: which one each node sits in, which nodes each of
 /// them holds, and which of those nodes sit on a border.
@@ -44,6 +68,15 @@ pub struct Customization {
     /// first time that level is asked about. Walking the directory per node
     /// per arc would otherwise be paid on every request.
     levels: Mutex<FxHashMap<usize, Arc<Level>>>,
+    /// A cell is customized the first time it is asked about and kept
+    /// afterwards. Doing it up front would mean walking every cell of the
+    /// input before the first request can be answered.
+    tabulated: Mutex<FxHashMap<(usize, CellId), Arc<CellDistances>>>,
+    /// how many cells have been customized so far, and how long that took in
+    /// total. The customization runs cell by cell as the cells are asked
+    /// about, so the sum is what the whole of it would have cost up front.
+    customized_cells: AtomicUsize,
+    customization_nanos: AtomicU64,
 }
 
 impl Customization {
@@ -58,6 +91,9 @@ impl Customization {
             graph,
             directory,
             levels: Mutex::new(FxHashMap::default()),
+            tabulated: Mutex::new(FxHashMap::default()),
+            customized_cells: AtomicUsize::new(0),
+            customization_nanos: AtomicU64::new(0),
         }
     }
 
@@ -69,6 +105,27 @@ impl Customization {
     /// which cell each node sits in on each level
     pub const fn directory(&self) -> &LevelDirectory {
         &self.directory
+    }
+
+    /// how many cells have been worked out so far
+    pub fn customized_cells(&self) -> usize {
+        self.customized_cells.load(Ordering::Relaxed)
+    }
+
+    /// what all of them together have cost, summed over whatever threads did
+    /// the work rather than measured on the clock on the wall
+    pub fn customization_time(&self) -> Duration {
+        Duration::from_nanos(self.customization_nanos.load(Ordering::Relaxed))
+    }
+
+    /// Drops the distances worked out so far, for a caller that is done with
+    /// them. The cells of a level are kept, as they cost a walk of the whole
+    /// graph and take no room per cell.
+    pub fn forget(&self) {
+        self.tabulated
+            .lock()
+            .expect("the tabulation cache is poisoned")
+            .clear();
     }
 
     /// The cells of a level, worked out on the first request for it and kept.
@@ -130,12 +187,126 @@ impl Customization {
             .insert(level, cells.clone());
         cells
     }
+
+    /// Hands out the distances of a cell, tabulating them on the first request.
+    pub fn distances_of(&self, level: usize, cell: CellId) -> Option<Arc<CellDistances>> {
+        if let Some(distances) = self
+            .tabulated
+            .lock()
+            .expect("the tabulation cache is poisoned")
+            .get(&(level, cell))
+        {
+            return Some(distances.clone());
+        }
+
+        let distances = Arc::new(self.tabulate(level, cell)?);
+        self.tabulated
+            .lock()
+            .expect("the tabulation cache is poisoned")
+            .insert((level, cell), distances.clone());
+        Some(distances)
+    }
+
+    /// Builds the graph of a cell and runs a search from each of its border
+    /// nodes. A cell is a small part of the input, so this is quick enough to
+    /// happen while a caller waits for it.
+    fn tabulate(&self, level: usize, cell: CellId) -> Option<CellDistances> {
+        let started = Instant::now();
+        let cells = self.level(level);
+        let nodes = cells.nodes_of_cell.get(cell as usize)?;
+
+        // the border nodes lead the numbering, so that they are the leading
+        // rows and columns of the matrix
+        let border_nodes = nodes
+            .iter()
+            .copied()
+            .filter(|&node| cells.on_border[node])
+            .collect::<Vec<_>>();
+        if border_nodes.is_empty() {
+            debug!("cell {cell} of level {level} has no border nodes");
+            return None;
+        }
+
+        let cell_graph = self.subgraph_of(&cells, cell, nodes, &border_nodes);
+
+        // the border nodes lead the numbering of that graph too
+        let border = (0..border_nodes.len()).collect::<Vec<_>>();
+        let mut matrix = vec![usize::MAX; border_nodes.len() * border_nodes.len()];
+        let mut dijkstra = OneToManyDijkstra::new();
+        for &source in &border {
+            dijkstra.run(&cell_graph, source, &border);
+            for &target in &border {
+                matrix[source * border_nodes.len() + target] = dijkstra.distance(target);
+            }
+        }
+        // the searches are what the customization of a cell costs, so the
+        // clock is read once they are done
+        self.customized_cells.fetch_add(1, Ordering::Relaxed);
+        self.customization_nanos
+            .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+
+        Some(CellDistances {
+            border_nodes,
+            matrix,
+        })
+    }
+
+    /// The arcs of the graph that stay inside a cell, with its border nodes
+    /// numbered first. This is what the finest level is built from, as there is
+    /// no level below it to take distances from.
+    fn subgraph_of(
+        &self,
+        cells: &Level,
+        cell: CellId,
+        nodes: &[NodeID],
+        border_nodes: &[NodeID],
+    ) -> StaticGraph<usize> {
+        // TODO: faster hashmap implementation using tabhash or fibonacci hash
+        let mut of_node = FxHashMap::default();
+        for &node in border_nodes {
+            of_node.insert(node, of_node.len());
+        }
+        let mut edges = Vec::new();
+        for &node in nodes {
+            for edge in self.graph.edge_range(node) {
+                let target = self.graph.target(edge);
+                if cells.of_node[target] != cell {
+                    continue;
+                }
+                let next = of_node.len();
+                let source = *of_node.entry(node).or_insert(next);
+                let next = of_node.len();
+                let target = *of_node.entry(target).or_insert(next);
+                edges.push(InputEdge::new(source, target, *self.graph.data(edge)));
+            }
+        }
+        // TODO: find a way to avoid relocations
+        StaticGraph::new(edges)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::edge::InputEdge;
+
+    /// A square grid of `side` by `side` nodes, cut into squares of two by two
+    /// on the finest level and of four by four above it. The arcs of a row run
+    /// one way round when `both_ways` is not asked for, which is what a road
+    /// network does and what makes the distances of a cell asymmetric.
+    /// Two cells of two nodes each, joined on the level above.
+    fn two_cells() -> Customization {
+        let edges = vec![
+            InputEdge::new(0, 1, 3_usize),
+            InputEdge::new(1, 0, 3_usize),
+            InputEdge::new(1, 2, 7_usize),
+            InputEdge::new(2, 1, 7_usize),
+            InputEdge::new(2, 3, 5_usize),
+            InputEdge::new(3, 2, 5_usize),
+        ];
+        // nodes 0 and 1 in one cell, nodes 2 and 3 in the other, joined above
+        let directory = LevelDirectory::new(vec![0, 0, 1, 1], vec![vec![0, 0]]);
+        Customization::new(StaticGraph::new(edges), directory)
+    }
 
     /// A square grid of `side` by `side` nodes, cut into squares of two by two
     /// on the finest level and of four by four above it. The arcs of a row run
@@ -206,6 +377,71 @@ mod tests {
         }
         // and the finest level is built from the graph rather than from cells
         assert!(customization.level(0).built_from.is_empty());
+    }
+
+    #[test]
+    fn distances_within_a_cell_are_tabulated_on_request() {
+        let customization = two_cells();
+        let distances = customization
+            .distances_of(0, 0)
+            .expect("cell 1 has a border");
+
+        // node 1 is the only border node of its cell, so the matrix is 1x1 and
+        // the distance to itself is zero
+        assert_eq!(distances.border_nodes, vec![1]);
+        assert_eq!(distances.distance(0, 0), 0);
+    }
+
+    #[test]
+    fn a_tabulated_cell_is_kept() {
+        let customization = two_cells();
+        let first = customization.distances_of(0, 0).expect("no cell 1");
+        let second = customization.distances_of(0, 0).expect("no cell 1");
+        // the second request is answered from the same tabulation
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn what_was_forgotten_is_worked_out_again() {
+        let customization = two_cells();
+        let first = customization.distances_of(0, 0).expect("no cell 1");
+        customization.forget();
+        let second = customization.distances_of(0, 0).expect("no cell 1");
+
+        assert!(!Arc::ptr_eq(&first, &second), "the cell was kept");
+        assert_eq!(first.border_nodes, second.border_nodes);
+        assert_eq!(customization.customized_cells(), 2);
+    }
+
+    #[test]
+    fn a_cell_without_a_border_is_not_tabulated() {
+        // one cell holding the whole graph, so no arc ever leaves it
+        let edges = vec![InputEdge::new(0, 1, 1_usize), InputEdge::new(1, 0, 1_usize)];
+        let directory = LevelDirectory::new(vec![0, 0], Vec::new());
+        let customization = Customization::new(StaticGraph::new(edges), directory);
+
+        assert!(customization.distances_of(0, 0).is_none());
+    }
+
+    #[test]
+    fn customization_is_counted_once_per_cell() {
+        let customization = two_cells();
+        assert_eq!(customization.customized_cells(), 0);
+
+        customization.distances_of(0, 0).expect("no cell 1");
+        assert_eq!(customization.customized_cells(), 1);
+        assert!(customization.customization_time() > Duration::ZERO);
+
+        // the second cell adds to the tally
+        customization.distances_of(0, 1).expect("no cell 2");
+        assert_eq!(customization.customized_cells(), 2);
+
+        // a cell that is answered from the tabulation of an earlier request
+        // was not customized again
+        let after = customization.customization_time();
+        customization.distances_of(0, 0).expect("no cell 1");
+        assert_eq!(customization.customized_cells(), 2);
+        assert_eq!(customization.customization_time(), after);
     }
 
     #[test]
