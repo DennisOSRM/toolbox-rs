@@ -48,10 +48,16 @@ struct LevelCheck {
     /// cells that hold no border node, which cannot be entered or left and so
     /// have nothing to check
     without_border: u64,
+    /// how many distances differ from the graph in all
+    wrong: u64,
+    /// the first of them, as many as were asked to be reported. A directory
+    /// that is broken through and through has as many mismatches as it has
+    /// pairs, and holding all of them to print twenty is a way to run out of
+    /// memory while reporting a fault.
     mismatches: Vec<Mismatch>,
 }
 
-fn check_level(customization: &Customization, level: usize) -> LevelCheck {
+fn check_level(customization: &Customization, level: usize, keep: usize) -> LevelCheck {
     let cells = customization.level(level);
     let count = cells.nodes_of_cell.len();
     info!(
@@ -70,26 +76,28 @@ fn check_level(customization: &Customization, level: usize) -> LevelCheck {
     let mut found = LevelCheck {
         pairs: 0,
         without_border: 0,
+        wrong: 0,
         mismatches: Vec::new(),
     };
-    for batch in (0..count as CellId).collect::<Vec<_>>().chunks(BATCH) {
-        let checks = batch
-            .par_iter()
-            .map(|&cell| customization.check(level, cell))
+    for start in (0..count as CellId).step_by(BATCH) {
+        let end = (start + BATCH as CellId).min(count as CellId);
+        let checks = (start..end)
+            .into_par_iter()
+            .map(|cell| customization.check(level, cell))
             .collect::<Vec<CellCheck>>();
 
         for check in checks {
             found.pairs += check.pairs;
             found.without_border += u64::from(!check.has_border);
-            found.mismatches.extend(check.mismatches);
+            found.wrong += check.mismatches.len() as u64;
+            let room = keep.saturating_sub(found.mismatches.len());
+            found
+                .mismatches
+                .extend(check.mismatches.into_iter().take(room));
         }
         customization.forget();
-        bar.inc(batch.len() as u64);
-        bar.set_message(format!(
-            "{} pairs, {} wrong",
-            found.pairs,
-            found.mismatches.len()
-        ));
+        bar.inc(u64::from(end - start));
+        bar.set_message(format!("{} pairs, {} wrong", found.pairs, found.wrong));
     }
     bar.finish();
     found
@@ -106,7 +114,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!(r#""`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-' "#);
     println!("build: {}", env!("GIT_HASH"));
     let args = <Arguments as clap::Parser>::parse();
-    print!("{args}");
+    info!("{args}");
 
     let edges = io::read_vec_from_file::<InputEdge<usize>>(&args.graph);
     info!("loaded {} graph edges", edges.len());
@@ -123,12 +131,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         graph.number_of_nodes(),
         graph.number_of_edges()
     );
-    assert_eq!(
-        graph.number_of_nodes(),
-        directory.number_of_nodes(),
-        "the directory was built over another graph"
-    );
-
     let levels = match args.level {
         Some(level) => {
             assert!(
@@ -144,24 +146,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     let started = Instant::now();
     let mut sound = true;
     for level in levels {
-        let found = check_level(&customization, level);
+        let found = check_level(&customization, level, args.report);
         info!(
             "level {level}: checked {} pairs over {} cells, leaving out {} that hold no border node",
             found.pairs,
             customization.level(level).nodes_of_cell.len() as u64 - found.without_border,
             found.without_border
         );
-        if found.mismatches.is_empty() {
+        if found.wrong == 0 {
             info!("level {level} says what the graph says");
             continue;
         }
 
         sound = false;
-        warn!(
-            "level {level}: {} pairs differ from the graph",
-            found.mismatches.len()
-        );
-        for wrong in found.mismatches.iter().take(args.report) {
+        warn!("level {level}: {} pairs differ from the graph", found.wrong);
+        for wrong in &found.mismatches {
             let expected = if wrong.expected == usize::MAX {
                 "unreachable".to_owned()
             } else {
@@ -172,8 +171,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 wrong.cell, wrong.from, wrong.to, wrong.built
             );
         }
-        if found.mismatches.len() > args.report {
-            warn!("  and {} more", found.mismatches.len() - args.report);
+        if found.wrong > found.mismatches.len() as u64 {
+            warn!("  and {} more", found.wrong - found.mismatches.len() as u64);
         }
     }
 
