@@ -27,11 +27,14 @@
 //! # Cursors outliving their node
 //!
 //! A cursor stays valid while its node is in the list. Popping the node ends
-//! that, and a later push may hand the freed slot to another element, so a
-//! cursor kept across a pop may end up naming whatever moved in. That is a
-//! wrong answer rather than the undefined behaviour the pointers used to give,
+//! that, and what a cursor does afterwards depends on what became of its slot.
+//! While the slot is still free, the cursor names nothing: [`LinkedList::get`]
+//! reads it as `None` and [`LinkedList::move_to_front`] leaves the list alone.
+//! Once a later push has taken the slot over, the cursor names that push's
+//! element, which is a wrong answer rather than the undefined behaviour the
+//! pointers used to give. Telling those two apart would cost a count per slot,
 //! and a caller that hands out cursors is expected to drop them along with
-//! their nodes, which is what [`crate::lru::LRU`] does when it evicts.
+//! their nodes anyway, which is what [`crate::lru::LRU`] does when it evicts.
 
 use std::fmt::{self, Debug, Formatter};
 use std::hash::{Hash, Hasher};
@@ -189,16 +192,24 @@ impl<T> LinkedList<T> {
 
     /// Moves the node a cursor names to the front of the list.
     ///
-    /// Does nothing if the list is empty or the node is already at the front.
+    /// Does nothing when the node is already at the front, and nothing when
+    /// the cursor no longer names a node of this list, i.e. when its node has
+    /// been popped without the slot being taken over since.
     pub fn move_to_front(&mut self, cursor: &ListCursor<T>) {
-        if self.is_empty() || self.front == Some(cursor.index) {
+        let index = cursor.index;
+        // A cursor whose node has been popped names a free slot, and one from
+        // a list that has been cleared may name no slot at all. Moving either
+        // of them would splice a free slot into the list, leaving it in the
+        // list and on the free list at once for the next push to hand out from
+        // under it. The list is checked rather than asserted over, as the
+        // caller holding the stale cursor is the one who cannot tell.
+        let occupied = self
+            .nodes
+            .get(index)
+            .is_some_and(|node| node.elem.is_some());
+        if !occupied || self.front == Some(index) {
             return;
         }
-        let index = cursor.index;
-        debug_assert!(
-            self.nodes[index].elem.is_some(),
-            "the node this cursor names has been popped"
-        );
 
         // close the gap the node leaves behind
         let newer = self.nodes[index].newer;
@@ -498,6 +509,43 @@ mod test {
         list.push_front(4);
         assert_eq!(list.nodes.len(), 2);
         assert_eq!(drained(&mut list), vec![3, 4]);
+    }
+
+    /// A stale cursor must not splice its slot back into the list. The slot is
+    /// on the free list, so a list that took it back would hand it to the next
+    /// push while it was still linked, and the damage would only show up in a
+    /// later pop.
+    #[test]
+    fn moving_a_node_that_was_popped_leaves_the_list_alone() {
+        let mut list = LinkedList::new();
+        let popped = list.push_front(1);
+        list.push_front(2);
+        list.push_front(3);
+        assert_eq!(list.pop_back(), Some(1));
+
+        list.move_to_front(&popped);
+
+        assert_eq!(list.len(), 2);
+        assert_eq!(list.get_front(), &3);
+        assert_eq!(drained(&mut list), vec![2, 3]);
+    }
+
+    #[test]
+    fn a_cursor_from_before_a_clear_leaves_the_list_alone() {
+        let mut list = LinkedList::new();
+        list.push_front(1);
+        list.push_front(2);
+        let far = list.push_front(3);
+
+        // clear gives up the slots, so the cursor now names one that is not
+        // there at all rather than one that is free
+        list.clear();
+        list.push_front(4);
+        list.move_to_front(&far);
+
+        assert_eq!(list.len(), 1);
+        assert_eq!(list.get_front(), &4);
+        assert_eq!(drained(&mut list), vec![4]);
     }
 
     #[test]
