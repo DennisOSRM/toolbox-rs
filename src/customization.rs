@@ -2,7 +2,8 @@
 //!
 //! A partition on its own says which cell each node sits in. What a caller
 //! wants is the other way round as well: the nodes of each cell, which of them
-//! sit on a border, and which cells of the level below a cell is built from.
+//! sit on a border, and which cells of the level below each cell is built out
+//! of.
 //! Working that out means a walk of the whole graph, so it is done once per
 //! level and kept.
 //!
@@ -55,7 +56,7 @@ pub struct Level {
     /// can only be entered from another cell is a way in that a path through
     /// the cell above may take.
     pub on_border: Vec<bool>,
-    /// the cells of the level below that each cell of this one is built from,
+    /// the cells of the level below that each cell of this one is built out of,
     /// and empty on the finest level, which is built from the graph itself
     pub built_from: Vec<Vec<CellId>>,
 }
@@ -181,11 +182,15 @@ impl Customization {
             on_border,
             built_from,
         });
+        // another thread may have worked the same level out while this one
+        // was busy, and whichever entry got there first is kept, so that a
+        // level is one object however many threads asked for it
         self.levels
             .lock()
             .expect("the level cache is poisoned")
-            .insert(level, cells.clone());
-        cells
+            .entry(level)
+            .or_insert(cells)
+            .clone()
     }
 
     /// Hands out the distances of a cell, tabulating them on the first request.
@@ -199,12 +204,18 @@ impl Customization {
             return Some(distances.clone());
         }
 
+        // as with the levels, the first entry to land is the one that is kept.
+        // Two callers asking for the same cell at once both work it out, and
+        // the tally counts both, as both were really paid for.
         let distances = Arc::new(self.tabulate(level, cell)?);
-        self.tabulated
-            .lock()
-            .expect("the tabulation cache is poisoned")
-            .insert((level, cell), distances.clone());
-        Some(distances)
+        Some(
+            self.tabulated
+                .lock()
+                .expect("the tabulation cache is poisoned")
+                .entry((level, cell))
+                .or_insert(distances)
+                .clone(),
+        )
     }
 
     /// Builds the graph of a cell and runs a search from each of its border
@@ -384,7 +395,7 @@ mod tests {
         let customization = two_cells();
         let distances = customization
             .distances_of(0, 0)
-            .expect("cell 1 has a border");
+            .expect("cell 0 has a border");
 
         // node 1 is the only border node of its cell, so the matrix is 1x1 and
         // the distance to itself is zero
@@ -395,8 +406,8 @@ mod tests {
     #[test]
     fn a_tabulated_cell_is_kept() {
         let customization = two_cells();
-        let first = customization.distances_of(0, 0).expect("no cell 1");
-        let second = customization.distances_of(0, 0).expect("no cell 1");
+        let first = customization.distances_of(0, 0).expect("no cell 0");
+        let second = customization.distances_of(0, 0).expect("no cell 0");
         // the second request is answered from the same tabulation
         assert!(Arc::ptr_eq(&first, &second));
     }
@@ -404,9 +415,9 @@ mod tests {
     #[test]
     fn what_was_forgotten_is_worked_out_again() {
         let customization = two_cells();
-        let first = customization.distances_of(0, 0).expect("no cell 1");
+        let first = customization.distances_of(0, 0).expect("no cell 0");
         customization.forget();
-        let second = customization.distances_of(0, 0).expect("no cell 1");
+        let second = customization.distances_of(0, 0).expect("no cell 0");
 
         assert!(!Arc::ptr_eq(&first, &second), "the cell was kept");
         assert_eq!(first.border_nodes, second.border_nodes);
@@ -428,18 +439,18 @@ mod tests {
         let customization = two_cells();
         assert_eq!(customization.customized_cells(), 0);
 
-        customization.distances_of(0, 0).expect("no cell 1");
+        customization.distances_of(0, 0).expect("no cell 0");
         assert_eq!(customization.customized_cells(), 1);
         assert!(customization.customization_time() > Duration::ZERO);
 
         // the second cell adds to the tally
-        customization.distances_of(0, 1).expect("no cell 2");
+        customization.distances_of(0, 1).expect("no cell 1");
         assert_eq!(customization.customized_cells(), 2);
 
         // a cell that is answered from the tabulation of an earlier request
         // was not customized again
         let after = customization.customization_time();
-        customization.distances_of(0, 0).expect("no cell 1");
+        customization.distances_of(0, 0).expect("no cell 0");
         assert_eq!(customization.customized_cells(), 2);
         assert_eq!(customization.customization_time(), after);
     }
