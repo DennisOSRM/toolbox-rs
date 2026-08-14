@@ -77,12 +77,13 @@ mod tests {
         use crate::geometry::FPCoordinate;
         let coordinate = FPCoordinate::new(1_234_567, -7_654_321);
 
-        let file = NamedTempFile::new().unwrap();
-        let path = file.path().to_str().unwrap().to_string();
+        let mut file = NamedTempFile::new().unwrap();
         let bytes = rkyv::to_bytes::<rancor::Error>(&coordinate).unwrap();
-        std::fs::write(&path, &bytes).unwrap();
+        file.write_all(&bytes).unwrap();
+        file.flush().unwrap();
 
-        assert_eq!(read_from_file::<FPCoordinate>(&path), coordinate);
+        let path = file.path().to_str().unwrap();
+        assert_eq!(read_from_file::<FPCoordinate>(path), coordinate);
     }
 
     // Test `read_lines` function
