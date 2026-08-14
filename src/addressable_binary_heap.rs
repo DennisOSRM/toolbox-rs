@@ -198,20 +198,30 @@ impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Da
         self.inserted_nodes[removed_index].node
     }
 
+    /// Empties the heap while keeping what it knows about the nodes that went
+    /// through it, so their weight and data can still be read afterwards.
     pub fn flush(&mut self) {
-        (1..(self.heap.len() - 1)).rev().for_each(|i| {
+        (1..self.heap.len()).for_each(|i| {
             let element = &self.heap[i];
             self.inserted_nodes[element.index].key = 0;
         });
         self.heap.truncate(1);
-        self.heap[0].weight = Weight::max_value();
+        // the element at zero is the wall that up_heap rises until, so it has
+        // to stay below every weight that can be inserted after this
+        self.heap[0].weight = Weight::min_value();
     }
 
     pub fn decrease_key(&mut self, node: NodeID, weight: Weight) {
         let index = self.node_index[&node];
         let key = self.inserted_nodes[index].key;
+        debug_assert!(key != 0, "the node is not in the heap");
 
+        // the weight is held twice over, once next to the node and once in the
+        // heap itself, and the heap is ordered by its own copy. Lowering only
+        // the first leaves the element sitting where the old weight put it,
+        // and up_heap, which reads the heap, would find nothing to do.
         self.inserted_nodes[index].weight = weight;
+        self.heap[key].weight = weight;
         self.up_heap(key);
     }
 
@@ -418,6 +428,15 @@ mod tests {
         heap.flush();
         assert!(heap.is_empty());
         assert_eq!(0, heap.len());
+        for i in &input {
+            assert!(!heap.contains(*i), "{i} is still held after a flush");
+            assert!(heap.removed(*i));
+        }
+
+        // and the heap goes on being a heap
+        heap.insert(9, 9, 9);
+        heap.insert(8, 8, 8);
+        assert_eq!(8, heap.min());
     }
 
     #[test]
@@ -605,5 +624,46 @@ mod tests {
         heap.delete_min(); // Actually remove the minimum
         assert_eq!(heap.pop(), Some(2)); // Should now return new minimum
         assert_eq!(heap.len(), 2); // Length should be reduced
+    }
+
+    #[test]
+    fn a_lowered_key_comes_out_first() {
+        let mut heap = Heap::new();
+        heap.insert(1, 10, 0);
+        heap.insert(2, 20, 0);
+        heap.insert(3, 30, 0);
+
+        heap.decrease_key(3, 1);
+
+        assert_eq!(heap.weight(3), 1);
+        assert_eq!(heap.delete_min(), 3, "the lowered key did not rise");
+        assert_eq!(heap.delete_min(), 1);
+        assert_eq!(heap.delete_min(), 2);
+    }
+
+    #[test]
+    fn lowering_keys_leaves_the_heap_in_order() {
+        // every element is lowered once, in an order that has each of them
+        // move a different distance, and the heap has to hand them back
+        // smallest first all the same
+        let mut heap = Heap::new();
+        for node in 0..32_i32 {
+            heap.insert(node, node * 7 % 32, 0);
+        }
+        for node in 0..32_i32 {
+            let lowered = heap.weight(node) / 2;
+            heap.decrease_key(node, lowered);
+            assert_eq!(heap.weight(node), lowered);
+        }
+
+        let mut last = 0;
+        for _ in 0..32 {
+            let node = heap.min();
+            let weight = heap.weight(node);
+            assert!(weight >= last, "{weight} came out after {last}");
+            last = weight;
+            heap.delete_min();
+        }
+        assert!(heap.is_empty());
     }
 }
