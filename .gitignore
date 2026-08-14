@@ -2,3 +2,4 @@
 /.vscode
 Cargo.lock
 /.claude/settings.local.json
+.DS_Store
