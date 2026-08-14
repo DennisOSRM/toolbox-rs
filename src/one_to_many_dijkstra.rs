@@ -437,13 +437,19 @@ mod tests {
 
     /// Both searches of the crate, over graphs drawn without a pattern, held
     /// against a search that has nothing in common with them.
+    ///
+    /// The graphs are drawn so that a search has to choose between two ways to
+    /// a node rather than walk one path, which is what puts the ordering of the
+    /// heap to work. That the ordering is really what this covers is easiest
+    /// seen by breaking it: with the weight of a lowered key left stale in the
+    /// heap, this test fails and every older search test still passes.
     #[test]
     fn both_searches_agree_with_a_search_that_shares_nothing_with_them() {
         use crate::unidirectional_dijkstra::UnidirectionalDijkstra;
         use rand::{RngExt, SeedableRng, prelude::StdRng};
 
         let mut rng = StdRng::seed_from_u64(0x0217);
-        let mut lowered = 0;
+        let mut shortcuts = 0;
         for round in 0..20 {
             let nodes = 12 + round;
             // a path through every node, so nothing is out of reach, and then
@@ -479,17 +485,20 @@ mod tests {
                         cost,
                         "one to one, round {round}: from {source} to {target}"
                     );
-                    // a target the path alone would have cost more to reach
-                    // is one the search had to lower a key for
+                    // a target that came out cheaper than walking the path
+                    // through every node says the arcs thrown in are worth
+                    // taking, i.e. that a search over this graph has more than
+                    // one way to reach a node
                     if target > source && cost < target - source {
-                        lowered += 1;
+                        shortcuts += 1;
                     }
                 }
             }
         }
         assert!(
-            lowered > 0,
-            "no graph in this test made a search lower a key"
+            shortcuts > 0,
+            "every graph in this test was walked best along its path, so none \
+             of them made a search choose between two ways to a node"
         );
     }
 }

@@ -214,7 +214,11 @@ impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Da
     pub fn decrease_key(&mut self, node: NodeID, weight: Weight) {
         let index = self.node_index[&node];
         let key = self.inserted_nodes[index].key;
-        debug_assert!(key != 0, "the node is not in the heap");
+        // not a debug_assert: a key of zero is the sentinel, and lowering that
+        // one leaves up_heap with no wall to stop at on the next insert. A
+        // release build has to refuse it too, and the branch is nothing next to
+        // the lookup above it.
+        assert!(key != 0, "the node is not in the heap");
 
         // the weight is held twice over, once next to the node and once in the
         // heap itself, and the heap is ordered by its own copy. Lowering only
