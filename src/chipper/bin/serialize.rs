@@ -97,11 +97,11 @@ pub fn write_results(
         assignment_csv(&args.assignment_csv, partition_ids, coordinates);
     }
     if !args.cut_csv.is_empty() {
-        info!("writing cut csv to {}", &args.cut_csv);
+        info!("writing cut csv to {}", args.cut_csv);
         cut_csv(&args.cut_csv, edges, partition_ids, coordinates);
     }
     if !args.partition_file.is_empty() {
-        info!("writing partition ids to {}", &args.partition_file);
+        info!("writing partition ids to {}", args.partition_file);
         binary_partition_file(&args.partition_file, partition_ids);
     }
 }
