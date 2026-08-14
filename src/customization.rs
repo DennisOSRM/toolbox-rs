@@ -238,9 +238,22 @@ impl Customization {
             return None;
         }
 
-        let cell_graph = self.subgraph_of(&cells, cell, nodes, &border_nodes);
+        let (cell_graph, of_node, searched) = if level == 0 {
+            (
+                self.subgraph_of(&cells, cell, nodes, &border_nodes),
+                None,
+                nodes.len(),
+            )
+        } else {
+            // A cell is built out of the cells below it: what a path does
+            // inside one of them is already tabulated, and what it does between
+            // them is an arc of the graph. Searching that instead of the nodes
+            // of the cell is what keeps a coarse level affordable.
+            let (graph, of_node, searched) = self.overlay_of(level, cell, &cells);
+            (graph, Some(of_node), searched)
+        };
 
-        // the border nodes lead the numbering of that graph too
+        // whichever graph it is, the border nodes lead its numbering
         let border = (0..border_nodes.len()).collect::<Vec<_>>();
         let mut matrix = vec![usize::MAX; border_nodes.len() * border_nodes.len()];
         let mut dijkstra = OneToManyDijkstra::new();
@@ -250,6 +263,14 @@ impl Customization {
                 matrix[source * border_nodes.len() + target] = dijkstra.distance(target);
             }
         }
+        drop(of_node);
+
+        debug!(
+            "cell {cell} of level {level}: {} nodes, {} of them on the border, searched over {searched}",
+            nodes.len(),
+            border_nodes.len()
+        );
+
         // the searches are what the customization of a cell costs, so the
         // clock is read once they are done
         self.customized_cells.fetch_add(1, Ordering::Relaxed);
@@ -297,6 +318,87 @@ impl Customization {
         // the end of it.
         // TODO: find a way to avoid relocations
         StaticGraph::new_with_nodes(of_node.len().max(border_nodes.len()), edges)
+    }
+
+    /// The graph a cell of a level above the finest is searched over: one arc
+    /// per pair of border nodes of a cell below, carrying what it costs to
+    /// cross that cell, and the arcs of the graph that run between two of them.
+    ///
+    /// A path through the cell alternates between the two: it crosses a cell
+    /// below from one of its border nodes to another, then takes an arc into
+    /// the next one. The border nodes of this cell are border nodes of the
+    /// cells below it too, so every search starts and ends on one.
+    fn overlay_of(
+        &self,
+        level: usize,
+        cell: CellId,
+        cells: &Level,
+    ) -> (StaticGraph<usize>, FxHashMap<NodeID, usize>, usize) {
+        let below = self.level(level - 1);
+
+        // the border nodes of this cell lead the numbering, the border nodes of
+        // the cells below follow
+        let mut of_node = FxHashMap::default();
+        for &node in cells.nodes_of_cell[cell as usize]
+            .iter()
+            .filter(|&&node| cells.on_border[node])
+        {
+            of_node.insert(node, of_node.len());
+        }
+
+        let mut edges = Vec::new();
+        for &child in &cells.built_from[cell as usize] {
+            let Some(distances) = self.distances_of(level - 1, child) else {
+                // a cell below with no border cannot be entered or left, so no
+                // path of this cell runs through it
+                continue;
+            };
+            for (source, &from) in distances.border_nodes.iter().enumerate() {
+                for (target, &to) in distances.border_nodes.iter().enumerate() {
+                    let weight = distances.distance(source, target);
+                    if source == target || weight == usize::MAX {
+                        continue;
+                    }
+                    let next = of_node.len();
+                    let from = *of_node.entry(from).or_insert(next);
+                    let next = of_node.len();
+                    let to = *of_node.entry(to).or_insert(next);
+                    edges.push(InputEdge::new(from, to, weight));
+                }
+            }
+        }
+
+        // the arcs that cross from one cell below into another one of this cell
+        for &child in &cells.built_from[cell as usize] {
+            for &node in &below.nodes_of_cell[child as usize] {
+                if !below.on_border[node] {
+                    continue;
+                }
+                for edge in self.graph.edge_range(node) {
+                    let target = self.graph.target(edge);
+                    if cells.of_node[target] != cell || below.of_node[target] == child {
+                        continue;
+                    }
+                    let next = of_node.len();
+                    let from = *of_node.entry(node).or_insert(next);
+                    let next = of_node.len();
+                    let to = *of_node.entry(target).or_insert(next);
+                    edges.push(InputEdge::new(from, to, *self.graph.data(edge)));
+                }
+            }
+        }
+
+        // A cell whose parts have nothing running between them has an overlay
+        // of no arcs, and the answer for it is a table saying each border node
+        // reaches itself and nothing else. That is a table all the same, so it
+        // is worked out rather than refused.
+        //
+        // The graph is asked for the nodes the overlay has, as a border node
+        // that no arc of it touches would otherwise be missing from it and a
+        // search started there would read past its end.
+        let searched = of_node.len();
+        let graph = StaticGraph::new_with_nodes(searched, edges);
+        (graph, of_node, searched)
     }
 }
 
@@ -484,6 +586,106 @@ mod tests {
         customization.distances_of(0, 0).expect("no cell 0");
         assert_eq!(customization.customized_cells(), 2);
         assert_eq!(customization.customization_time(), after);
+    }
+
+    /// A coarse cell whose parts have nothing running between them is still a
+    /// cell with a table: every border node reaches itself and no other.
+    #[test]
+    fn a_cell_whose_parts_are_not_joined_is_still_tabulated() {
+        // two cells of the finest level under one cell above, joined to the
+        // world outside but not to each other
+        let edges = vec![
+            InputEdge::new(0, 2, 1_usize),
+            InputEdge::new(2, 0, 1_usize),
+            InputEdge::new(1, 2, 1_usize),
+            InputEdge::new(2, 1, 1_usize),
+        ];
+        // nodes 0 and 1 in cells 0 and 1, which meet above; node 2 sits apart
+        let directory = LevelDirectory::new(vec![0, 1, 2], vec![vec![0, 0, 1]]);
+        let customization = Customization::new(StaticGraph::new(edges), directory);
+
+        let distances = customization
+            .distances_of(1, 0)
+            .expect("the cell has border nodes");
+        assert_eq!(distances.border_nodes, vec![0, 1]);
+        assert_eq!(distances.distance(0, 0), 0);
+        assert_eq!(distances.distance(1, 1), 0);
+        assert_eq!(distances.distance(0, 1), usize::MAX);
+    }
+
+    #[test]
+    fn a_cell_built_from_the_cells_below_says_what_the_graph_says() {
+        let customization = grid(8);
+        let cells = customization.level(1);
+
+        for cell in 0..cells.nodes_of_cell.len() as CellId {
+            let Some(built_up) = customization.distances_of(1, cell) else {
+                continue;
+            };
+
+            // the same cell, searched over its own nodes instead
+            let nodes = &cells.nodes_of_cell[cell as usize];
+            let border = nodes
+                .iter()
+                .copied()
+                .filter(|&node| cells.on_border[node])
+                .collect::<Vec<_>>();
+            let graph = customization.subgraph_of(&cells, cell, nodes, &border);
+            let indices = (0..border.len()).collect::<Vec<_>>();
+            let mut dijkstra = OneToManyDijkstra::new();
+
+            assert_eq!(built_up.border_nodes, border, "cell {cell}");
+            for (source, _) in border.iter().enumerate() {
+                dijkstra.run(&graph, source, &indices);
+                for (target, _) in border.iter().enumerate() {
+                    assert_eq!(
+                        built_up.distance(source, target),
+                        dijkstra.distance(target),
+                        "cell {cell}, from {source} to {target}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_cell_of_one_way_streets_says_what_the_graph_says() {
+        let customization = grid_with(8, false);
+        let cells = customization.level(1);
+
+        let mut asymmetric = 0;
+        for cell in 0..cells.nodes_of_cell.len() as CellId {
+            let Some(built_up) = customization.distances_of(1, cell) else {
+                continue;
+            };
+            let nodes = &cells.nodes_of_cell[cell as usize];
+            let border = nodes
+                .iter()
+                .copied()
+                .filter(|&node| cells.on_border[node])
+                .collect::<Vec<_>>();
+            let graph = customization.subgraph_of(&cells, cell, nodes, &border);
+            let indices = (0..border.len()).collect::<Vec<_>>();
+            let mut dijkstra = OneToManyDijkstra::new();
+
+            for source in 0..border.len() {
+                dijkstra.run(&graph, source, &indices);
+                for target in 0..border.len() {
+                    assert_eq!(
+                        built_up.distance(source, target),
+                        dijkstra.distance(target),
+                        "cell {cell}, from {source} to {target}"
+                    );
+                    if built_up.distance(source, target) != built_up.distance(target, source) {
+                        asymmetric += 1;
+                    }
+                }
+            }
+        }
+        assert!(
+            asymmetric > 0,
+            "the graph has to hold a pair whose distance differs by direction"
+        );
     }
 
     #[test]
