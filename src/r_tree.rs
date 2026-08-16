@@ -1,13 +1,16 @@
 use log::debug;
 use num::integer::Roots;
-use std::{cmp::Ordering, collections::BinaryHeap};
+use std::{cmp::Ordering, collections::BinaryHeap, marker::PhantomData};
 use thiserror::Error;
 
 const BRANCHING_FACTOR: usize = 30;
 const LEAF_PACK_FACTOR: usize = 30;
 
 use crate::{
-    bounding_box::BoundingBox, geometry::FPCoordinate, partition_id::PartitionID,
+    bounding_box::BoundingBox,
+    geometry::FPCoordinate,
+    metric::{Haversine, Metric},
+    partition_id::PartitionID,
     space_filling_curve::zorder_cmp,
 };
 
@@ -27,7 +30,7 @@ pub struct Leaf<T> {
     elements: Vec<T>,
 }
 
-impl<T: RTreeElement> Leaf<T> {
+impl<T> Leaf<T> {
     pub fn new(bbox: BoundingBox, elements: Vec<T>) -> Self {
         Self { bbox, elements }
     }
@@ -126,11 +129,17 @@ impl Ord for QueueElement {
 }
 
 /// Trait for elements that can be stored in an RTree
-pub trait RTreeElement {
+///
+/// The element is written against the measure the tree searches in, so that
+/// how far away an element is and how near a box could be are answers in the
+/// same units. An element with nothing of its own to say can hand the work
+/// straight to `M`.
+pub trait RTreeElement<M: Metric = Haversine> {
     /// Returns the bounding box of this element
     fn bbox(&self) -> BoundingBox;
 
-    /// Returns the distance from this element to the given coordinate
+    /// Returns the distance from this element to the given coordinate,
+    /// measured the way `M` measures
     fn distance_to(&self, coordinate: &FPCoordinate) -> f64;
 
     /// Returns the center coordinate of this element
@@ -138,12 +147,15 @@ pub trait RTreeElement {
 }
 
 #[derive(Debug)]
-pub struct RTree<T: RTreeElement> {
+pub struct RTree<T, M: Metric = Haversine> {
     leaf_nodes: Vec<Leaf<T>>,
     search_nodes: Vec<SearchNode>,
+    /// the measure the tree was packed and is searched in, which is a choice
+    /// rather than a value and so takes up no room
+    metric: PhantomData<M>,
 }
 
-impl<T: RTreeElement + std::clone::Clone> RTree<T> {
+impl<T: RTreeElement<M> + std::clone::Clone, M: Metric> RTree<T, M> {
     /// Creates a new R-tree from an iterator of elements.
     ///
     /// # Arguments
@@ -172,6 +184,7 @@ impl<T: RTreeElement + std::clone::Clone> RTree<T> {
             return RTree {
                 leaf_nodes: Vec::new(),
                 search_nodes: Vec::new(),
+                metric: PhantomData,
             };
         }
         debug!("sorting by z-order");
@@ -260,11 +273,15 @@ impl<T: RTreeElement + std::clone::Clone> RTree<T> {
         RTree {
             leaf_nodes,
             search_nodes,
+            metric: PhantomData,
         }
     }
 
     /// Returns an iterator over elements in ascending order of distance from the given coordinate
-    pub fn nearest_iter<'a>(&'a self, coordinate: &'a FPCoordinate) -> RTreeNearestIterator<'a, T> {
+    pub fn nearest_iter<'a>(
+        &'a self,
+        coordinate: &'a FPCoordinate,
+    ) -> RTreeNearestIterator<'a, T, M> {
         RTreeNearestIterator::new(self, coordinate)
     }
 
@@ -283,15 +300,18 @@ impl<T: RTreeElement + std::clone::Clone> RTree<T> {
     /// the nearest part of it, so a large element whose middle lies far off
     /// comes late or not at all. A cell of a partition that covers a country is
     /// exactly that element.
-    pub fn intersecting<'a>(&'a self, bbox: &'a BoundingBox) -> RTreeIntersectionIterator<'a, T> {
+    pub fn intersecting<'a>(
+        &'a self,
+        bbox: &'a BoundingBox,
+    ) -> RTreeIntersectionIterator<'a, T, M> {
         RTreeIntersectionIterator::new(self, bbox)
     }
 }
 
 /// Walks the elements whose box shares ground with the one asked about.
 #[derive(Debug)]
-pub struct RTreeIntersectionIterator<'a, T: RTreeElement> {
-    tree: &'a RTree<T>,
+pub struct RTreeIntersectionIterator<'a, T, M: Metric = Haversine> {
+    tree: &'a RTree<T, M>,
     bbox: &'a BoundingBox,
     /// the subtrees still to look at
     stack: Vec<SearchNode>,
@@ -301,8 +321,8 @@ pub struct RTreeIntersectionIterator<'a, T: RTreeElement> {
     leaf: Option<(usize, usize)>,
 }
 
-impl<'a, T: RTreeElement> RTreeIntersectionIterator<'a, T> {
-    fn new(tree: &'a RTree<T>, bbox: &'a BoundingBox) -> Self {
+impl<'a, T: RTreeElement<M>, M: Metric> RTreeIntersectionIterator<'a, T, M> {
+    fn new(tree: &'a RTree<T, M>, bbox: &'a BoundingBox) -> Self {
         let mut stack = Vec::new();
         if let Some(&root) = tree.search_nodes.last() {
             stack.push(root);
@@ -317,7 +337,7 @@ impl<'a, T: RTreeElement> RTreeIntersectionIterator<'a, T> {
     }
 }
 
-impl<'a, T: RTreeElement> Iterator for RTreeIntersectionIterator<'a, T> {
+impl<'a, T: RTreeElement<M>, M: Metric> Iterator for RTreeIntersectionIterator<'a, T, M> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -372,13 +392,13 @@ impl<'a, T: RTreeElement> Iterator for RTreeIntersectionIterator<'a, T> {
 }
 
 // Implement RTreeElement for the original (FPCoordinate, PartitionID) tuple
-impl RTreeElement for (FPCoordinate, PartitionID) {
+impl<M: Metric> RTreeElement<M> for (FPCoordinate, PartitionID) {
     fn bbox(&self) -> BoundingBox {
         BoundingBox::from_coordinate(&self.0)
     }
 
     fn distance_to(&self, coordinate: &FPCoordinate) -> f64 {
-        self.0.distance_to(coordinate)
+        M::distance(&self.0, coordinate)
     }
 
     fn center(&self) -> &FPCoordinate {
@@ -387,14 +407,14 @@ impl RTreeElement for (FPCoordinate, PartitionID) {
 }
 
 #[derive(Debug)]
-pub struct RTreeNearestIterator<'a, T: RTreeElement> {
-    tree: &'a RTree<T>,
+pub struct RTreeNearestIterator<'a, T, M: Metric = Haversine> {
+    tree: &'a RTree<T, M>,
     input_coordinate: &'a FPCoordinate,
     queue: BinaryHeap<QueueElement>,
 }
 
-impl<'a, T: RTreeElement> RTreeNearestIterator<'a, T> {
-    fn new(tree: &'a RTree<T>, input_coordinate: &'a FPCoordinate) -> Self {
+impl<'a, T: RTreeElement<M>, M: Metric> RTreeNearestIterator<'a, T, M> {
+    fn new(tree: &'a RTree<T, M>, input_coordinate: &'a FPCoordinate) -> Self {
         let capacity = (tree.leaf_nodes.len() * LEAF_PACK_FACTOR).sqrt();
         let mut queue = BinaryHeap::with_capacity(capacity);
 
@@ -403,14 +423,14 @@ impl<'a, T: RTreeElement> RTreeNearestIterator<'a, T> {
             match last_node {
                 SearchNode::TreeNode(root) => {
                     queue.push(QueueElement::new(
-                        root.bbox.min_distance(input_coordinate),
+                        M::min_distance(&root.bbox, input_coordinate),
                         root.index,
                         QueueNodeType::TreeNode(root.children),
                     ));
                 }
                 SearchNode::LeafNode(leaf) => {
                     queue.push(QueueElement::new(
-                        leaf.bbox.min_distance(input_coordinate),
+                        M::min_distance(&leaf.bbox, input_coordinate),
                         leaf.index,
                         QueueNodeType::LeafNode,
                     ));
@@ -426,7 +446,7 @@ impl<'a, T: RTreeElement> RTreeNearestIterator<'a, T> {
     }
 }
 
-impl<T: RTreeElement + Clone> Iterator for RTreeNearestIterator<'_, T> {
+impl<T: RTreeElement<M> + Clone, M: Metric> Iterator for RTreeNearestIterator<'_, T, M> {
     /// Returns the next nearest element and its distance from the query point.
     /// Elements are returned in ascending order of distance.
     ///
@@ -447,12 +467,12 @@ impl<T: RTreeElement + Clone> Iterator for RTreeNearestIterator<'_, T> {
                     for i in 0..children {
                         match &self.tree.search_nodes[child_start_index + i] {
                             SearchNode::LeafNode(node) => self.queue.push(QueueElement::new(
-                                node.bbox.min_distance(self.input_coordinate),
+                                M::min_distance(&node.bbox, self.input_coordinate),
                                 node.index,
                                 QueueNodeType::LeafNode,
                             )),
                             SearchNode::TreeNode(node) => self.queue.push(QueueElement::new(
-                                node.bbox.min_distance(self.input_coordinate),
+                                M::min_distance(&node.bbox, self.input_coordinate),
                                 node.index,
                                 QueueNodeType::TreeNode(node.children),
                             )),
@@ -494,6 +514,7 @@ mod tests {
     use super::*;
     use crate::bounding_box::BoundingBox;
     use crate::geometry::FPCoordinate;
+    use crate::metric::Planar;
     use crate::partition_id::PartitionID;
 
     #[derive(Clone, Debug, PartialEq)]
@@ -574,6 +595,9 @@ mod tests {
         let coord = FPCoordinate::new_from_lat_lon(3.0, 4.0);
         let pid = PartitionID(7);
         let tuple = (coord, pid);
+        // the tuple answers for whatever measure it is asked about, so the
+        // measure has to be named here where no tree is naming it
+        let tuple = &tuple as &dyn RTreeElement<Haversine>;
         assert_eq!(tuple.bbox(), BoundingBox::from_coordinate(&coord));
         assert_eq!(tuple.center(), &coord);
         let origin = FPCoordinate::new_from_lat_lon(0.0, 0.0);
@@ -777,12 +801,22 @@ mod tests {
         name: usize,
     }
 
-    impl RTreeElement for Patch {
-        fn bbox(&self) -> BoundingBox {
+    impl Patch {
+        /// The same box the trait hands back, reachable without naming a
+        /// measure, as the box does not depend on one.
+        fn box_of(&self) -> BoundingBox {
             BoundingBox::from_coordinates(&[self.low, self.high])
         }
+    }
+
+    impl<M: Metric> RTreeElement<M> for Patch {
+        fn bbox(&self) -> BoundingBox {
+            self.box_of()
+        }
         fn distance_to(&self, coordinate: &FPCoordinate) -> f64 {
-            self.bbox().min_distance(coordinate)
+            // a patch has extent, so it is as far away as its nearest part,
+            // and it asks the same measure the tree keys its nodes on
+            M::min_distance(&self.box_of(), coordinate)
         }
         fn center(&self) -> &FPCoordinate {
             &self.center
@@ -811,14 +845,14 @@ mod tests {
     fn found_by_hand(patches: &[Patch], bbox: &BoundingBox) -> Vec<usize> {
         let mut names = patches
             .iter()
-            .filter(|patch| patch.bbox().intersects(bbox))
+            .filter(|patch| patch.box_of().intersects(bbox))
             .map(|patch| patch.name)
             .collect::<Vec<_>>();
         names.sort_unstable();
         names
     }
 
-    fn found_by_tree(tree: &RTree<Patch>, bbox: &BoundingBox) -> Vec<usize> {
+    fn found_by_tree<M: Metric>(tree: &RTree<Patch, M>, bbox: &BoundingBox) -> Vec<usize> {
         let mut names = tree
             .intersecting(bbox)
             .map(|patch| patch.name)
@@ -840,7 +874,7 @@ mod tests {
             patch(1, 100, 100, 110, 110),
             patch(2, 5, 5, 200, 200),
         ];
-        let tree = RTree::from_elements(patches.clone());
+        let tree: RTree<Patch> = RTree::from_elements(patches.clone());
 
         // over the first patch only, though the third reaches across it
         assert_eq!(found_by_tree(&tree, &window(0, 0, 1, 1)), vec![0]);
@@ -861,7 +895,7 @@ mod tests {
             patch(0, -1000, -1000, 1000, 1000),
             patch(1, 900, 900, 901, 901),
         ];
-        let tree = RTree::from_elements(patches);
+        let tree: RTree<Patch> = RTree::from_elements(patches);
 
         let corner = window(995, 995, 999, 999);
         assert_eq!(found_by_tree(&tree, &corner), vec![0]);
@@ -884,7 +918,7 @@ mod tests {
                     patch(name, lat, lon, lat + height, lon + width)
                 })
                 .collect::<Vec<_>>();
-            let tree = RTree::from_elements(patches.clone());
+            let tree: RTree<Patch> = RTree::from_elements(patches.clone());
 
             for _ in 0..20 {
                 let lat = rng.random_range(-1200..1200);
@@ -909,7 +943,7 @@ mod tests {
                 patch(name, at, at, at + 3, at + 3)
             })
             .collect::<Vec<_>>();
-        let tree = RTree::from_elements(patches.clone());
+        let tree: RTree<Patch> = RTree::from_elements(patches.clone());
 
         let everywhere = window(-10_000, -10_000, 10_000, 10_000);
         let found = found_by_tree(&tree, &everywhere);
@@ -919,7 +953,7 @@ mod tests {
 
     #[test]
     fn an_empty_tree_has_nothing_to_walk() {
-        let tree = RTree::from_elements(Vec::<Patch>::new());
+        let tree: RTree<Patch> = RTree::from_elements(Vec::new());
         assert!(
             tree.nearest_iter(&FPCoordinate::new(0, 0)).next().is_none(),
             "a tree of nothing hands back nothing"
@@ -930,6 +964,66 @@ mod tests {
     /// a leaf and thirty leaves under the one node above them. Everything below
     /// this line is about what happens when there is more than that, which is
     /// the descent itself, and it went untested until this was written.
+    /// The measure is a choice, and the two that come with the tree disagree
+    /// about the ground: a degree of longitude is a degree wherever it is
+    /// taken in the plane, and shrinks towards the poles on the sphere.
+    #[test]
+    fn a_tree_can_be_searched_in_a_measure_of_its_own() {
+        let (patches, _) = deep_tree();
+        let planar: RTree<Patch, Planar> = RTree::from_elements(patches.clone());
+        let from = FPCoordinate::new(717, 1131);
+
+        let mut last = 0.;
+        let mut seen = 0;
+        for (_, distance) in planar.nearest_iter(&from) {
+            assert!(distance >= last, "{distance} came after {last}");
+            last = distance;
+            seen += 1;
+        }
+        assert_eq!(seen, patches.len(), "the walk has to reach every patch");
+    }
+
+    /// The bound the planar measure hands back is the nearest point of the
+    /// box and not merely near it, so the order is right for a tree of any
+    /// depth rather than right for the shallow ones. This is the whole reason
+    /// the bound travels with the measure that uses it.
+    #[test]
+    fn a_deep_walk_in_an_exact_measure_comes_out_in_order() {
+        let (patches, _) = deeper_tree();
+        let planar: RTree<Patch, Planar> = RTree::from_elements(patches);
+        let from = FPCoordinate::new(1234, 5678);
+
+        let mut last = 0.;
+        for (_, distance) in planar.nearest_iter(&from) {
+            assert!(distance >= last, "{distance} came after {last}");
+            last = distance;
+        }
+    }
+
+    /// A window is a question about ground rather than about distance, so the
+    /// two measures have to give the same answer down to the element.
+    #[test]
+    fn the_window_query_does_not_depend_on_the_measure() {
+        let (patches, haversine) = deep_tree();
+        let planar: RTree<Patch, Planar> = RTree::from_elements(patches.clone());
+
+        for bbox in [
+            window(0, 0, 100, 100),
+            window(-500, -500, 60, 60),
+            window(400, 700, 460, 780),
+            window(-10_000, -10_000, 10_000, 10_000),
+        ] {
+            assert_eq!(
+                found_by_tree(&haversine, &bbox),
+                found_by_tree(&planar, &bbox)
+            );
+            assert_eq!(
+                found_by_hand(&patches, &bbox),
+                found_by_tree(&planar, &bbox)
+            );
+        }
+    }
+
     fn deep_tree() -> (Vec<Patch>, RTree<Patch>) {
         let patches = (0..5000)
             .map(|name| {
@@ -1008,7 +1102,7 @@ mod tests {
         let mut seen = 0;
         for (patch, distance) in tree.nearest_iter(&from).take(200) {
             assert!(distance >= last, "{distance} came after {last}");
-            assert!(patch.distance_to(&from) >= 0.0);
+            assert!(RTreeElement::<Haversine>::distance_to(&patch, &from) >= 0.0);
             last = distance;
             seen += 1;
         }

@@ -130,20 +130,29 @@ impl BoundingBox {
         if self.contains(coordinate) {
             return 0.;
         }
+        self.nearest_point(coordinate).distance_to(coordinate)
+    }
 
-        // The point of the box nearest the coordinate, which is a corner only
-        // when the coordinate lies past one. Beside an edge it is the point on
-        // that edge level with the coordinate, and asking the corners alone
-        // hands back half the length of the edge for a coordinate that sits
-        // right up against the middle of it. That is not merely a loose
-        // answer: a nearest first walk keys its nodes on this, and a key that
-        // overshoots what lies under the node hands out a far element before a
-        // near one.
-        let nearest = FPCoordinate::new(
+    /// The point of the box nearest the coordinate, taken axis by axis.
+    ///
+    /// It is a corner only when the coordinate lies past one. Beside an edge
+    /// it is the point on that edge level with the coordinate, and asking the
+    /// corners alone hands back half the length of the edge for a coordinate
+    /// that sits right up against the middle of it. That is not merely a loose
+    /// answer: a nearest first walk keys its nodes on this, and a key that
+    /// overshoots what lies under the node hands out a far element before a
+    /// near one.
+    ///
+    /// Clamping each axis in turn is the nearest point of a rectangle in the
+    /// plane. It is not the nearest point of the patch of a sphere the same
+    /// four numbers describe, so a measure taken over the sphere still reads a
+    /// little long from here.
+    #[must_use]
+    pub fn nearest_point(&self, coordinate: &FPCoordinate) -> FPCoordinate {
+        FPCoordinate::new(
             coordinate.lat.max(self.min.lat).min(self.max.lat),
             coordinate.lon.max(self.min.lon).min(self.max.lon),
-        );
-        nearest.distance_to(coordinate)
+        )
     }
 
     pub fn is_valid(&self) -> bool {

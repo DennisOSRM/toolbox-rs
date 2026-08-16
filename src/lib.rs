@@ -45,6 +45,7 @@ pub mod mercator;
 pub mod merge_entry;
 pub mod merge_tree;
 pub mod metis;
+pub mod metric;
 pub mod mvt;
 pub mod one_iterator;
 pub mod one_to_many_dijkstra;
