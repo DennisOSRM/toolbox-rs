@@ -1,4 +1,5 @@
 pub mod addressable_binary_heap;
+pub mod alpha_shape;
 pub mod as_bytes;
 pub mod assembly;
 pub mod bfs;
