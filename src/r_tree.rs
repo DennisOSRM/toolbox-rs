@@ -59,6 +59,12 @@ impl LeafNode {
 pub struct TreeNode {
     bbox: BoundingBox,
     index: usize,
+    /// How many children sit at `index`, which is not always the branching
+    /// factor: the last node of a level takes what is left of it. Reading a
+    /// fixed number instead runs off the end of the level being packed and
+    /// into the one being built on top of it, and a node then has its own
+    /// parent among its children, which is a walk that never ends.
+    children: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -69,7 +75,8 @@ enum SearchNode {
 
 #[derive(Debug, PartialEq)]
 enum QueueNodeType {
-    TreeNode,
+    /// a node, holding how many children sit at its start index
+    TreeNode(usize),
     LeafNode,
     Candidate(usize),
 }
@@ -159,6 +166,14 @@ impl<T: RTreeElement + std::clone::Clone> RTree<T> {
     {
         let mut elements: Vec<_> = elements.into_iter().collect();
         debug!("Creating R-tree from {} elements", elements.len());
+        if elements.is_empty() {
+            // there is no root to pack, and the packing counts down from the
+            // number of nodes, which is where an empty tree ran off the bottom
+            return RTree {
+                leaf_nodes: Vec::new(),
+                search_nodes: Vec::new(),
+            };
+        }
         debug!("sorting by z-order");
         elements.sort_by(|a, b| zorder_cmp(a.center(), b.center()));
 
@@ -225,6 +240,7 @@ impl<T: RTreeElement + std::clone::Clone> RTree<T> {
                     next.push(SearchNode::TreeNode(TreeNode {
                         bbox,
                         index: start + (BRANCHING_FACTOR * index),
+                        children: node.len(),
                     }));
                 });
             start = end;
@@ -287,7 +303,7 @@ impl<'a, T: RTreeElement> RTreeNearestIterator<'a, T> {
                     queue.push(QueueElement::new(
                         root.bbox.min_distance(input_coordinate),
                         root.index,
-                        QueueNodeType::TreeNode,
+                        QueueNodeType::TreeNode(root.children),
                     ));
                 }
                 SearchNode::LeafNode(leaf) => {
@@ -325,10 +341,8 @@ impl<T: RTreeElement + Clone> Iterator for RTreeNearestIterator<'_, T> {
         }) = self.queue.pop()
         {
             match node_type {
-                QueueNodeType::TreeNode => {
-                    let children_count =
-                        BRANCHING_FACTOR.min(self.tree.search_nodes.len() - 1 - child_start_index);
-                    for i in 0..children_count {
+                QueueNodeType::TreeNode(children) => {
+                    for i in 0..children {
                         match &self.tree.search_nodes[child_start_index + i] {
                             SearchNode::LeafNode(node) => self.queue.push(QueueElement::new(
                                 node.bbox.min_distance(self.input_coordinate),
@@ -338,7 +352,7 @@ impl<T: RTreeElement + Clone> Iterator for RTreeNearestIterator<'_, T> {
                             SearchNode::TreeNode(node) => self.queue.push(QueueElement::new(
                                 node.bbox.min_distance(self.input_coordinate),
                                 node.index,
-                                QueueNodeType::TreeNode,
+                                QueueNodeType::TreeNode(node.children),
                             )),
                         }
                     }
@@ -414,8 +428,8 @@ mod tests {
 
     #[test]
     fn test_queuenode_ordering() {
-        let a = QueueElement::new(1.0, 0, QueueNodeType::TreeNode);
-        let b = QueueElement::new(2.0, 1, QueueNodeType::TreeNode);
+        let a = QueueElement::new(1.0, 0, QueueNodeType::TreeNode(0));
+        let b = QueueElement::new(2.0, 1, QueueNodeType::TreeNode(0));
         assert!(a > b); // Because BinaryHeap is max-heap, but we want min-heap
     }
 
@@ -585,7 +599,7 @@ mod tests {
 
     #[test]
     fn test_queueelement_ordering_and_equality() {
-        let a = QueueElement::new(1.0, 0, QueueNodeType::TreeNode);
+        let a = QueueElement::new(1.0, 0, QueueNodeType::TreeNode(0));
         let b = QueueElement::new(2.0, 1, QueueNodeType::LeafNode);
         let c = QueueElement::new(1.0, 2, QueueNodeType::Candidate(0));
 
@@ -647,5 +661,151 @@ mod tests {
         let tree = RTree::from_elements(coords);
         // We just assert the number of leaf nodes to ensure the code path is hit.
         assert!(tree.leaf_nodes.len() > BRANCHING_FACTOR);
+    }
+
+    /// A box of its own, so that the tree can be asked about elements that
+    /// cover ground rather than only about points.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct Patch {
+        low: FPCoordinate,
+        high: FPCoordinate,
+        /// worked out once, as the trait hands back a reference and there is
+        /// nowhere to keep one that is made up on the spot
+        center: FPCoordinate,
+        name: usize,
+    }
+
+    impl RTreeElement for Patch {
+        fn bbox(&self) -> BoundingBox {
+            BoundingBox::from_coordinates(&[self.low, self.high])
+        }
+        fn distance_to(&self, coordinate: &FPCoordinate) -> f64 {
+            self.bbox().min_distance(coordinate)
+        }
+        fn center(&self) -> &FPCoordinate {
+            &self.center
+        }
+    }
+
+    fn patch(name: usize, low_lat: i32, low_lon: i32, high_lat: i32, high_lon: i32) -> Patch {
+        Patch {
+            low: FPCoordinate::new(low_lat, low_lon),
+            high: FPCoordinate::new(high_lat, high_lon),
+            center: FPCoordinate::new((low_lat + high_lat) / 2, (low_lon + high_lon) / 2),
+            name,
+        }
+    }
+
+    #[test]
+    fn an_empty_tree_has_nothing_to_walk() {
+        let tree = RTree::from_elements(Vec::<Patch>::new());
+        assert!(
+            tree.nearest_iter(&FPCoordinate::new(0, 0)).next().is_none(),
+            "a tree of nothing hands back nothing"
+        );
+    }
+
+    /// A tree of fewer than nine hundred elements is one level deep: thirty to
+    /// a leaf and thirty leaves under the one node above them. Everything below
+    /// this line is about what happens when there is more than that, which is
+    /// the descent itself, and it went untested until this was written.
+    fn deep_tree() -> (Vec<Patch>, RTree<Patch>) {
+        let patches = (0..5000)
+            .map(|name| {
+                let lat = (name as i32 % 100) * 20;
+                let lon = (name as i32 / 100) * 20;
+                // sizes that vary, so that the boxes of the nodes above overlap
+                // and the descent has to look at more than one of them
+                let span = 5 + (name as i32 % 7) * 10;
+                patch(name, lat, lon, lat + span, lon + span)
+            })
+            .collect::<Vec<_>>();
+        let tree = RTree::from_elements(patches.clone());
+        (patches, tree)
+    }
+
+    #[test]
+    fn a_tree_of_more_than_one_level_has_nodes_above_its_leaves() {
+        let (patches, tree) = deep_tree();
+        assert!(
+            patches.len() > LEAF_PACK_FACTOR * BRANCHING_FACTOR,
+            "too few to nest"
+        );
+        assert!(
+            matches!(tree.search_nodes.last(), Some(SearchNode::TreeNode(_))),
+            "the root of a tree this size is a node rather than a leaf"
+        );
+        assert!(
+            tree.search_nodes
+                .iter()
+                .any(|node| matches!(node, SearchNode::TreeNode(_))),
+            "no interior node was built"
+        );
+    }
+
+    /// The nearest first walk goes down the same nodes, and had no test that
+    /// reached them either.
+    #[test]
+    fn the_nearest_walk_of_a_deep_tree_comes_out_in_order() {
+        let (patches, tree) = deep_tree();
+        let from = FPCoordinate::new(1000, 500);
+
+        let mut last = 0.0_f64;
+        let mut seen = 0;
+        for (patch, distance) in tree.nearest_iter(&from).take(200) {
+            assert!(distance >= last, "{distance} came after {last}");
+            assert!(patch.distance_to(&from) >= 0.0);
+            last = distance;
+            seen += 1;
+        }
+        assert_eq!(
+            seen,
+            200,
+            "the walk stopped early over {} elements",
+            patches.len()
+        );
+    }
+
+    /// Three levels rather than two: thirty to a leaf, thirty leaves under a
+    /// node, and thirty of those nodes under the root. Only at this size does
+    /// the packing put nodes under nodes, and only then does the descent step
+    /// through a node whose children are nodes as well.
+    fn deeper_tree() -> (Vec<Patch>, RTree<Patch>) {
+        let side = LEAF_PACK_FACTOR * BRANCHING_FACTOR * BRANCHING_FACTOR;
+        let patches = (0..side + 100)
+            .map(|name| {
+                let lat = (name as i32 % 200) * 15;
+                let lon = (name as i32 / 200) * 15;
+                patch(name, lat, lon, lat + 10, lon + 10)
+            })
+            .collect::<Vec<_>>();
+        let tree = RTree::from_elements(patches.clone());
+        (patches, tree)
+    }
+
+    #[test]
+    fn a_tree_of_three_levels_puts_nodes_under_nodes() {
+        let (_, tree) = deeper_tree();
+        let Some(SearchNode::TreeNode(root)) = tree.search_nodes.last() else {
+            panic!("the root of a tree this size is a node");
+        };
+        assert!(
+            matches!(tree.search_nodes[root.index], SearchNode::TreeNode(_)),
+            "the children of the root are nodes in their own right"
+        );
+    }
+
+    #[test]
+    fn the_nearest_walk_of_three_levels_reaches_every_element() {
+        let (patches, tree) = deeper_tree();
+        let from = FPCoordinate::new(1500, 1000);
+        let mut seen = tree
+            .nearest_iter(&from)
+            .map(|(patch, _)| patch.name)
+            .collect::<Vec<_>>();
+        assert_eq!(seen.len(), patches.len(), "the walk hands out each once");
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), patches.len(), "and none of them twice");
     }
 }
