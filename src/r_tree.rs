@@ -1071,6 +1071,21 @@ mod tests {
         assert_eq!(found_by_tree(&tree, &everywhere).len(), patches.len());
     }
 
+    /// The walk hands elements out nearest first, which holds only if the
+    /// distance kept for a node is no further off than anything under it. It
+    /// is the deep tree that shows this up: a node of three levels covers
+    /// ground wide enough that its corners lie well past its edges.
+    #[test]
+    fn the_nearest_walk_of_three_levels_comes_out_in_order() {
+        let (_, tree) = deeper_tree();
+        let from = FPCoordinate::new(1_500, 1_000);
+        let mut last = 0.0_f64;
+        for (_, distance) in tree.nearest_iter(&from).take(500) {
+            assert!(distance >= last, "{distance} came after {last}");
+            last = distance;
+        }
+    }
+
     #[test]
     fn the_nearest_walk_of_three_levels_reaches_every_element() {
         let (patches, tree) = deeper_tree();
