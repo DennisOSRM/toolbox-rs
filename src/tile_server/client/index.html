@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<!--
+    This viewer allows you to render the vector map tiles available
+    from osrm-routed at the /tile?x={x}&y={y}&z={z} URL.
+
+    Simply start OSRM at localhost on port 5000 and open this html
+    file in your browser.  Requires OSRM 4.9.2 or greater.
+-->
+<html>
+<head>
+    <meta charset='utf-8' />
+    <title></title>
+    <meta name='viewport' content='initial-scale=1,maximum-scale=1,user-scalable=no' />
+    <link href='https://unpkg.com/maplibre-gl@6.3.0/dist/maplibre-gl.css' rel='stylesheet' />
+    <style>
+        body { margin:0; padding:0; }
+        #map { position:absolute; top:0; bottom:0; width:100%; }
+        #levels { position: absolute; top: 10px; left: 10px; z-index: 1;
+                  font: 12px sans-serif; color: #fff; background: rgba(0,0,0,0.65);
+                  padding: 8px 10px; border-radius: 4px; }
+        #levels input { width: 180px; vertical-align: middle; }
+    </style>
+</head>
+<body>
+
+<div id='map'></div>
+<div id="levels">
+    <label>partition level <b id="level-value">?</b> of <span id="level-max">?</span>
+        <span id="level-hint" style="opacity:0.7"></span></label><br>
+    <input id="level" type="range" min="0" max="0" step="1" value="0" />
+    <br>
+    <label>cell as
+        <select id="shape">
+            <option value="alpha">alpha shape</option>
+            <option value="hull">convex hull</option>
+            <option value="both">both</option>
+        </select>
+    </label>
+</div>
+<script type="module">
+// maplibre ships as a module from 6 onwards, with no build that hands the page
+// a global, so this is one module rather than a script tag and a few blocks
+// leaning on globals. It is imported under the name the calls below already
+// used, as 6 exports its names one by one and no default.
+import * as maplibregl from 'https://unpkg.com/maplibre-gl@6.3.0/dist/maplibre-gl.mjs';
+
+// The ten colours the cells are drawn in. They are pastels on purpose: a cell
+// of a coarse level covers a good part of the screen, and ten saturated colours
+// next to each other fight rather than tell a region from its neighbour.
+var PALETTE = [
+    [244, 164, 164], [164, 214, 164], [250, 226, 156], [164, 186, 232], [246, 196, 150],
+    [206, 168, 224], [160, 222, 222], [240, 176, 224], [214, 232, 160], [200, 200, 214]
+];
+
+/// How far a cell may stray from the colour of the cell it lies in, per shade.
+/// Small on purpose: a cell should read as one of its parent's rather than as a
+/// colour of its own, so this lightens or darkens and leaves the hue alone.
+var SHADE_STEP = 11;
+
+/// The colour of a region: the channel of the cell it lies in a few levels up,
+/// moved by which of five shades the cell itself falls into. The style
+/// expressions have no hsl, so the shifting is done on the channels, which
+/// keeps the hue and moves the lightness as long as the step stays small.
+function channelOfFamily(channel) {
+    var stops = [];
+    PALETTE.forEach(function (colour, index) { stops.push(index, colour[channel]); });
+    return ["max", 0, ["min", 255, ["+",
+        ["match", ["%", ["to-number", ["get", "above"]], 10]].concat(stops, [200]),
+        ["*", ["-", ["%", ["to-number", ["get", "cell"]], 5], 2], SHADE_STEP]
+    ]]];
+}
+
+var COLOUR_BY_FAMILY = ["rgb", channelOfFamily(0), channelOfFamily(1), channelOfFamily(2)];
+
+var simple = {
+    "version": 8,
+    "name": "OSRM debug",
+    "center": [-122.44315266116867, 37.78238285747459],
+    "zoom": 12.177865411775025,
+    "bearing": 0,
+    "pitch": 0,
+    "sources": {
+        "local-tiles": {
+            "type": "vector",
+            // absolute, as the tiles are fetched from a worker and a worker has
+            // no document to resolve a relative URL against. Built from the
+            // origin so that it still follows whatever address the server was
+            // told to listen on.
+            "tiles": [location.origin + "/cells-0/{z}/{x}/{y}.mvt"],
+            "minzoom": 0,
+            "maxzoom": 19
+        }
+    },
+    "layers": [
+        {
+            "id": "background",
+            "type": "background",
+            "paint": {
+                "background-color": "#111"
+            }
+        },
+        {
+            "id": "cell shape fill",
+            "type": "fill",
+            "source": "local-tiles",
+            "source-layer": "shapes",
+            "minzoom": 0,
+            "maxzoom": 12,
+            "paint": {
+                "fill-color": COLOUR_BY_FAMILY,
+                "fill-opacity": 0.45,
+                "fill-antialias": false
+            }
+        },
+        {
+            "id": "cell shapes",
+            "type": "line",
+            "source": "local-tiles",
+            "source-layer": "shapes",
+            "minzoom": 0,
+            "maxzoom": 12,
+            "layout": { "line-join": "round" },
+            "paint": {
+                "line-color": COLOUR_BY_FAMILY,
+                "line-width": 1,
+                "line-opacity": 0.9
+            }
+        },
+        {
+            "id": "cell hull fill",
+            "type": "fill",
+            "source": "local-tiles",
+            "source-layer": "hulls",
+            // Zoomed out a cell is too small to draw as the shape it is, and a
+            // hull says where it lies well enough. Zoomed in the roads
+            // themselves are the better picture, so the hulls stop at twelve
+            // and the mesh of arcs takes over from ten.
+            "minzoom": 0,
+            "maxzoom": 12,
+            "layout": { "visibility": "none" },
+            "paint": {
+                "fill-color": COLOUR_BY_FAMILY,
+                // low, as hulls of neighbouring cells lie over each other and
+                // a stack of them would otherwise come out as one dark mass
+                "fill-opacity": 0.25,
+                "fill-antialias": false
+            }
+        },
+        {
+            "id": "cell hulls",
+            "type": "line",
+            "source": "local-tiles",
+            "source-layer": "hulls",
+            "minzoom": 0,
+            "maxzoom": 12,
+            "layout": { "visibility": "none", "line-join": "round" },
+            "paint": {
+                "line-color": COLOUR_BY_FAMILY,
+                "line-width": 1,
+                "line-opacity": 0.7
+            }
+        },
+        {
+            "id": "cell interior",
+            "type": "line",
+            "source": "local-tiles",
+            "source-layer": "interior",
+            "minzoom": 10,
+            "layout": { "line-cap": "round", "line-join": "round" },
+            "paint": {
+                "line-width": {
+                    "base": 1.5,
+                    "stops": [[12.5, 1], [14, 1.5], [18, 5]]
+                },
+                "line-color": [
+                    "match",
+                    ["%", ["to-number", ["get", "cell"]], 10],
+                    0, "#e6194b",
+                    1, "#3cb44b",
+                    2, "#ffe119",
+                    3, "#4363d8",
+                    4, "#f58231",
+                    5, "#911eb4",
+                    6, "#46f0f0",
+                    7, "#f032e6",
+                    8, "#bcf60c",
+                    9, "#fabebe",
+                    "#ffffff"
+                ]
+            }
+        },
+        {
+            "id": "border nodes",
+            "type": "circle",
+            "source": "local-tiles",
+            "source-layer": "border_nodes",
+            // They are drawn to be pointed at, and a dot that is one of a
+            // million on the screen cannot be. Below this the finest level has
+            // more border nodes than the map has pixels, and the white of them
+            // buries everything underneath.
+            "minzoom": 11,
+            "paint": {
+                "circle-radius": {
+                    "base": 1.5,
+                    "stops": [[12.5, 2.5], [14, 4], [18, 9]]
+                },
+                "circle-color": "#fff",
+                "circle-stroke-color": "#000",
+                "circle-stroke-width": 1
+            }
+        },
+        {
+            "id": "cell boundaries",
+            "type": "line",
+            "source": "local-tiles",
+            "source-layer": "cells",
+            // The cut fades in rather than being drawn flat at every zoom. On a
+            // fine level it is a million arcs over a country, which overdraw
+            // into a pale mush and bury the fill underneath. Zoomed in they are
+            // far enough apart to be the arcs they are.
+            "minzoom": 6,
+            "layout": {
+                "visibility": "visible",
+                "line-cap": "round",
+                "line-join": "round"
+            },
+            "paint": {
+                "line-opacity": ["interpolate", ["linear"], ["zoom"], 6, 0.12, 10, 0.5, 12, 1],
+               
+                "line-width": {
+                    "base": 1.5,
+                    "stops": [[12.5, 1.5], [14, 2.5], [18, 8]]
+                },
+                "line-color": "#ffffff"
+            }
+        }
+    ]
+};
+
+var map = new maplibregl.Map({
+    container: 'map',
+    style: simple,
+    zoom: 13,
+    // keeps zoom and position in the URL fragment, so a view can be reloaded
+    // and shared. The center below only applies when the URL carries none.
+    hash: true,
+    center: [8.57747, 50.20731]
+});
+
+map.addControl(new maplibregl.NavigationControl());
+
+// A module keeps its names to itself, so the map is put on the window for a
+// console to reach. This is a debug server and being able to ask the map what
+// it thinks it is drawing is the point of it.
+window.map = map;
+window.maplibregl = maplibregl;
+map.showTileBoundaries = true;
+
+// The level of the hierarchy the tiles are cut at. Moving the slider asks the
+// server for the same tiles one level up or down, which is a different set of
+// cells over the same roads.
+var levelInput = document.getElementById('level');
+var levelValue = document.getElementById('level-value');
+
+function tilesForLevel(level) {
+    // the level names the tile rather than being asked for alongside it, as a
+    // query on a tile url does not survive the trip through maplibre
+    return [location.origin + '/cells-' + level + '/{z}/{x}/{y}.mvt'];
+}
+
+function applyLevel(level) {
+    levelValue.textContent = level;
+    // The style is rebuilt rather than the source being told its new urls.
+    // setTiles is there in maplibre 6 and does nothing that reaches the
+    // screen: the slider moved, the level in the panel changed, and the tiles
+    // stayed as they were. Rebuilding the style is heavier and works.
+    var next = JSON.parse(JSON.stringify(map.getStyle()));
+    next.sources['local-tiles'].tiles = tilesForLevel(level);
+    map.setStyle(next);
+}
+
+// Which of the two hulls of a cell is drawn. The alpha shape follows the cell
+// into its bays and may leave it in pieces; the convex hull reaches over them
+// and overlaps its neighbours. Seeing them over each other is the argument.
+var shapeInput = document.getElementById('shape');
+
+function applyShape(which) {
+    if (!map.getLayer('cell shapes')) {
+        return;
+    }
+    var alpha = which === 'alpha' || which === 'both' ? 'visible' : 'none';
+    var hull = which === 'hull' || which === 'both' ? 'visible' : 'none';
+    map.setLayoutProperty('cell shape fill', 'visibility', alpha);
+    map.setLayoutProperty('cell shapes', 'visibility', alpha);
+    map.setLayoutProperty('cell hull fill', 'visibility', which === 'hull' ? 'visible' : 'none');
+    map.setLayoutProperty('cell hulls', 'visibility', hull);
+}
+
+shapeInput.addEventListener('change', function () { applyShape(shapeInput.value); });
+map.on('styledata', function () { applyShape(shapeInput.value); });
+
+fetch('/meta.json').then(function (r) { return r.json(); }).then(function (meta) {
+    // level zero is the finest, and every level above it is coarser
+    levelInput.min = 0;
+    levelInput.max = meta.max_level;
+    levelInput.value = 0;
+    document.getElementById('level-max').textContent = meta.max_level;
+    document.getElementById('level-hint').textContent = '(0 is finest)';
+    levelValue.textContent = 0;
+    // the style already asks for the finest level, so nothing is reloaded yet
+}).catch(function () { levelValue.textContent = 'unavailable'; });
+
+levelInput.addEventListener('input', function () {
+    levelValue.textContent = levelInput.value;
+});
+levelInput.addEventListener('change', function () {
+    applyLevel(Number(levelInput.value));
+});
+
+// Shows the distances from a border node into its cell. The cursor coming to
+// rest on a node asks the server for them, as a cell holds far more of them
+// than would fit into a tile.
+var popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false });
+var shownNode = null;
+var pending = null;
+
+function formatDistances(answer) {
+    var rows = answer.nearest.map(function (reachable) {
+        return '<tr><td>' + reachable.node + '</td><td style="text-align:right">'
+            + reachable.distance + '</td></tr>';
+    }).join('');
+    var shown = answer.nearest.length;
+    var others = answer.border_node_count - 1 - shown - answer.unreachable_count;
+    var footer = '';
+    if (others > 0) {
+        footer += '<div>and ' + others + ' further border nodes</div>';
+    }
+    if (answer.unreachable_count > 0) {
+        footer += '<div>' + answer.unreachable_count + ' not reachable within the cell</div>';
+    }
+    return '<div style="font: 12px/1.4 sans-serif">'
+        + '<div><b>node ' + answer.node + '</b> in cell ' + answer.cell + '</div>'
+        + '<div>' + answer.border_node_count + ' border nodes</div>'
+        + '<table style="margin-top:4px"><thead><tr><th>to</th><th>distance</th></tr></thead>'
+        + '<tbody>' + rows + '</tbody></table>'
+        + footer
+        + '</div>';
+}
+
+map.on('mousemove', 'border nodes', function (event) {
+    var feature = event.features && event.features[0];
+    if (!feature) {
+        return;
+    }
+    map.getCanvas().style.cursor = 'pointer';
+
+    var node = feature.properties.node;
+    if (node === shownNode) {
+        popup.setLngLat(event.lngLat);
+        return;
+    }
+    shownNode = node;
+
+    // drop the answer of a node the cursor has already left
+    var request = fetch('/node/' + node + '.json').then(function (response) {
+        return response.ok ? response.json() : null;
+    });
+    pending = request;
+    request.then(function (answer) {
+        if (pending !== request || answer === null || shownNode !== node) {
+            return;
+        }
+        popup.setLngLat([answer.coordinate[0], answer.coordinate[1]])
+             .setHTML(formatDistances(answer))
+             .addTo(map);
+    }).catch(function () { /* a debug server going away is not worth a dialog */ });
+});
+
+map.on('mouseleave', 'border nodes', function () {
+    map.getCanvas().style.cursor = '';
+    shownNode = null;
+    pending = null;
+    popup.remove();
+});
+</script>
+
+</body>
+</html>
