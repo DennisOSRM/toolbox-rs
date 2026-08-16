@@ -267,6 +267,108 @@ impl<T: RTreeElement + std::clone::Clone> RTree<T> {
     pub fn nearest_iter<'a>(&'a self, coordinate: &'a FPCoordinate) -> RTreeNearestIterator<'a, T> {
         RTreeNearestIterator::new(self, coordinate)
     }
+
+    /// Returns the elements whose box shares ground with the given one, in no
+    /// particular order.
+    ///
+    /// This walks down from the root and passes over any subtree whose box
+    /// misses the one asked about, so the work is the answer plus the boxes
+    /// along the way rather than everything in the tree.
+    ///
+    /// The nearest iterator can be made to answer the same question, by taking
+    /// elements until they are further away than the far corner of the box, but
+    /// it is the wrong shape for it: it pays a heap to put in an order that is
+    /// then thrown away, it reaches over a disc where a box was asked for, and
+    /// the distance it orders by is to the middle of an element rather than to
+    /// the nearest part of it, so a large element whose middle lies far off
+    /// comes late or not at all. A cell of a partition that covers a country is
+    /// exactly that element.
+    pub fn intersecting<'a>(&'a self, bbox: &'a BoundingBox) -> RTreeIntersectionIterator<'a, T> {
+        RTreeIntersectionIterator::new(self, bbox)
+    }
+}
+
+/// Walks the elements whose box shares ground with the one asked about.
+#[derive(Debug)]
+pub struct RTreeIntersectionIterator<'a, T: RTreeElement> {
+    tree: &'a RTree<T>,
+    bbox: &'a BoundingBox,
+    /// the subtrees still to look at
+    stack: Vec<SearchNode>,
+    /// the leaves whose box shares ground and whose elements are still to come
+    leaves: Vec<usize>,
+    /// the leaf being handed out, and where in it we are
+    leaf: Option<(usize, usize)>,
+}
+
+impl<'a, T: RTreeElement> RTreeIntersectionIterator<'a, T> {
+    fn new(tree: &'a RTree<T>, bbox: &'a BoundingBox) -> Self {
+        let mut stack = Vec::new();
+        if let Some(&root) = tree.search_nodes.last() {
+            stack.push(root);
+        }
+        Self {
+            tree,
+            bbox,
+            stack,
+            leaves: Vec::new(),
+            leaf: None,
+        }
+    }
+}
+
+impl<'a, T: RTreeElement> Iterator for RTreeIntersectionIterator<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            // hand out what is left of the leaf that was opened last
+            if let Some((at, offset)) = self.leaf {
+                let elements = self.tree.leaf_nodes[at].elements();
+                if offset < elements.len() {
+                    self.leaf = Some((at, offset + 1));
+                    let element = &elements[offset];
+                    if element.bbox().intersects(self.bbox) {
+                        return Some(element);
+                    }
+                    continue;
+                }
+                self.leaf = None;
+            }
+            if let Some(at) = self.leaves.pop() {
+                self.leaf = Some((at, 0));
+                continue;
+            }
+
+            match self.stack.pop()? {
+                SearchNode::TreeNode(node) => {
+                    if !node.bbox.intersects(self.bbox) {
+                        continue;
+                    }
+                    for child in 0..node.children {
+                        self.stack.push(self.tree.search_nodes[node.index + child]);
+                    }
+                }
+                SearchNode::LeafNode(node) => {
+                    if !node.bbox.intersects(self.bbox) {
+                        continue;
+                    }
+                    // the leaves of this chunk whose box shares ground, kept
+                    // apart from the subtrees as they are read one element at a
+                    // time rather than opened up
+                    for offset in 0..BRANCHING_FACTOR {
+                        let at = node.index + offset;
+                        if at >= self.tree.leaf_nodes.len() {
+                            break;
+                        }
+                        if self.tree.leaf_nodes[at].bbox().intersects(self.bbox) {
+                            self.leaves.push(at);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 // Implement RTreeElement for the original (FPCoordinate, PartitionID) tuple
@@ -696,6 +798,125 @@ mod tests {
         }
     }
 
+    fn window(low_lat: i32, low_lon: i32, high_lat: i32, high_lon: i32) -> BoundingBox {
+        BoundingBox::from_coordinates(&[
+            FPCoordinate::new(low_lat, low_lon),
+            FPCoordinate::new(high_lat, high_lon),
+        ])
+    }
+
+    /// What the query has to answer, worked out by asking every element in
+    /// turn. Anything the tree hands back has to match this exactly: the tree
+    /// is only allowed to be quicker, not to differ.
+    fn found_by_hand(patches: &[Patch], bbox: &BoundingBox) -> Vec<usize> {
+        let mut names = patches
+            .iter()
+            .filter(|patch| patch.bbox().intersects(bbox))
+            .map(|patch| patch.name)
+            .collect::<Vec<_>>();
+        names.sort_unstable();
+        names
+    }
+
+    fn found_by_tree(tree: &RTree<Patch>, bbox: &BoundingBox) -> Vec<usize> {
+        let mut names = tree
+            .intersecting(bbox)
+            .map(|patch| patch.name)
+            .collect::<Vec<_>>();
+        names.sort_unstable();
+        names
+    }
+
+    #[test]
+    fn an_empty_tree_hands_back_nothing() {
+        let tree = RTree::<Patch>::from_elements(Vec::new());
+        assert!(tree.intersecting(&window(0, 0, 10, 10)).next().is_none());
+    }
+
+    #[test]
+    fn a_window_finds_what_lies_under_it() {
+        let patches = vec![
+            patch(0, 0, 0, 10, 10),
+            patch(1, 100, 100, 110, 110),
+            patch(2, 5, 5, 200, 200),
+        ];
+        let tree = RTree::from_elements(patches.clone());
+
+        // over the first patch only, though the third reaches across it
+        assert_eq!(found_by_tree(&tree, &window(0, 0, 1, 1)), vec![0]);
+        // over the second, and the third which covers everything
+        assert_eq!(
+            found_by_tree(&tree, &window(100, 100, 101, 101)),
+            vec![1, 2]
+        );
+        // and nowhere near any of them
+        assert!(found_by_tree(&tree, &window(-100, -100, -90, -90)).is_empty());
+    }
+
+    /// The case that a nearest first walk is bad at: an element that covers a
+    /// great deal of ground, whose middle is far from the window it covers.
+    #[test]
+    fn a_large_element_is_found_under_a_window_far_from_its_middle() {
+        let patches = vec![
+            patch(0, -1000, -1000, 1000, 1000),
+            patch(1, 900, 900, 901, 901),
+        ];
+        let tree = RTree::from_elements(patches);
+
+        let corner = window(995, 995, 999, 999);
+        assert_eq!(found_by_tree(&tree, &corner), vec![0]);
+    }
+
+    #[test]
+    fn the_tree_finds_what_a_walk_of_every_element_finds() {
+        use rand::{RngExt, SeedableRng, prelude::StdRng};
+
+        let mut rng = StdRng::seed_from_u64(0x_B0B0);
+        for round in 0..20 {
+            // patches of every size, as a tree that only holds small ones does
+            // not have to prune anything worth pruning
+            let patches = (0..(40 + round * 10))
+                .map(|name| {
+                    let lat = rng.random_range(-1000..1000);
+                    let lon = rng.random_range(-1000..1000);
+                    let height = rng.random_range(1..500);
+                    let width = rng.random_range(1..500);
+                    patch(name, lat, lon, lat + height, lon + width)
+                })
+                .collect::<Vec<_>>();
+            let tree = RTree::from_elements(patches.clone());
+
+            for _ in 0..20 {
+                let lat = rng.random_range(-1200..1200);
+                let lon = rng.random_range(-1200..1200);
+                let side = rng.random_range(1..300);
+                let bbox = window(lat, lon, lat + side, lon + side);
+                assert_eq!(
+                    found_by_tree(&tree, &bbox),
+                    found_by_hand(&patches, &bbox),
+                    "round {round}, window {lat},{lon} +{side}"
+                );
+            }
+        }
+    }
+
+    /// Nothing is handed out twice, however the leaves are packed.
+    #[test]
+    fn every_element_comes_back_once() {
+        let patches = (0..200)
+            .map(|name| {
+                let at = name as i32 * 7;
+                patch(name, at, at, at + 3, at + 3)
+            })
+            .collect::<Vec<_>>();
+        let tree = RTree::from_elements(patches.clone());
+
+        let everywhere = window(-10_000, -10_000, 10_000, 10_000);
+        let found = found_by_tree(&tree, &everywhere);
+        assert_eq!(found.len(), patches.len());
+        assert_eq!(found, (0..200).collect::<Vec<_>>());
+    }
+
     #[test]
     fn an_empty_tree_has_nothing_to_walk() {
         let tree = RTree::from_elements(Vec::<Patch>::new());
@@ -741,6 +962,39 @@ mod tests {
                 .any(|node| matches!(node, SearchNode::TreeNode(_))),
             "no interior node was built"
         );
+    }
+
+    #[test]
+    fn the_descent_finds_what_a_walk_of_every_element_finds() {
+        use rand::{RngExt, SeedableRng, prelude::StdRng};
+
+        let (patches, tree) = deep_tree();
+        let mut rng = StdRng::seed_from_u64(0x_DEE9);
+        for round in 0..40 {
+            let lat = rng.random_range(-200..2200);
+            let lon = rng.random_range(-200..1200);
+            let side = rng.random_range(1..400);
+            let bbox = window(lat, lon, lat + side, lon + side);
+            assert_eq!(
+                found_by_tree(&tree, &bbox),
+                found_by_hand(&patches, &bbox),
+                "round {round}, window {lat},{lon} +{side}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_window_over_the_whole_of_a_deep_tree_finds_all_of_it() {
+        let (patches, tree) = deep_tree();
+        let everywhere = window(-10_000, -10_000, 10_000, 10_000);
+        assert_eq!(found_by_tree(&tree, &everywhere).len(), patches.len());
+    }
+
+    #[test]
+    fn a_window_beside_a_deep_tree_finds_none_of_it() {
+        let (_, tree) = deep_tree();
+        let elsewhere = window(-9_000, -9_000, -8_000, -8_000);
+        assert!(tree.intersecting(&elsewhere).next().is_none());
     }
 
     /// The nearest first walk goes down the same nodes, and had no test that
@@ -793,6 +1047,28 @@ mod tests {
             matches!(tree.search_nodes[root.index], SearchNode::TreeNode(_)),
             "the children of the root are nodes in their own right"
         );
+    }
+
+    #[test]
+    fn the_descent_of_three_levels_finds_what_a_walk_finds() {
+        use rand::{RngExt, SeedableRng, prelude::StdRng};
+
+        let (patches, tree) = deeper_tree();
+        let mut rng = StdRng::seed_from_u64(0x_D33D);
+        for round in 0..20 {
+            let lat = rng.random_range(-100..3100);
+            let lon = rng.random_range(-100..2100);
+            let side = rng.random_range(1..500);
+            let bbox = window(lat, lon, lat + side, lon + side);
+            assert_eq!(
+                found_by_tree(&tree, &bbox),
+                found_by_hand(&patches, &bbox),
+                "round {round}, window {lat},{lon} +{side}"
+            );
+        }
+        // and the whole of it comes back once
+        let everywhere = window(-100_000, -100_000, 100_000, 100_000);
+        assert_eq!(found_by_tree(&tree, &everywhere).len(), patches.len());
     }
 
     #[test]
