@@ -24,6 +24,17 @@ name = "graph_plier"
 path = "src/graph_plier/bin/main.rs"
 
 [[bin]]
+name = "tile_server"
+path = "src/tile_server/bin/main.rs"
+required-features = ["tile_server"]
+
+[features]
+# The tile server is the only part that speaks protobuf. Keeping it behind a
+# feature means a plain build of the library neither pulls in the codec crates
+# nor runs the code generation of the build script.
+tile_server = ["dep:actix-web", "dep:prost", "dep:prost-build", "dep:protox", "dep:serde"]
+
+[[bin]]
 name = "sound"
 path = "src/sound/bin/main.rs"
 
@@ -40,6 +51,7 @@ name = "renumber"
 path = "src/renumber/bin/main.rs"
 
 [dependencies]
+actix-web = { version = "4.11.0", optional = true }
 rkyv = "0.8.18"
 bitvec = "1.1.1"
 clap = { version = "4.6.6", features = ["derive"] }
@@ -50,8 +62,10 @@ indicatif = "0.18.6"
 itertools = "0.15.0"
 log = "0.4.34"
 num = "0.4.3"
+prost = { version = "0.14.4", optional = true }
 rand = "0.10.2"
 rayon = "1.12.0"
+serde = { version = "1.0", features = ["derive"], optional = true }
 tempfile = "3.27.0"
 thiserror = "2.0.20"
 xxhash-rust = {version = "0.8.18", features = ["xxh3"] }
@@ -62,6 +76,12 @@ libc = "0.2.189"
 
 [target.'cfg(unix)'.dependencies]
 jemallocator = "0.5.4"
+
+[build-dependencies]
+# protox compiles the .proto in pure Rust, so no protoc has to be installed to
+# build this crate, neither here nor on CI nor for anyone depending on it.
+prost-build = { version = "0.14.4", optional = true }
+protox = { version = "0.9.1", optional = true }
 
 [dev-dependencies]
 criterion = "0.8.2"
