@@ -131,15 +131,19 @@ impl BoundingBox {
             return 0.;
         }
 
-        let c1 = self.max;
-        let c2 = self.min;
-        let c3 = FPCoordinate::new(c1.lat, c2.lon);
-        let c4 = FPCoordinate::new(c2.lat, c1.lon);
-
-        c1.distance_to(coordinate)
-            .min(c2.distance_to(coordinate))
-            .min(c3.distance_to(coordinate))
-            .min(c4.distance_to(coordinate))
+        // The point of the box nearest the coordinate, which is a corner only
+        // when the coordinate lies past one. Beside an edge it is the point on
+        // that edge level with the coordinate, and asking the corners alone
+        // hands back half the length of the edge for a coordinate that sits
+        // right up against the middle of it. That is not merely a loose
+        // answer: a nearest first walk keys its nodes on this, and a key that
+        // overshoots what lies under the node hands out a far element before a
+        // near one.
+        let nearest = FPCoordinate::new(
+            coordinate.lat.max(self.min.lat).min(self.max.lat),
+            coordinate.lon.max(self.min.lon).min(self.max.lon),
+        );
+        nearest.distance_to(coordinate)
     }
 
     pub fn is_valid(&self) -> bool {
@@ -334,7 +338,8 @@ mod tests {
         assert!(distance_east > 0.0);
         assert_eq!(
             distance_east,
-            FPCoordinate::new(20, 20).distance_to(&east_point)
+            FPCoordinate::new(15, 20).distance_to(&east_point),
+            "the nearest point of the box is on its edge, level with the point"
         );
     }
 
@@ -348,6 +353,68 @@ mod tests {
         assert!(bbox.is_valid());
         assert!(bbox.contains(&coord));
         assert_eq!(bbox.min_distance(&coord), 0.0);
+    }
+
+    #[test]
+    fn a_point_beside_a_long_edge_is_measured_to_that_edge() {
+        // a box far wider than it is tall, and a point a little above the
+        // middle of its top edge. The corners are half a width away; the edge
+        // is right there.
+        let wide = BoundingBox::from_coordinates(&[
+            FPCoordinate::new(0, 0),
+            FPCoordinate::new(1_000, 10_000_000),
+        ]);
+        let above = FPCoordinate::new(1_100, 5_000_000);
+
+        let to_edge = FPCoordinate::new(1_000, 5_000_000).distance_to(&above);
+        let to_nearest_corner = FPCoordinate::new(1_000, 0)
+            .distance_to(&above)
+            .min(FPCoordinate::new(1_000, 10_000_000).distance_to(&above));
+
+        assert_eq!(wide.min_distance(&above), to_edge);
+        assert!(
+            to_nearest_corner > to_edge * 100.,
+            "the corners are nowhere near, which is what made this worth fixing"
+        );
+    }
+
+    #[test]
+    fn a_point_past_a_corner_is_measured_to_that_corner() {
+        let one = BoundingBox::from_coordinates(&[
+            FPCoordinate::new(0, 0),
+            FPCoordinate::new(1_000, 1_000),
+        ]);
+        let beyond = FPCoordinate::new(2_000, 2_000);
+        assert_eq!(
+            one.min_distance(&beyond),
+            FPCoordinate::new(1_000, 1_000).distance_to(&beyond)
+        );
+    }
+
+    #[test]
+    fn a_box_is_never_further_off_than_anything_in_it() {
+        // what a nearest first walk leans on: the distance to a box is at most
+        // the distance to any point of it
+        let one = BoundingBox::from_coordinates(&[
+            FPCoordinate::new(-500, -700),
+            FPCoordinate::new(900, 1_300),
+        ]);
+        for lat in (-2_000..2_000).step_by(311) {
+            for lon in (-2_000..2_000).step_by(457) {
+                let from = FPCoordinate::new(lat, lon);
+                let to_box = one.min_distance(&from);
+                for inside_lat in (-500..=900).step_by(233) {
+                    for inside_lon in (-700..=1_300).step_by(347) {
+                        let inside = FPCoordinate::new(inside_lat, inside_lon);
+                        assert!(
+                            to_box <= inside.distance_to(&from) + 1e-9,
+                            "{to_box} to the box, {} to a point of it",
+                            inside.distance_to(&from)
+                        );
+                    }
+                }
+            }
+        }
     }
 
     fn box_of(min_lat: i32, min_lon: i32, max_lat: i32, max_lon: i32) -> BoundingBox {
