@@ -85,6 +85,18 @@ impl BoundingBox {
             && coordinate.lon <= self.max.lon
     }
 
+    /// Whether two boxes share any ground, edges and corners included.
+    ///
+    /// Two boxes miss each other exactly when one lies wholly to one side of
+    /// the other on either axis, which is four comparisons and no arithmetic.
+    #[must_use]
+    pub fn intersects(&self, other: &BoundingBox) -> bool {
+        self.min.lat <= other.max.lat
+            && other.min.lat <= self.max.lat
+            && self.min.lon <= other.max.lon
+            && other.min.lon <= self.max.lon
+    }
+
     /// Calculates the minimum distance from a coordinate to the bounding box
     ///
     /// If the coordinate lies inside the bounding box, the distance is 0.
@@ -336,5 +348,47 @@ mod tests {
         assert!(bbox.is_valid());
         assert!(bbox.contains(&coord));
         assert_eq!(bbox.min_distance(&coord), 0.0);
+    }
+
+    fn box_of(min_lat: i32, min_lon: i32, max_lat: i32, max_lon: i32) -> BoundingBox {
+        BoundingBox::from_coordinates(&[
+            FPCoordinate::new(min_lat, min_lon),
+            FPCoordinate::new(max_lat, max_lon),
+        ])
+    }
+
+    #[test]
+    fn boxes_that_lie_over_each_other_intersect() {
+        let one = box_of(0, 0, 10, 10);
+        assert!(
+            one.intersects(&box_of(5, 5, 15, 15)),
+            "a corner over a corner"
+        );
+        assert!(one.intersects(&box_of(2, 2, 3, 3)), "one inside the other");
+        assert!(
+            box_of(2, 2, 3, 3).intersects(&one),
+            "and the other way round"
+        );
+        assert!(one.intersects(&one), "a box lies over itself");
+    }
+
+    #[test]
+    fn boxes_that_only_touch_still_intersect() {
+        let one = box_of(0, 0, 10, 10);
+        assert!(one.intersects(&box_of(10, 10, 20, 20)), "corner to corner");
+        assert!(one.intersects(&box_of(10, 0, 20, 10)), "edge to edge");
+    }
+
+    #[test]
+    fn boxes_to_one_side_of_each_other_do_not_intersect() {
+        let one = box_of(0, 0, 10, 10);
+        assert!(!one.intersects(&box_of(11, 0, 20, 10)), "wholly north");
+        assert!(!one.intersects(&box_of(0, 11, 10, 20)), "wholly east");
+        assert!(
+            !box_of(-20, -20, -11, -11).intersects(&one),
+            "wholly southwest"
+        );
+        // near in one axis is not near at all if it misses in the other
+        assert!(!one.intersects(&box_of(5, 11, 15, 20)));
     }
 }
