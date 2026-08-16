@@ -669,6 +669,9 @@ mod tests {
     struct Patch {
         low: FPCoordinate,
         high: FPCoordinate,
+        /// worked out once, as the trait hands back a reference and there is
+        /// nowhere to keep one that is made up on the spot
+        center: FPCoordinate,
         name: usize,
     }
 
@@ -680,7 +683,7 @@ mod tests {
             self.bbox().min_distance(coordinate)
         }
         fn center(&self) -> &FPCoordinate {
-            &self.low
+            &self.center
         }
     }
 
@@ -688,6 +691,7 @@ mod tests {
         Patch {
             low: FPCoordinate::new(low_lat, low_lon),
             high: FPCoordinate::new(high_lat, high_lon),
+            center: FPCoordinate::new((low_lat + high_lat) / 2, (low_lon + high_lon) / 2),
             name,
         }
     }
