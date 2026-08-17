@@ -34,8 +34,8 @@ use rustc_hash::FxHashSet;
 use std::sync::Arc;
 
 use crate::{
-    addressable_binary_heap::AddressableHeapWithStats,
     customization::{CellDistances, Customization, Level},
+    dense_heap::DenseHeap,
     graph::{Graph, NodeID},
     heap_stats::{Counters, HeapStats, Untracked},
     level_directory::CellId,
@@ -49,7 +49,7 @@ pub type MldQuery = MldSearch<Untracked>;
 pub type TrackedMldQuery = MldSearch<Counters>;
 
 pub struct MldSearch<S: HeapStats<NodeID>> {
-    queue: AddressableHeapWithStats<NodeID, usize, NodeID, S>,
+    queue: DenseHeap<S>,
     /// The cells of every level, held for the length of a run.
     ///
     /// `of_node` is a flat array over the nodes, so the cell a node sits in on
@@ -98,7 +98,7 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            queue: AddressableHeapWithStats::<NodeID, usize, NodeID, S>::new(),
+            queue: DenseHeap::<S>::new(),
             levels: Vec::new(),
             matrices: Vec::new(),
             holds_target: Vec::new(),
@@ -242,7 +242,7 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
                     // thousand relaxations for each of a thousand nodes, in
                     // place of a thousand for each way in.
                     let cell = self.levels[level].of_node[u];
-                    let came_from = *self.queue.data(u);
+                    let came_from = self.queue.data(u);
                     if u == came_from || self.levels[level].of_node[came_from] != cell {
                         self.relax_across_cell(customization, u, distance, level);
                     }
@@ -257,6 +257,7 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
 
     /// The highest level whose cell around this node holds neither the source
     /// nor a target, and `None` when even the finest one does.
+    #[inline(never)]
     fn level_to_step_over(&self, node: NodeID) -> Option<usize> {
         (0..self.levels.len()).rev().find(|&level| {
             let cell = self.levels[level].of_node[node];
@@ -265,6 +266,7 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
     }
 
     /// The arcs across the cell, which the customization worked out.
+    #[inline(never)]
     fn relax_across_cell(
         &mut self,
         customization: &Customization,
@@ -303,6 +305,7 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
 
     /// The arcs of the graph that leave the cell, which is how the search gets
     /// out of one.
+    #[inline(never)]
     fn relax_out_of_cell<G: Graph<usize>>(
         &mut self,
         graph: &G,
@@ -322,6 +325,7 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
 
     /// Every arc of the graph, which is what a plain Dijkstra does and what
     /// this does inside a cell that holds the source or a target.
+    #[inline(never)]
     fn relax_every_arc<G: Graph<usize>>(&mut self, graph: &G, node: NodeID, distance: usize) {
         for edge in graph.edge_range(node) {
             let target = graph.target(edge);
@@ -336,6 +340,7 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
     /// already. Asking in turn whether each has been seen, whether it is still
     /// on the queue and what it is held at, is three looks apiece to find out
     /// there is nothing to do.
+    #[inline(never)]
     fn relax(&mut self, node: NodeID, distance: usize, from: NodeID) {
         self.queue.insert_or_decrease(node, distance, from);
     }
