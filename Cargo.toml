@@ -31,6 +31,10 @@ path = "src/sound/bin/main.rs"
 name = "solver"
 path = "src/solver/bin/main.rs"
 
+[[bin]]
+name = "ranks"
+path = "src/ranks/bin/main.rs"
+
 [dependencies]
 rkyv = "0.8.15"
 bitvec = "1.0.1"
