@@ -11,4 +11,5 @@ criterion_main!(
     benchmarks::loser_tree::loser_tree,
     benchmarks::polyline::polyline,
     benchmarks::mercator::mercator_benches,
+    benchmarks::mld_query::mld_query,
 );
