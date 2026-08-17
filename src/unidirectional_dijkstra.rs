@@ -56,6 +56,17 @@ impl<S: HeapStats<NodeID>> UnidirectionalSearch<S> {
         self.upper_bound = usize::MAX;
     }
 
+    /// What it cost to reach a node, and `usize::MAX` for one the last run
+    /// never reached.
+    ///
+    /// A run that stopped at its target has this for every node it settled on
+    /// the way, and one that ran until the queue was empty has it for
+    /// everything the source can reach.
+    #[must_use]
+    pub fn distance(&self, node: NodeID) -> usize {
+        self.queue.weight(node)
+    }
+
     /// retrieves the number of nodes that were explored (not settled) during
     /// a search.
     pub fn search_space_len(&self) -> usize {
