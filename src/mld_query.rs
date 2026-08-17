@@ -38,6 +38,7 @@ use crate::{
     customization::{CellDistances, Customization, Level},
     graph::{Graph, NodeID},
     heap_stats::{Counters, HeapStats, Untracked},
+    level_directory::CellId,
 };
 
 /// A query that counts nothing, which is what a run whose time is being taken
@@ -69,6 +70,17 @@ pub struct MldSearch<S: HeapStats<NodeID>> {
     /// instead whether any target shares a cell with a node would cost the
     /// number of targets, every time a node is settled.
     holds_target: Vec<Vec<bool>>,
+    /// The cells opened and the cells marked, so that the two above can be put
+    /// back the way they were without walking them.
+    ///
+    /// Both are as wide as the partition, which on a continent is two thirds
+    /// of a million cells over six levels. Building them per run costs more
+    /// than the search does by a factor of ten thousand at a low rank: a
+    /// search that settles a hundred nodes was paying to allocate and zero six
+    /// megabytes first. They are built once, and a run puts back only what it
+    /// touched.
+    opened: Vec<(usize, CellId)>,
+    marked: Vec<(usize, CellId)>,
     targets: FxHashSet<NodeID>,
     reached_target_count: usize,
 }
@@ -87,6 +99,8 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
             levels: Vec::new(),
             matrices: Vec::new(),
             holds_target: Vec::new(),
+            opened: Vec::new(),
+            marked: Vec::new(),
             targets: FxHashSet::default(),
             reached_target_count: 0,
         }
@@ -114,13 +128,47 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
         self.queue.clear();
         self.targets.clear();
         self.reached_target_count = 0;
-        for level in &mut self.matrices {
-            level.clear();
+        for (level, cell) in self.opened.drain(..) {
+            self.matrices[level][cell as usize] = None;
         }
-        for level in &mut self.holds_target {
-            level.clear();
+        for (level, cell) in self.marked.drain(..) {
+            self.holds_target[level][cell as usize] = false;
         }
         self.levels.clear();
+    }
+
+    /// Makes room for the cells of this partition, once.
+    ///
+    /// A second run over the same partition finds the room already there and
+    /// the entries already put back by `clear`.
+    ///
+    /// How many cells a level holds is read off `nodes_of_cell`, which has an
+    /// entry apiece and is already in hand. `LevelDirectory::cells_on_level`
+    /// answers the same question by taking the largest cell id it can find,
+    /// which on the finest level is a walk of every node of the graph. Asking
+    /// it here, once per level per run, cost a query of eighteen million
+    /// comparisons before it settled its first node.
+    fn make_room_for(&mut self) {
+        let wanted = self
+            .levels
+            .iter()
+            .map(|level| level.nodes_of_cell.len())
+            .collect::<Vec<_>>();
+        let fits = self.matrices.len() == wanted.len()
+            && self
+                .matrices
+                .iter()
+                .zip(&wanted)
+                .all(|(held, &cells)| held.len() == cells);
+        if fits {
+            debug_assert!(
+                self.matrices.iter().all(|l| l.iter().all(Option::is_none)),
+                "a cell was left open by the run before this one"
+            );
+            return;
+        }
+        self.matrices = wanted.iter().map(|&cells| vec![None; cells]).collect();
+        self.holds_target = wanted.iter().map(|&cells| vec![false; cells]).collect();
     }
 
     /// Runs the search, and says whether every target was reached.
@@ -146,16 +194,14 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
         self.levels = (0..level_count)
             .map(|level| customization.level(level))
             .collect();
-        self.matrices = (0..level_count)
-            .map(|level| vec![None; directory.cells_on_level(level)])
-            .collect();
-        self.holds_target = (0..level_count)
-            .map(|level| vec![false; directory.cells_on_level(level)])
-            .collect();
+        self.make_room_for();
         for &target in &self.targets {
             for level in 0..level_count {
-                let cell = self.levels[level].of_node[target] as usize;
-                self.holds_target[level][cell] = true;
+                let cell = self.levels[level].of_node[target];
+                if !self.holds_target[level][cell as usize] {
+                    self.holds_target[level][cell as usize] = true;
+                    self.marked.push((level, cell));
+                }
             }
         }
 
@@ -210,6 +256,7 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
                     return;
                 };
                 self.matrices[level][cell as usize] = Some(distances.clone());
+                self.opened.push((level, cell));
                 distances
             }
         };

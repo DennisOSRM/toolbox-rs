@@ -96,6 +96,11 @@ impl LevelDirectory {
 
     /// How many cells a level holds.
     ///
+    /// This is the largest cell id the level uses, found by looking at all of
+    /// them, so it costs a walk of the level below: on the finest one that is
+    /// every node of the graph. It is a question to ask once and remember,
+    /// not one to ask in a loop.
+    ///
     /// # Panics
     ///
     /// Panics if the hierarchy has no such level.
