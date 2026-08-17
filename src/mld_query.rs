@@ -82,6 +82,9 @@ pub struct MldSearch<S: HeapStats<NodeID>> {
     opened: Vec<(usize, CellId)>,
     marked: Vec<(usize, CellId)>,
     targets: FxHashSet<NodeID>,
+    /// The cell the source sits in on each level, worked out once rather than
+    /// per settled node.
+    source_cells: Vec<CellId>,
     reached_target_count: usize,
 }
 
@@ -102,6 +105,7 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
             opened: Vec::new(),
             marked: Vec::new(),
             targets: FxHashSet::default(),
+            source_cells: Vec::new(),
             reached_target_count: 0,
         }
     }
@@ -135,6 +139,7 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
             self.holds_target[level][cell as usize] = false;
         }
         self.levels.clear();
+        self.source_cells.clear();
     }
 
     /// Makes room for the cells of this partition, once.
@@ -205,6 +210,12 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
             }
         }
 
+        // the source's cell never moves during a run, so it is not asked for
+        // once per settled node
+        self.source_cells = (0..level_count)
+            .map(|level| self.levels[level].of_node[source])
+            .collect();
+
         let graph = customization.graph();
         self.queue.insert(source, 0, source);
 
@@ -217,9 +228,24 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
                 debug!("[done] reached {u} at {distance}");
             }
 
-            match self.level_to_step_over(u, source) {
+            match self.level_to_step_over(u) {
                 Some(level) => {
-                    self.relax_across_cell(customization, u, distance, level);
+                    // The cell is stepped over once for each way into it, not
+                    // once for each of its border nodes. A node reached from
+                    // inside the cell was reached across it already, and the
+                    // table holds shortest distances, so what a second step
+                    // from there would offer -- in at one border node, across
+                    // to a second, across again to a third -- is never shorter
+                    // than the single step the table gave for going straight
+                    // in at the first and out at the third. On a cell of a
+                    // continent with a thousand nodes on its border that is a
+                    // thousand relaxations for each of a thousand nodes, in
+                    // place of a thousand for each way in.
+                    let cell = self.levels[level].of_node[u];
+                    let came_from = *self.queue.data(u);
+                    if u == came_from || self.levels[level].of_node[came_from] != cell {
+                        self.relax_across_cell(customization, u, distance, level);
+                    }
                     self.relax_out_of_cell(graph, u, distance, level);
                 }
                 None => self.relax_every_arc(graph, u, distance),
@@ -231,10 +257,10 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
 
     /// The highest level whose cell around this node holds neither the source
     /// nor a target, and `None` when even the finest one does.
-    fn level_to_step_over(&self, node: NodeID, source: NodeID) -> Option<usize> {
+    fn level_to_step_over(&self, node: NodeID) -> Option<usize> {
         (0..self.levels.len()).rev().find(|&level| {
             let cell = self.levels[level].of_node[node];
-            cell != self.levels[level].of_node[source] && !self.holds_target[level][cell as usize]
+            cell != self.source_cells[level] && !self.holds_target[level][cell as usize]
         })
     }
 
@@ -303,15 +329,15 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
         }
     }
 
+    /// One look into the queue rather than up to four.
+    ///
+    /// Stepping over a cell relaxes every border node of it, and on a coarse
+    /// cell of a continent that is thousands of them, nearly all settled
+    /// already. Asking in turn whether each has been seen, whether it is still
+    /// on the queue and what it is held at, is three looks apiece to find out
+    /// there is nothing to do.
     fn relax(&mut self, node: NodeID, distance: usize, from: NodeID) {
-        if !self.queue.inserted(node) {
-            self.queue.insert(node, distance, from);
-            return;
-        }
-        if self.queue.contains(node) && self.queue.weight(node) > distance {
-            self.queue
-                .decrease_key_and_update_data(node, distance, from);
-        }
+        self.queue.insert_or_decrease(node, distance, from);
     }
 }
 
