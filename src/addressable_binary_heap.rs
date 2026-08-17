@@ -1,3 +1,4 @@
+use crate::heap_stats::{Counters, HeapStats, Untracked};
 use core::hash::Hash;
 use num::{Bounded, Integer};
 use rustc_hash::FxHashMap;
@@ -40,32 +41,65 @@ impl<Weight: Bounded + Copy + Integer + Debug> HeapElement<Weight> {
     }
 }
 
-pub struct AddressableHeap<NodeID: Copy + Integer, Weight: Bounded + Copy + Integer + Debug, Data> {
+/// An addressable heap that collects nothing, which is what a run whose time
+/// is being taken wants.
+pub type AddressableHeap<NodeID, Weight, Data> =
+    AddressableHeapWithStats<NodeID, Weight, Data, Untracked>;
+
+/// The same heap, counting what it was asked to do.
+pub type TrackedAddressableHeap<NodeID, Weight, Data> =
+    AddressableHeapWithStats<NodeID, Weight, Data, Counters>;
+
+pub struct AddressableHeapWithStats<
+    NodeID: Copy + Integer,
+    Weight: Bounded + Copy + Integer + Debug,
+    Data,
+    S: HeapStats<NodeID>,
+> {
     heap: Vec<HeapElement<Weight>>,
     inserted_nodes: Vec<HeapNode<NodeID, Weight, Data>>,
     node_index: FxHashMap<NodeID, usize>,
+    /// What the queue is telling whoever is collecting. Untracked holds
+    /// nothing and takes up nothing, so a queue that is being timed carries
+    /// none of this.
+    stats: S,
 }
 
-impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Data> Default
-    for AddressableHeap<NodeID, Weight, Data>
+impl<
+    NodeID: Copy + Hash + Integer,
+    Weight: Bounded + Copy + Integer + Debug,
+    Data,
+    S: HeapStats<NodeID>,
+> Default for AddressableHeapWithStats<NodeID, Weight, Data, S>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Data>
-    AddressableHeap<NodeID, Weight, Data>
+impl<
+    NodeID: Copy + Hash + Integer,
+    Weight: Bounded + Copy + Integer + Debug,
+    Data,
+    S: HeapStats<NodeID>,
+> AddressableHeapWithStats<NodeID, Weight, Data, S>
 {
-    pub fn new() -> AddressableHeap<NodeID, Weight, Data> {
-        AddressableHeap {
+    /// What the queue has done since it was last cleared.
+    pub fn stats(&self) -> &S {
+        &self.stats
+    }
+
+    pub fn new() -> AddressableHeapWithStats<NodeID, Weight, Data, S> {
+        AddressableHeapWithStats {
             heap: vec![HeapElement::default()],
             inserted_nodes: Vec::new(),
             node_index: FxHashMap::default(),
+            stats: S::default(),
         }
     }
 
     pub fn clear(&mut self) {
+        self.stats = S::default();
         self.heap.clear();
         self.inserted_nodes.clear();
         self.heap.push(HeapElement::default());
@@ -88,6 +122,7 @@ impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Da
     }
 
     pub fn insert(&mut self, node: NodeID, weight: Weight, data: Data) {
+        self.stats.inserted(node);
         let index = self.inserted_nodes.len();
         let element = HeapElement { index, weight };
         let key = self.heap.len();
@@ -195,7 +230,9 @@ impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Da
             self.down_heap(1);
         }
         self.inserted_nodes[removed_index].key = 0;
-        self.inserted_nodes[removed_index].node
+        let node = self.inserted_nodes[removed_index].node;
+        self.stats.deleted(node);
+        node
     }
 
     /// Empties the heap while keeping what it knows about the nodes that went
@@ -212,6 +249,7 @@ impl<NodeID: Copy + Hash + Integer, Weight: Bounded + Copy + Integer + Debug, Da
     }
 
     pub fn decrease_key(&mut self, node: NodeID, weight: Weight) {
+        self.stats.decreased(node);
         let index = self.node_index[&node];
         let key = self.inserted_nodes[index].key;
         // not a debug_assert: a key of zero is the sentinel, and lowering that

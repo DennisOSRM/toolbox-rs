@@ -5,30 +5,49 @@
 /// search space of each run in its internal structures. From there paths can
 /// be unpacked.
 use crate::{
-    addressable_binary_heap::AddressableHeap,
+    addressable_binary_heap::AddressableHeapWithStats,
     graph::{Graph, NodeID},
+    heap_stats::{Counters, HeapStats, Untracked},
 };
 
 use log::debug;
 
-pub struct OneToManyDijkstra {
-    queue: AddressableHeap<NodeID, usize, NodeID>,
+/// A search from one node to a set of them, counting nothing.
+///
+/// This is the plain machine, and what a run whose time is being taken wants:
+/// no counters, no targets kept, nothing carried that a measurement would be
+/// measuring instead of the search.
+pub type OneToManyDijkstra = OneToManySearch<Untracked>;
+
+/// The same search, counting what its queue did.
+pub type TrackedOneToManyDijkstra = OneToManySearch<Counters>;
+
+pub struct OneToManySearch<S: HeapStats<NodeID>> {
+    queue: AddressableHeapWithStats<NodeID, usize, NodeID, S>,
     reached_target_count: usize,
 }
 
-impl Default for OneToManyDijkstra {
+impl<S: HeapStats<NodeID>> Default for OneToManySearch<S> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl OneToManyDijkstra {
+impl<S: HeapStats<NodeID>> OneToManySearch<S> {
+    #[must_use]
     pub fn new() -> Self {
-        let queue = AddressableHeap::<NodeID, usize, NodeID>::new();
+        let queue = AddressableHeapWithStats::<NodeID, usize, NodeID, S>::new();
         Self {
             queue,
             reached_target_count: 0,
         }
+    }
+
+    /// What the last run did, as far as the collector was asked to keep. The
+    /// queue is what counts it, as everything worth counting is something the
+    /// queue was asked to do.
+    pub fn stats(&self) -> &S {
+        self.queue.stats()
     }
 
     /// clears the search space stored in the queue.
@@ -130,7 +149,10 @@ impl OneToManyDijkstra {
 #[cfg(test)]
 mod tests {
     use crate::{
-        edge::InputEdge, graph::Graph, graph::NodeID, one_to_many_dijkstra::OneToManyDijkstra,
+        edge::InputEdge,
+        graph::Graph,
+        graph::NodeID,
+        one_to_many_dijkstra::{OneToManyDijkstra, TrackedOneToManyDijkstra},
         static_graph::StaticGraph,
     };
 
@@ -149,6 +171,29 @@ mod tests {
         assert!(dijkstra.run(&graph, 0, &[1]));
         assert_eq!(dijkstra.distance(1), 2);
         assert_eq!(dijkstra.retrieve_node_path(1), Some(vec![0, 2, 1]));
+    }
+
+    /// The one-to-many search counts the same three things, and stops once it
+    /// has settled every target rather than walking the rest of the graph.
+    #[test]
+    fn a_search_that_stops_early_counts_only_what_it_did() {
+        let edges = vec![
+            InputEdge::new(0, 1, 1_usize),
+            InputEdge::new(1, 2, 1),
+            InputEdge::new(2, 3, 1),
+            InputEdge::new(3, 4, 1),
+        ];
+        let graph = StaticGraph::new(edges);
+        let mut dijkstra = TrackedOneToManyDijkstra::new();
+
+        assert!(dijkstra.run(&graph, 0, &[2]));
+        // it settled 0, 1 and 2 and stopped there, so node 4 was never reached
+        assert_eq!(dijkstra.stats().deleted, 3);
+        assert!(
+            dijkstra.stats().inserted < 5,
+            "the whole line was walked: {:?}",
+            dijkstra.stats()
+        );
     }
 
     fn create_graph() -> StaticGraph<usize> {

@@ -5,30 +5,49 @@
 /// search space of each run in its internal structures. From there paths can
 /// be unpacked.
 use crate::{
-    addressable_binary_heap::AddressableHeap,
+    addressable_binary_heap::AddressableHeapWithStats,
     graph::{Graph, NodeID},
+    heap_stats::{Counters, HeapStats, Untracked},
 };
 
 use log::debug;
 
-pub struct UnidirectionalDijkstra {
-    queue: AddressableHeap<NodeID, usize, NodeID>,
+/// A search from one node to another, counting nothing.
+///
+/// This is the plain machine, and what a run whose time is being taken wants:
+/// no counters, no targets kept, nothing carried that a measurement would be
+/// measuring instead of the search.
+pub type UnidirectionalDijkstra = UnidirectionalSearch<Untracked>;
+
+/// The same search, counting what its queue did.
+pub type TrackedUnidirectionalDijkstra = UnidirectionalSearch<Counters>;
+
+pub struct UnidirectionalSearch<S: HeapStats<NodeID>> {
+    queue: AddressableHeapWithStats<NodeID, usize, NodeID, S>,
     upper_bound: usize,
 }
 
-impl Default for UnidirectionalDijkstra {
+impl<S: HeapStats<NodeID>> Default for UnidirectionalSearch<S> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl UnidirectionalDijkstra {
+impl<S: HeapStats<NodeID>> UnidirectionalSearch<S> {
+    #[must_use]
     pub fn new() -> Self {
-        let queue = AddressableHeap::<NodeID, usize, NodeID>::new();
+        let queue = AddressableHeapWithStats::<NodeID, usize, NodeID, S>::new();
         Self {
             queue,
             upper_bound: usize::MAX,
         }
+    }
+
+    /// What the last run did, as far as the collector was asked to keep. The
+    /// queue is what counts it, as everything worth counting is something the
+    /// queue was asked to do.
+    pub fn stats(&self) -> &S {
+        self.queue.stats()
     }
 
     /// clears the search space stored in the queue.
@@ -123,8 +142,13 @@ impl UnidirectionalDijkstra {
 #[cfg(test)]
 mod tests {
     use crate::{
-        edge::InputEdge, graph::Graph, static_graph::StaticGraph,
-        unidirectional_dijkstra::UnidirectionalDijkstra,
+        edge::InputEdge,
+        graph::Graph,
+        heap_stats::{Counters, RankTargets, Untracked},
+        static_graph::StaticGraph,
+        unidirectional_dijkstra::{
+            TrackedUnidirectionalDijkstra, UnidirectionalDijkstra, UnidirectionalSearch,
+        },
     };
 
     /// The parent of a node that is reached again by a shorter way.
@@ -201,6 +225,112 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A search that collects nothing is the search that was there before any
+    /// of this: no counters, no list of nodes, nothing to carry.
+    #[test]
+    fn collecting_nothing_costs_nothing() {
+        use std::mem::size_of;
+        assert_eq!(
+            size_of::<UnidirectionalSearch<Untracked>>(),
+            size_of::<UnidirectionalDijkstra>(),
+        );
+        assert!(
+            size_of::<TrackedUnidirectionalDijkstra>() > size_of::<UnidirectionalDijkstra>(),
+            "counting is supposed to take up room, or it is not counting"
+        );
+    }
+
+    /// What the three numbers mean, on a graph small enough to work them out
+    /// by hand.
+    ///
+    /// A path of four nodes in a row: the search settles all four, puts three
+    /// of them on the queue, and never finds a shorter way to any of them, as
+    /// there is only one way to each.
+    #[test]
+    fn a_line_is_settled_once_and_never_improved() {
+        let edges = vec![
+            InputEdge::new(0, 1, 1_usize),
+            InputEdge::new(1, 2, 1),
+            InputEdge::new(2, 3, 1),
+        ];
+        let graph = StaticGraph::new(edges);
+        let mut dijkstra = TrackedUnidirectionalDijkstra::new();
+
+        assert_eq!(dijkstra.run(&graph, 0, 3), 3);
+        assert_eq!(
+            *dijkstra.stats(),
+            Counters {
+                // the source goes onto the queue too, which is what the
+                // search itself used to count and forget
+                inserted: 4,
+                deleted: 4,
+                decreased: 0,
+            }
+        );
+    }
+
+    /// The queue counts what the queue did, so what it says it inserted is
+    /// what it holds. Counting from the search instead meant counting at the
+    /// places the search remembered to count at, and the node it primes its
+    /// queue with sits outside the loop it relaxes in: the two numbers were
+    /// out by exactly that one.
+    #[test]
+    fn what_was_inserted_is_what_the_queue_holds() {
+        let graph = create_graph();
+        let mut dijkstra = TrackedUnidirectionalDijkstra::new();
+
+        dijkstra.run(&graph, 0, 3);
+        assert_eq!(dijkstra.stats().inserted, dijkstra.search_space_len());
+    }
+
+    /// And a graph that does offer a shorter way to a node already reached
+    /// counts it, which is the number the other two say nothing about.
+    #[test]
+    fn a_node_reached_twice_is_counted_as_improved() {
+        let edges = vec![
+            InputEdge::new(0, 1, 10_usize),
+            InputEdge::new(0, 2, 1),
+            InputEdge::new(2, 1, 1),
+        ];
+        let graph = StaticGraph::new(edges);
+        let mut dijkstra = TrackedUnidirectionalDijkstra::new();
+
+        assert_eq!(dijkstra.run(&graph, 0, 1), 2);
+        assert_eq!(dijkstra.stats().decreased, 1);
+    }
+
+    /// The rank of a node is where it was settled, and one walk of the graph
+    /// hands back a target for every rank rather than one target per search.
+    #[test]
+    fn one_walk_hands_back_a_target_for_every_rank() {
+        let edges = vec![
+            InputEdge::new(0, 1, 1_usize),
+            InputEdge::new(1, 2, 1),
+            InputEdge::new(2, 3, 1),
+        ];
+        let graph = StaticGraph::new(edges);
+        let mut dijkstra = UnidirectionalSearch::<RankTargets>::new();
+
+        // no node of this graph is node 9, so the search runs out rather than
+        // stopping early, which is how the sampler walks the whole of it
+        dijkstra.run(&graph, 0, 9);
+        assert_eq!(dijkstra.stats().settled_count(), 4);
+        assert_eq!(dijkstra.stats().targets(), &[(1, 0), (2, 1), (4, 3)]);
+    }
+
+    /// Each run says what that run did and nothing about the one before it.
+    #[test]
+    fn a_second_run_does_not_carry_the_first() {
+        let graph = create_graph();
+        let mut dijkstra = TrackedUnidirectionalDijkstra::new();
+
+        dijkstra.run(&graph, 0, 3);
+        let first = *dijkstra.stats();
+        dijkstra.run(&graph, 0, 3);
+
+        assert_eq!(*dijkstra.stats(), first);
     }
 
     fn create_graph() -> StaticGraph<usize> {
