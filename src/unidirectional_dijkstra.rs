@@ -85,7 +85,7 @@ impl UnidirectionalDijkstra {
                 if self.queue.contains(v) && self.queue.weight(v) > new_distance {
                     debug!("[decrease] node: {v}, new weight: {new_distance}, new parent: {u}");
                     // if lower distance found, update distance and its parent
-                    self.queue.decrease_key_and_update_data(v, new_distance, v);
+                    self.queue.decrease_key_and_update_data(v, new_distance, u);
                 }
             }
         }
@@ -126,6 +126,82 @@ mod tests {
         edge::InputEdge, graph::Graph, static_graph::StaticGraph,
         unidirectional_dijkstra::UnidirectionalDijkstra,
     };
+
+    /// The parent of a node that is reached again by a shorter way.
+    ///
+    /// A node is inserted with the node it was reached from as its parent, and
+    /// a later, shorter way to it has to hand it the node that shorter way came
+    /// from. Handing it itself instead leaves it looking like the node the
+    /// search started at, which is where the walk back stops: the path then
+    /// begins in the middle of itself and says nothing about how it got there.
+    #[test]
+    fn a_node_reached_again_keeps_the_way_it_was_reached_by() {
+        // 0 to 1 costs ten the direct way and two through node 2, so node 1 is
+        // reached once and then reached again by something better
+        let edges = vec![
+            InputEdge::new(0, 1, 10_usize),
+            InputEdge::new(0, 2, 1),
+            InputEdge::new(2, 1, 1),
+        ];
+        let graph = StaticGraph::new(edges);
+        let mut dijkstra = UnidirectionalDijkstra::new();
+
+        assert_eq!(dijkstra.run(&graph, 0, 1), 2);
+        assert_eq!(dijkstra.retrieve_node_path(1), Some(vec![0, 2, 1]));
+    }
+
+    /// Whatever path comes back has to be a path of the graph, and it has to
+    /// cost what the search said it costs. That holds the two together on
+    /// graphs nobody worked out by hand.
+    #[test]
+    fn a_retrieved_path_walks_the_graph_and_costs_what_was_reported() {
+        use rand::{RngExt, SeedableRng, prelude::StdRng};
+
+        let mut rng = StdRng::seed_from_u64(0x_D1_5A);
+        for round in 0..20 {
+            let count = 8 + round;
+            let mut edges = Vec::new();
+            for source in 0..count {
+                for target in 0..count {
+                    if source != target && rng.random_range(0..3) == 0 {
+                        edges.push(InputEdge::new(
+                            source,
+                            target,
+                            rng.random_range(1..20_usize),
+                        ));
+                    }
+                }
+            }
+            if edges.is_empty() {
+                continue;
+            }
+            let graph = StaticGraph::new(edges);
+            let mut dijkstra = UnidirectionalDijkstra::new();
+
+            for source in 0..count {
+                for target in 0..count {
+                    let distance = dijkstra.run(&graph, source, target);
+                    if distance == usize::MAX {
+                        continue;
+                    }
+                    let path = dijkstra
+                        .retrieve_node_path(target)
+                        .expect("a path was found but not handed back");
+                    assert_eq!(path.first(), Some(&source), "round {round}: {path:?}");
+                    assert_eq!(path.last(), Some(&target), "round {round}: {path:?}");
+
+                    let mut walked = 0;
+                    for step in path.windows(2) {
+                        let edge = graph
+                            .find_edge(step[0], step[1])
+                            .expect("the path takes an arc the graph does not have");
+                        walked += *graph.data(edge);
+                    }
+                    assert_eq!(walked, distance, "round {round}: {path:?}");
+                }
+            }
+        }
+    }
 
     fn create_graph() -> StaticGraph<usize> {
         let edges = vec![

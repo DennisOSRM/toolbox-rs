@@ -92,7 +92,7 @@ impl OneToManyDijkstra {
                 if self.queue.contains(v) && self.queue.weight(v) > new_distance {
                     debug!("[decrease] node: {v}, new weight: {new_distance}, new parent: {u}");
                     // if lower distance found, update distance and its parent
-                    self.queue.decrease_key_and_update_data(v, new_distance, v);
+                    self.queue.decrease_key_and_update_data(v, new_distance, u);
                 }
             }
         }
@@ -133,6 +133,23 @@ mod tests {
         edge::InputEdge, graph::Graph, graph::NodeID, one_to_many_dijkstra::OneToManyDijkstra,
         static_graph::StaticGraph,
     };
+
+    /// A node reached again by a shorter way keeps the node that way came
+    /// from, or the walk back stops in the middle of the path.
+    #[test]
+    fn a_node_reached_again_keeps_the_way_it_was_reached_by() {
+        let edges = vec![
+            InputEdge::new(0, 1, 10_usize),
+            InputEdge::new(0, 2, 1),
+            InputEdge::new(2, 1, 1),
+        ];
+        let graph = StaticGraph::new(edges);
+        let mut dijkstra = OneToManyDijkstra::new();
+
+        assert!(dijkstra.run(&graph, 0, &[1]));
+        assert_eq!(dijkstra.distance(1), 2);
+        assert_eq!(dijkstra.retrieve_node_path(1), Some(vec![0, 2, 1]));
+    }
 
     fn create_graph() -> StaticGraph<usize> {
         let edges = vec![
