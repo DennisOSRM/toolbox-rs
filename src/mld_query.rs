@@ -467,6 +467,14 @@ mod tests {
         agrees_with_dijkstra_on(16, false, 0x_DEEB, 10);
     }
 
+    /// Six levels, so there is a cell of a thousand nodes to step over and
+    /// five sizes of cell between that and the source. A partition of a road
+    /// network is shaped like this and a grid of eight is not.
+    #[test]
+    fn a_grid_of_six_levels_agrees_with_a_plain_search() {
+        agrees_with_dijkstra_on(64, false, 0x_51E5, 3);
+    }
+
     /// Stepping over a cell is supposed to save work, not merely give the same
     /// answer by a longer road.
     ///
