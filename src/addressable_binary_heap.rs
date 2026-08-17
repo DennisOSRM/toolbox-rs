@@ -98,12 +98,39 @@ impl<
         }
     }
 
+    /// Empties the queue by whichever of the two ways is cheaper.
+    ///
+    /// Emptying the map of places outright walks all the room it has taken,
+    /// and a map keeps that room afterwards. A queue that once held the
+    /// eighteen million nodes of a continent therefore charged every later run
+    /// a walk of eighteen million places, whatever that run went on to do: a
+    /// search between two neighbouring nodes, which settles two of them, read
+    /// a millisecond where it costs microseconds.
+    ///
+    /// Taking the nodes out one at a time instead costs what this run held,
+    /// which is the cheaper way round only while a run held little. Taking
+    /// eighteen million out one at a time is far dearer than one walk of the
+    /// room they sat in. So it is whichever is smaller, and the room stays
+    /// either way, so a run as large as the last does not ask for it again.
+    ///
+    /// The threshold: a walk of the room is a pass over a byte per place and
+    /// runs at the speed of memory, while taking one node out is a hash and a
+    /// probe into somewhere that is not in cache. The second is some hundreds
+    /// of times dearer per node, so it only pays while the nodes are some
+    /// hundreds of times fewer than the places.
     pub fn clear(&mut self) {
         self.stats = S::default();
         self.heap.clear();
+        if self.inserted_nodes.len().saturating_mul(512) < self.node_index.capacity() {
+            for held in &self.inserted_nodes {
+                self.node_index.remove(&held.node);
+            }
+        } else {
+            self.node_index.clear();
+        }
         self.inserted_nodes.clear();
         self.heap.push(HeapElement::default());
-        self.node_index.clear();
+        debug_assert!(self.node_index.is_empty(), "a node was left in the map");
     }
 
     pub fn len(&self) -> usize {
@@ -265,6 +292,37 @@ impl<
         self.inserted_nodes[index].weight = weight;
         self.heap[key].weight = weight;
         self.up_heap(key);
+    }
+
+    /// Puts a node on the queue, or lowers what it is held at, in one look.
+    ///
+    /// This is what relaxing an arc does, and the three questions it asks —
+    /// has this node been seen, is it still on the queue, is it held at more
+    /// than this — are each a look into the map of places. Asked one at a time
+    /// they are two to four looks per arc. A search over the cells of a
+    /// partition relaxes every border node of a cell each time it steps over
+    /// one, and most of those have been settled already, so nearly all of that
+    /// is looking something up in order to do nothing with it.
+    ///
+    /// Returns whether the node was put on or lowered.
+    pub fn insert_or_decrease(&mut self, node: NodeID, weight: Weight, data: Data) -> bool {
+        let Some(&index) = self.node_index.get(&node) else {
+            self.insert(node, weight, data);
+            return true;
+        };
+        let held = &self.inserted_nodes[index];
+        // a key of zero is a node that has come off the queue for good, and a
+        // weight that is no larger is a way that is no better
+        if held.key == 0 || held.weight <= weight {
+            return false;
+        }
+        let key = held.key;
+        self.inserted_nodes[index].weight = weight;
+        self.inserted_nodes[index].data = data;
+        self.heap[key].weight = weight;
+        self.up_heap(key);
+        self.stats.decreased(node);
+        true
     }
 
     pub fn decrease_key_and_update_data(&mut self, node: NodeID, weight: Weight, data: Data) {
