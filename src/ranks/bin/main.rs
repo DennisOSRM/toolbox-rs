@@ -31,7 +31,7 @@ use std::{
 use command_line::{Arguments, Engine, Mode, Sample, Time};
 use env_logger::{Builder, Env};
 use log::{info, warn};
-use rand::{RngExt, SeedableRng, prelude::StdRng};
+use rand::{RngExt, SeedableRng, prelude::StdRng, seq::SliceRandom};
 use rayon::prelude::*;
 
 use toolbox_rs::{
@@ -48,6 +48,12 @@ use toolbox_rs::{
 
 /// A pair to time, and the rank its target sits at.
 type ToTime = (NodeID, NodeID, usize);
+
+/// What one pair cost: the pair itself, its rank, the nanoseconds, and what
+/// the search said the distance was. The pair is carried through so the two
+/// engines can be held against each other rather than trusted to come out in
+/// the same order.
+type Timing = (NodeID, NodeID, usize, u128, usize);
 
 /// A pair of nodes and where the target sits on the rank axis.
 ///
@@ -73,6 +79,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
+/// Whether a path is there to be read, said plainly rather than left to the
+/// unwrap inside the reader.
+fn readable(path: &str, what: &str) -> Result<(), Box<dyn Error>> {
+    if path.is_empty() {
+        return Err(format!("no {what} was given").into());
+    }
+    if !std::path::Path::new(path).is_file() {
+        return Err(format!("the {what} {path:?} is not a file that can be read").into());
+    }
+    Ok(())
+}
+
 fn load_graph(path: &str) -> StaticGraph<usize> {
     let edges = io::read_vec_from_file::<InputEdge<usize>>(path);
     info!("loaded {} graph edges", edges.len());
@@ -86,6 +104,7 @@ fn load_graph(path: &str) -> StaticGraph<usize> {
 }
 
 fn run_sample(args: &Sample) -> Result<(), Box<dyn Error>> {
+    readable(&args.graph, "graph")?;
     let graph = load_graph(&args.graph);
     let node_count = graph.number_of_nodes();
     if node_count == 0 {
@@ -188,19 +207,29 @@ fn one_pair(graph: &StaticGraph<usize>, source: NodeID, target: NodeID) -> Optio
 }
 
 fn run_time(args: &Time) -> Result<(), Box<dyn Error>> {
+    readable(&args.graph, "graph")?;
+    readable(&args.input, "input")?;
+    if args.engine == Engine::Mld {
+        readable(&args.directory, "level directory")?;
+    }
     let graph = load_graph(&args.graph);
-    let pairs = read_pairs(&args.input)?;
+    let mut pairs = read_pairs(&args.input)?;
     info!("read {} pairs from {}", pairs.len(), args.input);
     if pairs.is_empty() {
         return Err("there are no pairs to time".into());
     }
 
+    // The pairs arrive in the order they were sampled, which is every rank of
+    // one source and then every rank of the next. Timed in that order, each
+    // query but the first of a source finds that source's cells already warm
+    // and its part of the graph already in cache, and the ranks within a
+    // source run from low to high, so the bias lines up with the very axis
+    // being plotted. Shuffling spreads it out.
+    pairs.shuffle(&mut StdRng::seed_from_u64(args.seed));
+
     let timings = match args.engine {
         Engine::Dijkstra => time_dijkstra(&graph, &pairs, args.warmup),
         Engine::Mld => {
-            if args.directory.is_empty() {
-                return Err("the mld engine wants a level directory, see --directory".into());
-            }
             let directory: LevelDirectory = io::read_from_file(&args.directory);
             info!(
                 "loaded a directory of {} levels over {} nodes",
@@ -212,9 +241,13 @@ fn run_time(args: &Time) -> Result<(), Box<dyn Error>> {
     };
 
     let mut out = BufWriter::new(File::create(&args.out)?);
-    writeln!(out, "engine,rank,nanos,distance")?;
-    for (rank, nanos, distance) in &timings {
-        writeln!(out, "{},{rank},{nanos},{distance}", args.engine)?;
+    writeln!(out, "engine,source,target,rank,nanos,distance")?;
+    for (source, target, rank, nanos, distance) in &timings {
+        writeln!(
+            out,
+            "{},{source},{target},{rank},{nanos},{distance}",
+            args.engine
+        )?;
     }
     out.flush()?;
     info!("wrote {} timings to {}", timings.len(), args.out);
@@ -223,11 +256,7 @@ fn run_time(args: &Time) -> Result<(), Box<dyn Error>> {
 
 /// The pairs, timed one at a time on one thread. Timing under rayon would say
 /// as much about the scheduler as about the search.
-fn time_dijkstra(
-    graph: &StaticGraph<usize>,
-    pairs: &[ToTime],
-    warmup: usize,
-) -> Vec<(usize, u128, usize)> {
+fn time_dijkstra(graph: &StaticGraph<usize>, pairs: &[ToTime], warmup: usize) -> Vec<Timing> {
     let mut search = UnidirectionalDijkstra::new();
     for &(source, target, _) in pairs.iter().take(warmup) {
         search.run(graph, source, target);
@@ -238,7 +267,7 @@ fn time_dijkstra(
         .map(|&(source, target, rank)| {
             let started = Instant::now();
             let distance = search.run(graph, source, target);
-            (rank, started.elapsed().as_nanos(), distance)
+            (source, target, rank, started.elapsed().as_nanos(), distance)
         })
         .collect()
 }
@@ -253,7 +282,7 @@ fn time_mld(
     directory: LevelDirectory,
     pairs: &[ToTime],
     warmup: usize,
-) -> Vec<(usize, u128, usize)> {
+) -> Vec<Timing> {
     let customization = Customization::new(graph, directory);
     let mut query = MldQuery::new();
 
@@ -278,7 +307,7 @@ fn time_mld(
             } else {
                 usize::MAX
             };
-            (rank, elapsed, distance)
+            (source, target, rank, elapsed, distance)
         })
         .collect()
 }

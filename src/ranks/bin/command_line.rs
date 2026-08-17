@@ -84,6 +84,10 @@ pub struct Time {
     /// them does not pay for what the rest of them find already warm.
     #[clap(long, default_value_t = 100, action)]
     pub warmup: usize,
+
+    /// What to seed the shuffling with, so a run can be repeated.
+    #[clap(long, default_value_t = 0x_5EED, action)]
+    pub seed: u64,
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,7 +126,8 @@ impl Display for Arguments {
                 writeln!(f, "engine: {}", time.engine)?;
                 writeln!(f, "in: {}", time.input)?;
                 writeln!(f, "out: {}", time.out)?;
-                writeln!(f, "warmup: {} pairs", time.warmup)
+                writeln!(f, "warmup: {} pairs", time.warmup)?;
+                writeln!(f, "seed: {}", time.seed)
             }
         }
     }
