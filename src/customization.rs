@@ -36,13 +36,36 @@ use std::{
 pub struct CellDistances {
     pub border_nodes: Vec<NodeID>,
     matrix: Vec<usize>,
+    /// Where each border node sits in `border_nodes`.
+    ///
+    /// A query reads the matrix once per arc it takes across a cell, and the
+    /// matrix is addressed by place rather than by node. Walking the list to
+    /// find the place would make every one of those arcs cost the width of the
+    /// cell, which on the coarsest level of a continent is thousands of border
+    /// nodes. It is worked out once here, where the list is built.
+    place_of: FxHashMap<NodeID, usize>,
 }
 
 impl CellDistances {
     /// What it costs to get from one border node of the cell to another,
     /// both given as their place in `border_nodes`.
+    #[must_use]
     pub fn distance(&self, source: usize, target: usize) -> usize {
         self.matrix[source * self.border_nodes.len() + target]
+    }
+
+    /// Where a node sits in `border_nodes`, and `None` for a node that is not
+    /// on the border of this cell at all.
+    #[must_use]
+    pub fn place_of(&self, node: NodeID) -> Option<usize> {
+        self.place_of.get(&node).copied()
+    }
+
+    /// What it costs to get from one border node of the cell to another, both
+    /// given as themselves, and `None` unless the pair are both on the border.
+    #[must_use]
+    pub fn distance_between(&self, source: NodeID, target: NodeID) -> Option<usize> {
+        Some(self.distance(self.place_of(source)?, self.place_of(target)?))
     }
 }
 
@@ -379,9 +402,15 @@ impl Customization {
             );
         }
 
+        let place_of = border_nodes
+            .iter()
+            .enumerate()
+            .map(|(place, &node)| (node, place))
+            .collect();
         Some(CellDistances {
             border_nodes,
             matrix,
+            place_of,
         })
     }
 
@@ -591,50 +620,53 @@ mod tests {
         Customization::new(StaticGraph::new(edges), directory)
     }
 
-    /// A square grid of `side` by `side` nodes, cut into squares of two by two
-    /// on the finest level and of four by four above it. The arcs of a row run
-    /// one way round when `both_ways` is not asked for, which is what a road
-    /// network does and what makes the distances of a cell asymmetric.
+    /// A square grid with a partition cut over it, as
+    /// [`crate::grid_graph`] builds them.
     fn grid_with(side: usize, both_ways: bool) -> Customization {
-        let node = |row: usize, column: usize| row * side + column;
-        let mut edges = Vec::new();
-        for row in 0..side {
-            for column in 0..side {
-                if column + 1 < side {
-                    edges.push(InputEdge::new(node(row, column), node(row, column + 1), 1));
-                    if both_ways {
-                        edges.push(InputEdge::new(node(row, column + 1), node(row, column), 1));
-                    }
-                }
-                if row + 1 < side {
-                    edges.push(InputEdge::new(node(row, column), node(row + 1, column), 1));
-                    edges.push(InputEdge::new(node(row + 1, column), node(row, column), 1));
-                }
-            }
-        }
-
-        let finest = (0..side * side)
-            .map(|index| {
-                let (row, column) = (index / side, index % side);
-                ((row / 2) * (side / 2) + column / 2) as CellId
-            })
-            .collect::<Vec<_>>();
-        let coarser = (0..(side / 2) * (side / 2))
-            .map(|cell| {
-                let (row, column) = (cell / (side / 2), cell % (side / 2));
-                ((row / 2) * (side / 4) + column / 2) as CellId
-            })
-            .collect::<Vec<_>>();
-        let top = vec![0; (side / 4) * (side / 4)];
-
-        Customization::new(
-            StaticGraph::new(edges),
-            LevelDirectory::new(finest, vec![coarser, top]),
-        )
+        let (graph, directory) = crate::grid_graph::grid(side, both_ways);
+        Customization::new(graph, directory)
     }
 
     fn grid(side: usize) -> Customization {
         grid_with(side, true)
+    }
+
+    /// A query reads the matrix by node and the matrix is addressed by place,
+    /// so the two have to line up.
+    #[test]
+    fn a_border_node_knows_where_it_sits_in_the_matrix() {
+        let customization = two_cells();
+        let distances = customization.distances_of(0, 0).expect("no cell");
+
+        for (place, &node) in distances.border_nodes.iter().enumerate() {
+            assert_eq!(distances.place_of(node), Some(place));
+        }
+        // and a node that is not on this border has no place on it
+        let elsewhere = *customization
+            .distances_of(0, 1)
+            .expect("no cell")
+            .border_nodes
+            .first()
+            .expect("a cell with no border nodes");
+        assert_eq!(distances.place_of(elsewhere), None);
+        assert_eq!(distances.distance_between(elsewhere, elsewhere), None);
+    }
+
+    /// Asking by node and asking by place are the same question.
+    #[test]
+    fn the_distance_between_two_nodes_is_the_one_in_their_places() {
+        let customization = grid(8);
+        let distances = customization.distances_of(1, 0).expect("no cell");
+
+        for &source in &distances.border_nodes {
+            for &target in &distances.border_nodes {
+                let places = distances.distance(
+                    distances.place_of(source).expect("not on the border"),
+                    distances.place_of(target).expect("not on the border"),
+                );
+                assert_eq!(distances.distance_between(source, target), Some(places));
+            }
+        }
     }
 
     #[test]
@@ -1014,6 +1046,12 @@ mod tests {
             .insert(
                 (1, 0),
                 Arc::new(CellDistances {
+                    place_of: built
+                        .border_nodes
+                        .iter()
+                        .enumerate()
+                        .map(|(place, &node)| (node, place))
+                        .collect(),
                     border_nodes: built.border_nodes.clone(),
                     matrix,
                 }),

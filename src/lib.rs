@@ -29,6 +29,7 @@ pub mod ford_fulkerson;
 pub mod geometry;
 pub mod graph;
 pub mod great_circle;
+pub mod grid_graph;
 pub mod heap_stats;
 pub mod huffman_code;
 pub mod inertial_flow;
