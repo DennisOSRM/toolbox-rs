@@ -20,6 +20,15 @@ pub enum Mode {
     /// cost the same as searching a source for every one of them.
     Sample(Sample),
 
+    /// Holds the search over the cells against a search through them.
+    ///
+    /// Every pair of the file is asked of both, and a distance they disagree
+    /// on is a fault in one of them. The pairs of a source are asked of the
+    /// query together rather than one at a time, as a query with a set of
+    /// targets has to leave every cell holding one of them alone and that is
+    /// not exercised by asking for a single target.
+    Check(Check),
+
     /// Times the pairs, and counts nothing while doing it.
     ///
     /// A run that is being counted is not a run worth timing, so this reads
@@ -56,6 +65,25 @@ pub struct Sample {
     /// come out empty, and every pair costs a search of its own.
     #[clap(long, action)]
     pub pairs: bool,
+}
+
+#[derive(Parser, Debug)]
+pub struct Check {
+    /// path to the input graph
+    #[clap(short, long, action)]
+    pub graph: String,
+
+    /// path to the level directory that chipper wrote
+    #[clap(short, long, action)]
+    pub directory: String,
+
+    /// the pairs to check, as written by the sample mode
+    #[clap(short, long, action)]
+    pub input: String,
+
+    /// how many disagreements to print before saying only how many there were
+    #[clap(long, default_value_t = 10, action)]
+    pub report: usize,
 }
 
 #[derive(Parser, Debug)]
@@ -118,6 +146,12 @@ impl Display for Arguments {
                 writeln!(f, "seed: {}", sample.seed)?;
                 writeln!(f, "out: {}", sample.out)?;
                 writeln!(f, "pairs of nodes drawn at random: {}", sample.pairs)
+            }
+            Mode::Check(check) => {
+                writeln!(f, "mode: check")?;
+                writeln!(f, "graph: {}", check.graph)?;
+                writeln!(f, "level directory: {}", check.directory)?;
+                writeln!(f, "in: {}", check.input)
             }
             Mode::Time(time) => {
                 writeln!(f, "mode: time")?;

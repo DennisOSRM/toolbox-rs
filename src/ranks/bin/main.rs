@@ -28,11 +28,28 @@ use std::{
     time::Instant,
 };
 
-use command_line::{Arguments, Engine, Mode, Sample, Time};
+use command_line::{Arguments, Check, Engine, Mode, Sample, Time};
 use env_logger::{Builder, Env};
+use indicatif::{ProgressBar, ProgressStyle};
 use log::{info, warn};
 use rand::{RngExt, SeedableRng, prelude::StdRng, seq::SliceRandom};
 use rayon::prelude::*;
+use rustc_hash::FxHashMap;
+
+/// The bar the crate draws elsewhere, so this looks like the rest of it.
+fn bar_of(count: usize, what: &str) -> ProgressBar {
+    let bar = ProgressBar::new(count as u64);
+    bar.set_style(
+        ProgressStyle::default_spinner()
+            .template(
+                "{spinner:.green} [{elapsed_precise}] {wide_bar:.green/yellow} {pos}/{len} {msg}",
+            )
+            .expect("the template is not a template")
+            .progress_chars("#>-"),
+    );
+    bar.set_message(what.to_string());
+    bar
+}
 
 use toolbox_rs::{
     customization::Customization,
@@ -75,6 +92,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     match &args.mode {
         Mode::Sample(sample) => run_sample(sample),
+        Mode::Check(check) => run_check(check),
         Mode::Time(time) => run_time(time),
     }
 }
@@ -132,18 +150,28 @@ fn run_sample(args: &Sample) -> Result<(), Box<dyn Error>> {
     };
 
     let started = Instant::now();
+    let bar = bar_of(sources.len(), "sources");
     let pairs: Vec<Pair> = if args.pairs {
         sources
             .par_iter()
             .zip(targets.par_iter())
-            .filter_map(|(&source, &target)| one_pair(&graph, source, target))
+            .filter_map(|(&source, &target)| {
+                let pair = one_pair(&graph, source, target);
+                bar.inc(1);
+                pair
+            })
             .collect()
     } else {
         sources
             .par_iter()
-            .flat_map_iter(|&source| ranks_of(&graph, source))
+            .flat_map_iter(|&source| {
+                let of_source = ranks_of(&graph, source);
+                bar.inc(1);
+                of_source
+            })
             .collect()
     };
+    bar.finish_and_clear();
     info!(
         "{} pairs from {} sources in {:.1} s",
         pairs.len(),
@@ -206,6 +234,62 @@ fn one_pair(graph: &StaticGraph<usize>, source: NodeID, target: NodeID) -> Optio
     })
 }
 
+/// Asks both searches about every pair and says where they disagree.
+///
+/// The pairs of a source go to the query together. A query with a set of
+/// targets has to walk the arcs of every cell holding one of them rather than
+/// stepping over it, and asking for one target at a time never puts that to
+/// the test.
+fn run_check(args: &Check) -> Result<(), Box<dyn Error>> {
+    readable(&args.graph, "graph")?;
+    readable(&args.directory, "level directory")?;
+    readable(&args.input, "input")?;
+
+    let graph = load_graph(&args.graph);
+    let pairs = read_pairs(&args.input)?;
+    let directory: LevelDirectory = io::read_from_file(&args.directory);
+    info!(
+        "checking {} pairs over a directory of {} levels",
+        pairs.len(),
+        directory.levels()
+    );
+
+    let mut of_source: FxHashMap<NodeID, Vec<NodeID>> = FxHashMap::default();
+    for &(source, target, _) in &pairs {
+        of_source.entry(source).or_default().push(target);
+    }
+
+    let customization = Customization::new(graph, directory);
+    let mut query = MldQuery::new();
+    let mut plain = UnidirectionalDijkstra::new();
+    let mut checked = 0_usize;
+    let mut wrong = Vec::new();
+
+    let bar = bar_of(of_source.len(), "sources");
+    for (&source, targets) in &of_source {
+        query.run(&customization, source, targets);
+        for &target in targets {
+            let by_query = query.distance(target);
+            let by_plain = plain.run(customization.graph(), source, target);
+            checked += 1;
+            if by_query != by_plain {
+                wrong.push((source, target, by_plain, by_query));
+            }
+        }
+        bar.inc(1);
+    }
+    bar.finish_and_clear();
+
+    for &(source, target, by_plain, by_query) in wrong.iter().take(args.report) {
+        warn!("{source} to {target}: the graph says {by_plain}, the cells say {by_query}");
+    }
+    if wrong.is_empty() {
+        info!("{checked} pairs, and the two agree on every one");
+        return Ok(());
+    }
+    Err(format!("{} of {checked} pairs disagree", wrong.len()).into())
+}
+
 fn run_time(args: &Time) -> Result<(), Box<dyn Error>> {
     readable(&args.graph, "graph")?;
     readable(&args.input, "input")?;
@@ -258,18 +342,28 @@ fn run_time(args: &Time) -> Result<(), Box<dyn Error>> {
 /// as much about the scheduler as about the search.
 fn time_dijkstra(graph: &StaticGraph<usize>, pairs: &[ToTime], warmup: usize) -> Vec<Timing> {
     let mut search = UnidirectionalDijkstra::new();
+    let bar = bar_of(warmup.min(pairs.len()), "warming");
     for &(source, target, _) in pairs.iter().take(warmup) {
         search.run(graph, source, target);
+        bar.inc(1);
     }
+    bar.finish_and_clear();
 
-    pairs
+    let bar = bar_of(pairs.len(), "timing");
+    let timings = pairs
         .iter()
         .map(|&(source, target, rank)| {
             let started = Instant::now();
             let distance = search.run(graph, source, target);
-            (source, target, rank, started.elapsed().as_nanos(), distance)
+            let elapsed = started.elapsed().as_nanos();
+            // outside the reading above, so what is drawn is not what is
+            // measured
+            bar.inc(1);
+            (source, target, rank, elapsed, distance)
         })
-        .collect()
+        .collect();
+    bar.finish_and_clear();
+    timings
 }
 
 /// The same pairs over the cells of the partition.
@@ -287,16 +381,20 @@ fn time_mld(
     let mut query = MldQuery::new();
 
     let started = Instant::now();
+    let bar = bar_of(warmup.min(pairs.len()), "warming the overlay");
     for &(source, target, _) in pairs.iter().take(warmup) {
         query.run(&customization, source, &[target]);
+        bar.inc(1);
     }
+    bar.finish_and_clear();
     info!(
         "warmed {} cells in {:.1} s",
         customization.customized_cells(),
         started.elapsed().as_secs_f64()
     );
 
-    pairs
+    let bar = bar_of(pairs.len(), "timing");
+    let timings = pairs
         .iter()
         .map(|&(source, target, rank)| {
             let started = Instant::now();
@@ -307,9 +405,12 @@ fn time_mld(
             } else {
                 usize::MAX
             };
+            bar.inc(1);
             (source, target, rank, elapsed, distance)
         })
-        .collect()
+        .collect();
+    bar.finish_and_clear();
+    timings
 }
 
 fn read_pairs(path: &str) -> Result<Vec<ToTime>, Box<dyn Error>> {
