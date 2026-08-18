@@ -296,6 +296,7 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
         };
         for (to, &target) in distances.border_nodes.iter().enumerate() {
             let across = distances.distance(from, to);
+            let target = target as NodeID;
             if across == usize::MAX || target == node {
                 continue;
             }
