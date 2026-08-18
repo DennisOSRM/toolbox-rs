@@ -10,6 +10,10 @@
 //! crosses a cell has to be able to do it without leaving the cell, and a cell
 //! that falls into pieces cannot promise that.
 
+use std::{cmp::Reverse, collections::BinaryHeap};
+
+use rustc_hash::FxHashMap;
+
 use crate::{
     edge::TrivialEdge,
     level_directory::{CellId, LevelDirectory},
@@ -85,35 +89,88 @@ impl CellGraph {
 /// Merges neighbouring cells until none of them can take another without
 /// passing `size`, and hands back the cell each one ended up in.
 ///
-/// The pairs are taken by how many arcs run between them, the heaviest first,
-/// which is the greedy agglomeration that the coarsening of a multilevel
-/// partitioner is built on. Only cells that share an arc are ever merged, so a
-/// cell of the result is a union of cells joined along arcs and stays in one
-/// piece as long as the cells it was built from were.
+/// The smallest cell goes first, and takes in the neighbour the most arcs run
+/// to among those it still has room for. Only cells that share an arc are ever
+/// merged, so a cell of the result is a union of cells joined along arcs and
+/// stays in one piece as long as the cells it was built from were.
+///
+/// # Why the smallest first
+///
+/// Taking the heaviest pair first, once, is the coarsening a multilevel
+/// partitioner does, and it leaves a level well short of the size it was asked
+/// for: two cells that have each grown past half of it can never be put
+/// together, so the run ends with a spread of cells from very small to full
+/// rather than with cells of about the wanted size. What that costs is not the
+/// wasted room. A search steps over a cell by walking the clique between its
+/// border nodes, and it reaches a cell about as often as that cell has border
+/// nodes, so what one step costs on average is not the mean boundary but the
+/// mean weighted by boundary — and that punishes a spread twice over. Growing
+/// the smallest cell first is what keeps the spread down.
 #[must_use]
 pub fn agglomerate(graph: &CellGraph, size: usize) -> Vec<CellId> {
-    let mut arcs = graph.arcs();
-    // heaviest first, and by cell for a run that does not depend on the order
-    // the arcs happened to be collected in
-    arcs.sort_unstable_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)).then(a.1.cmp(&b.1)));
-
-    let mut union = crate::union_find::UnionFind::new(graph.len());
+    let count = graph.len();
+    let mut union = crate::union_find::UnionFind::new(count);
     let mut merged_size = graph.sizes.clone();
-    for (left, right, _) in arcs {
-        let (left, right) = (union.find(left), union.find(right));
-        if left == right || merged_size[left] + merged_size[right] > size {
+
+    // the cells a group was built from, as a list per group rather than a
+    // vector per group: there is one group per cell to start with, and on the
+    // lowest level of a continent that is millions of them
+    let mut head: Vec<usize> = (0..count).collect();
+    let mut last: Vec<usize> = (0..count).collect();
+    let mut next: Vec<usize> = vec![usize::MAX; count];
+
+    // smallest first, and by cell so that a tie does not leave the result
+    // depending on the order the arcs happened to be collected in
+    let mut queue: BinaryHeap<Reverse<(usize, usize)>> = (0..count)
+        .map(|cell| Reverse((merged_size[cell], cell)))
+        .collect();
+
+    let mut weight_to: FxHashMap<usize, usize> = FxHashMap::default();
+    while let Some(Reverse((held, cell))) = queue.pop() {
+        // a group that has grown since, or been taken into another, comes up
+        // again as what it is now
+        if union.find(cell) != cell || merged_size[cell] != held {
             continue;
         }
-        let total = merged_size[left] + merged_size[right];
-        union.union(left, right);
-        let root = union.find(left);
+
+        // what runs to each neighbour that there is still room for. A group
+        // only ever grows, so a neighbour that does not fit now never will,
+        // and a group nothing fits is done for good.
+        weight_to.clear();
+        let mut member = head[cell];
+        while member != usize::MAX {
+            for &(neighbour, weight) in graph.neighbours_of(member) {
+                let neighbour = union.find(neighbour);
+                if neighbour == cell || merged_size[cell] + merged_size[neighbour] > size {
+                    continue;
+                }
+                *weight_to.entry(neighbour).or_insert(0) += weight;
+            }
+            member = next[member];
+        }
+
+        let Some((&best, _)) = weight_to
+            .iter()
+            .max_by_key(|&(&neighbour, &weight)| (weight, Reverse(neighbour)))
+        else {
+            continue;
+        };
+
+        let total = merged_size[cell] + merged_size[best];
+        next[last[cell]] = head[best];
+        let (joined_head, joined_last) = (head[cell], last[best]);
+        union.union(cell, best);
+        let root = union.find(cell);
         merged_size[root] = total;
+        head[root] = joined_head;
+        last[root] = joined_last;
+        queue.push(Reverse((total, root)));
     }
 
     // number the cells that are left, in the order their members appear
-    let mut cell_of_root = vec![CellId::MAX; graph.len()];
+    let mut cell_of_root = vec![CellId::MAX; count];
     let mut cells = 0;
-    (0..graph.len())
+    (0..count)
         .map(|cell| {
             let root = union.find(cell);
             if cell_of_root[root] == CellId::MAX {
@@ -123,6 +180,192 @@ pub fn agglomerate(graph: &CellGraph, size: usize) -> Vec<CellId> {
             cell_of_root[root]
         })
         .collect()
+}
+
+/// Moves single cells across a boundary while that evens the *boundaries* out
+/// and costs the cut nothing.
+///
+/// Greedy merging is done as soon as nothing fits any more, and what it leaves
+/// behind is a spread: a cell that filled up early sits next to one that never
+/// found a partner it had room for. Neither can be fixed by another merge —
+/// together they would pass the size — but a single cell handed from the
+/// larger to the smaller fixes both at once, and that is a move no merge could
+/// have made.
+///
+/// # What is evened out, and what is not
+///
+/// Not the node counts. A search steps over a cell by walking the clique
+/// between its border nodes, and it reaches a cell about as often as that cell
+/// has border nodes, so what a step costs on average is the boundary weighted
+/// by boundary — `E[B^2]/E[B]` — and bringing the *sizes* to dead level does
+/// nothing for that. Measured on a continent it does worse than nothing: the
+/// node counts came out even to within a percent, the top level's boundary
+/// grew by a tenth and its worst cell by half, and the query slowed by a
+/// third. So what is evened out here is the boundary itself, and the node
+/// count is only ever a ceiling.
+///
+/// A move is taken when all four hold:
+///
+/// - the cut does not get worse, so at least as many arcs run from the cell to
+///   the group it joins as to the one it leaves
+/// - the squares of the two boundaries come down, which is what falls when a
+///   heavy boundary and a light one are brought closer together
+/// - the group it joins still fits under `size`
+/// - the group it leaves is still in one piece without it
+///
+/// That last one is what a partitioner does not usually have to think about
+/// and this one does: a search crosses a cell without leaving it, which a cell
+/// in two pieces cannot promise. A cell whose leaving would cut its group in
+/// two therefore stays where it is however much it would even things out.
+///
+/// Returns how many cells were moved.
+#[must_use]
+pub fn refine(graph: &CellGraph, of: &mut [CellId], size: usize, rounds: usize) -> usize {
+    let groups = of
+        .iter()
+        .copied()
+        .max()
+        .map_or(0, |group| group as usize + 1);
+    let mut group_size = vec![0_usize; groups];
+    let mut members: Vec<Vec<usize>> = vec![Vec::new(); groups];
+    for (cell, &group) in of.iter().enumerate() {
+        group_size[group as usize] += graph.size_of(cell);
+        members[group as usize].push(cell);
+    }
+
+    // what each group has to walk when it is stepped over: the arcs that leave
+    // it. Only the two groups a move is between ever see this change — an arc
+    // to a third group was cut before the move and is cut after it.
+    let mut boundary = vec![0_i64; groups];
+    for (cell, &group) in of.iter().enumerate() {
+        for &(neighbour, weight) in graph.neighbours_of(cell) {
+            if of[neighbour] != group {
+                boundary[group as usize] += weight as i64;
+            }
+        }
+    }
+
+    // one stamp per walk, so that what a walk reached is not cleared between
+    // walks but simply stops counting
+    let mut seen = vec![0_u32; graph.len()];
+    let mut stamp = 0_u32;
+    let mut stack = Vec::new();
+    let mut weight_to: FxHashMap<usize, usize> = FxHashMap::default();
+
+    let mut moved = 0;
+    for _ in 0..rounds {
+        let mut this_round = 0;
+        for cell in 0..graph.len() {
+            let from = of[cell] as usize;
+            // a group is never left with nothing in it
+            if members[from].len() == 1 {
+                continue;
+            }
+
+            let mine = graph.size_of(cell);
+            weight_to.clear();
+            let mut weight_home = 0_i64;
+            for &(neighbour, weight) in graph.neighbours_of(cell) {
+                let group = of[neighbour] as usize;
+                if group == from {
+                    weight_home += weight as i64;
+                } else {
+                    *weight_to.entry(group).or_insert(0) += weight;
+                }
+            }
+            let weight_out: i64 = weight_to.values().map(|&weight| weight as i64).sum();
+
+            // the group it leaves keeps what it had, gives up what this cell
+            // held against the outside, and takes on what the two of them held
+            // against each other
+            let leaving = boundary[from] - weight_out + weight_home;
+
+            let best = weight_to
+                .iter()
+                .filter(|&(&group, _)| group_size[group] + mine <= size)
+                .filter(|&(_, &weight)| weight as i64 >= weight_home)
+                .filter_map(|(&group, &weight)| {
+                    // and the group it joins takes on everything this cell
+                    // held against anything that is not it
+                    let joining = boundary[group] + weight_home + weight_out - 2 * weight as i64;
+                    let before =
+                        boundary[from] * boundary[from] + boundary[group] * boundary[group];
+                    let after = leaving * leaving + joining * joining;
+                    (after < before).then_some((group, before - after, joining))
+                })
+                .max_by_key(|&(group, won, _)| (won, Reverse(group)));
+            let Some((to, _, joining)) = best else {
+                continue;
+            };
+
+            stamp += 1;
+            if !stays_in_one_piece(
+                graph,
+                of,
+                &members[from],
+                cell,
+                &mut seen,
+                stamp,
+                &mut stack,
+            ) {
+                continue;
+            }
+
+            let place = members[from]
+                .iter()
+                .position(|&held| held == cell)
+                .expect("a cell is a member of the group it is in");
+            members[from].swap_remove(place);
+            members[to].push(cell);
+            group_size[from] -= mine;
+            group_size[to] += mine;
+            boundary[from] = leaving;
+            boundary[to] = joining;
+            of[cell] = u32::try_from(to).expect("a cell of the result is numbered by a CellId");
+            this_round += 1;
+        }
+
+        moved += this_round;
+        if this_round == 0 {
+            break;
+        }
+    }
+    moved
+}
+
+/// Whether the group a cell sits in would still hang together without it.
+///
+/// Every other member has to be reachable from one of them along arcs that
+/// stay in the group and do not run through the cell being taken out.
+fn stays_in_one_piece(
+    graph: &CellGraph,
+    of: &[CellId],
+    members: &[usize],
+    without: usize,
+    seen: &mut [u32],
+    stamp: u32,
+    stack: &mut Vec<usize>,
+) -> bool {
+    let group = of[without];
+    let Some(&start) = members.iter().find(|&&cell| cell != without) else {
+        return true;
+    };
+
+    stack.clear();
+    stack.push(start);
+    seen[start] = stamp;
+    let mut reached = 1;
+    while let Some(cell) = stack.pop() {
+        for &(neighbour, _) in graph.neighbours_of(cell) {
+            if neighbour == without || of[neighbour] != group || seen[neighbour] == stamp {
+                continue;
+            }
+            seen[neighbour] = stamp;
+            reached += 1;
+            stack.push(neighbour);
+        }
+    }
+    reached == members.len() - 1
 }
 
 /// Draws the cells of a graph together along the given assignment.
@@ -154,6 +397,13 @@ pub fn contract(graph: &CellGraph, of: &[CellId]) -> CellGraph {
     arcs.sort_unstable();
     CellGraph::new(sizes, &arcs)
 }
+
+/// How many times the assembled levels are walked over for cells worth moving.
+///
+/// Each round is a pass over every cell, and the passes converge quickly: the
+/// sum of the squared sizes falls with every move, and the moves that are
+/// there to make are mostly found on the first pass.
+const REFINEMENT_ROUNDS: usize = 8;
 
 /// Assembles the levels by merging neighbouring cells, so that every cell of
 /// every level is a union of cells joined along arcs.
@@ -189,7 +439,9 @@ pub fn assemble_connected(
             current.len(),
             current.arcs().len()
         );
-        let merged = agglomerate(&current, size);
+        let mut merged = agglomerate(&current, size);
+        let moved = refine(&current, &mut merged, size, REFINEMENT_ROUNDS);
+        log::debug!("level {level}: {moved} cells moved to even the sizes out");
         if level == 0 {
             base = cell_of_node
                 .iter()
@@ -458,11 +710,185 @@ mod tests {
         // a path cut into cells of twelve leaves eight of them, give or take
         // the ends that cannot grow further
         let merged = agglomerate(&graph, 12);
-        let left = merged.iter().copied().max().unwrap() as usize + 1;
+        let mut held = vec![0; merged.iter().copied().max().unwrap() as usize + 1];
+        for &cell in &merged {
+            held[cell as usize] += 1;
+        }
         assert!(
-            left <= cells / 6,
-            "a path of {cells} left {left} cells of at most 12"
+            held.len() <= cells / 8,
+            "a path of {cells} left {} cells of at most 12",
+            held.len()
         );
+        // and none of them is a scrap. Taking the heaviest pair first leaves
+        // cells anywhere from one node to the full twelve, and it is the
+        // spread rather than the count that a search over them pays for.
+        assert!(
+            held.iter().all(|&size| size * 2 >= 12),
+            "a cell of {} was left where twelve was asked for: {held:?}",
+            held.iter().min().unwrap()
+        );
+    }
+
+    /// What the cut costs under an assignment: the arcs that run between two
+    /// different groups.
+    fn cut_of(graph: &CellGraph, of: &[CellId]) -> usize {
+        graph
+            .arcs()
+            .into_iter()
+            .filter(|&(left, right, _)| of[left] != of[right])
+            .map(|(_, _, weight)| weight)
+            .sum()
+    }
+
+    /// Whether every group of an assignment hangs together along the arcs of
+    /// the cell graph.
+    fn groups_hold_together(graph: &CellGraph, of: &[CellId]) -> bool {
+        let groups = of.iter().copied().max().map_or(0, |g| g as usize + 1);
+        let mut members: Vec<Vec<usize>> = vec![Vec::new(); groups];
+        for (cell, &group) in of.iter().enumerate() {
+            members[group as usize].push(cell);
+        }
+        members.iter().enumerate().all(|(group, members)| {
+            let mut seen = vec![false; graph.len()];
+            let mut stack = vec![members[0]];
+            seen[members[0]] = true;
+            let mut reached = 1;
+            while let Some(cell) = stack.pop() {
+                for &(neighbour, _) in graph.neighbours_of(cell) {
+                    if of[neighbour] as usize != group || seen[neighbour] {
+                        continue;
+                    }
+                    seen[neighbour] = true;
+                    reached += 1;
+                    stack.push(neighbour);
+                }
+            }
+            reached == members.len()
+        })
+    }
+
+    /// The move a merge cannot make: two groups that could not be put together
+    /// under the size, with the boundary between them moved to where it is
+    /// cheap.
+    #[test]
+    fn a_cell_moves_across_to_where_the_boundary_is_cheap() {
+        // a path of six, cut four and two, where merging the two is out of the
+        // question as six does not fit under three. The two groups meet along
+        // ten arcs, and one step further along the path they would meet along
+        // one, so handing that cell across leaves both of them cheaper to step
+        // over than either was.
+        let graph = CellGraph::new(
+            vec![1; 6],
+            &[(0, 1, 1), (1, 2, 1), (2, 3, 1), (3, 4, 10), (4, 5, 1)],
+        );
+        let mut of = vec![0, 0, 0, 0, 1, 1];
+
+        assert_eq!(refine(&graph, &mut of, 3, 8), 1);
+        assert_eq!(of, vec![0, 0, 0, 1, 1, 1], "the cell at the boundary moved");
+        // ten arcs out of each of them, down to one out of each
+        assert_eq!(boundary_of(&graph, &of), vec![1, 1]);
+    }
+
+    /// A cell whose leaving would cut its group in two stays where it is,
+    /// however much it would even the sizes out.
+    #[test]
+    fn a_cell_that_holds_its_group_together_does_not_move() {
+        // 0 and 2 hang off 1, and 1 is joined to 3 by ten arcs. Handing 1 to
+        // the group of 3 would even three against one into two against two and
+        // take eight arcs out of the cut, so every other test says take it —
+        // but it would leave 0 and 2 with nothing joining them to each other.
+        let graph = CellGraph::new(vec![1; 4], &[(0, 1, 1), (1, 2, 1), (1, 3, 10)]);
+        let mut of = vec![0, 0, 0, 1];
+        let before = of.clone();
+
+        assert_eq!(refine(&graph, &mut of, 4, 8), 0);
+        assert_eq!(of, before);
+    }
+
+    /// Whatever refinement does, it does not cost the cut anything, it does not
+    /// pass the size, and it leaves every group in one piece.
+    #[test]
+    fn refinement_keeps_what_merging_promised() {
+        let mut rng = StdRng::seed_from_u64(0x_5EED_1234);
+        for round in 0..40 {
+            let cells = 24 + round;
+            // a path with chords, so groups have somewhere to hand cells to
+            let mut arcs = (0..cells - 1)
+                .map(|cell| (cell, cell + 1, 1 + rng.random_range(0..9_usize)))
+                .collect::<Vec<_>>();
+            for cell in 0..cells - 3 {
+                if rng.random_range(0..4) == 0 {
+                    arcs.push((cell, cell + 3, 1 + rng.random_range(0..9)));
+                }
+            }
+            arcs.sort_unstable();
+            arcs.dedup_by_key(|&mut (left, right, _)| (left, right));
+            let sizes = (0..cells)
+                .map(|_| 1 + rng.random_range(0..3_usize))
+                .collect::<Vec<_>>();
+            let graph = CellGraph::new(sizes, &arcs);
+
+            let size = 12;
+            let mut of = agglomerate(&graph, size);
+            let cut_before = cut_of(&graph, &of);
+            let spread_before = spread_of(&graph, &of);
+
+            let _ = refine(&graph, &mut of, size, 8);
+
+            assert!(
+                cut_of(&graph, &of) <= cut_before,
+                "round {round}: the cut went from {cut_before} to {}",
+                cut_of(&graph, &of)
+            );
+            assert!(
+                spread_of(&graph, &of) <= spread_before,
+                "round {round}: the boundaries spread out rather than in"
+            );
+            assert!(
+                groups_hold_together(&graph, &of),
+                "round {round}: a group fell into pieces"
+            );
+
+            let groups = of.iter().copied().max().unwrap() as usize + 1;
+            let mut held = vec![0; groups];
+            for (cell, &group) in of.iter().enumerate() {
+                held[group as usize] += graph.size_of(cell);
+            }
+            assert!(
+                held.iter().all(|&size_of_group| size_of_group <= size),
+                "round {round}: a group of {} passed {size}",
+                held.iter().max().unwrap()
+            );
+            assert!(
+                held.iter().all(|&size_of_group| size_of_group > 0),
+                "round {round}: a group was left with nothing in it"
+            );
+        }
+    }
+
+    /// What each group has to walk when it is stepped over: the arcs that
+    /// leave it.
+    fn boundary_of(graph: &CellGraph, of: &[CellId]) -> Vec<usize> {
+        let groups = of.iter().copied().max().map_or(0, |g| g as usize + 1);
+        let mut held = vec![0; groups];
+        for (cell, &group) in of.iter().enumerate() {
+            for &(neighbour, weight) in graph.neighbours_of(cell) {
+                if of[neighbour] != group {
+                    held[group as usize] += weight;
+                }
+            }
+        }
+        held
+    }
+
+    /// How far the boundaries are from all being the same, as the sum of their
+    /// squares: that is what every move refinement takes has to bring down,
+    /// and it is what a search over the cells is billed for.
+    fn spread_of(graph: &CellGraph, of: &[CellId]) -> usize {
+        boundary_of(graph, of)
+            .into_iter()
+            .map(|held| held * held)
+            .sum()
     }
 
     #[test]
