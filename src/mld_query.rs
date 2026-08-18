@@ -294,13 +294,14 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
             // where a search that started here begins
             return;
         };
-        for (to, &target) in distances.border_nodes.iter().enumerate() {
-            let across = distances.distance(from, to);
-            let target = target as NodeID;
-            if across == usize::MAX || target == node {
+        // the row and the nodes it is about, walked in step as two pieces of
+        // memory rather than asked for an entry at a time
+        let here = u32::try_from(node).unwrap_or(u32::MAX);
+        for (&target, &across) in distances.border_nodes.iter().zip(distances.row(from)) {
+            if across == u32::MAX || target == here {
                 continue;
             }
-            self.relax(target, distance + across, node);
+            self.relax(target as NodeID, distance + across as usize, node);
         }
     }
 

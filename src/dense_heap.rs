@@ -41,6 +41,9 @@ struct Held {
 /// The place of a node that has not been on the queue during this run.
 const NOWHERE: u32 = u32::MAX;
 
+/// What a node has not been reached at.
+const NOTHING: u32 = u32::MAX;
+
 pub struct DenseHeap<S: HeapStats<NodeID> = Untracked> {
     /// the binary heap itself, as places into `held`, one based so that the
     /// root has a parent slot to stop at
@@ -49,6 +52,21 @@ pub struct DenseHeap<S: HeapStats<NodeID> = Untracked> {
     /// where each node sits in `held`, and [`NOWHERE`] for one this run has
     /// not held
     places: Vec<u32>,
+    /// What each node is held at now, or was settled at, and [`NOTHING`] for
+    /// one this run has not reached.
+    ///
+    /// A search turns an offer away far more often than it takes one, and both
+    /// reasons for turning it away -- the node is settled, or it is already
+    /// held at no more than this -- are answered by the same comparison. Kept
+    /// beside the node rather than behind its place, that is one look into
+    /// memory instead of a look to find the place and a second to read what is
+    /// there.
+    ///
+    /// A node that has come off the queue keeps what it came off at, which
+    /// nothing offered later can beat: a search settles in the order of what
+    /// it costs to reach. A caller that offers something smaller than that is
+    /// not such a search, and is turned away where the place is read.
+    best: Vec<u32>,
     stats: S,
 }
 
@@ -65,6 +83,7 @@ impl<S: HeapStats<NodeID>> DenseHeap<S> {
             heap: vec![(0, 0)],
             held: Vec::new(),
             places: Vec::new(),
+            best: Vec::new(),
             stats: S::default(),
         }
     }
@@ -81,6 +100,7 @@ impl<S: HeapStats<NodeID>> DenseHeap<S> {
         self.heap.truncate(1);
         for held in &self.held {
             self.places[held.node] = NOWHERE;
+            self.best[held.node] = NOTHING;
         }
         self.held.clear();
         self.stats = S::default();
@@ -107,6 +127,7 @@ impl<S: HeapStats<NodeID>> DenseHeap<S> {
     fn remember(&mut self, node: NodeID, place: usize) {
         if node >= self.places.len() {
             self.places.resize(node + 1, NOWHERE);
+            self.best.resize(node + 1, NOTHING);
         }
         self.places[node] = u32::try_from(place).expect("too many nodes on one queue");
     }
@@ -154,6 +175,7 @@ impl<S: HeapStats<NodeID>> DenseHeap<S> {
             data,
         });
         self.remember(node, place);
+        self.best[node] = u32::try_from(weight).unwrap_or(u32::MAX);
         self.heap.push((
             u32::try_from(place).expect("too many nodes on one queue"),
             weight,
@@ -164,16 +186,26 @@ impl<S: HeapStats<NodeID>> DenseHeap<S> {
 
     /// Puts a node on the queue, or lowers what it is held at, in one look.
     pub fn insert_or_decrease(&mut self, node: NodeID, weight: usize, data: NodeID) -> bool {
+        let offered = u32::try_from(weight).unwrap_or(u32::MAX);
+        // one look answers both ways of turning an offer away
+        if self.best.get(node).is_some_and(|&held| offered >= held) {
+            return false;
+        }
         let Some(place) = self.place_of(node) else {
             self.insert(node, weight, data);
             return true;
         };
         let held = self.held[place];
-        if held.key == 0 || held.weight <= weight {
+        // A node that has come off the queue is turned away by the comparison
+        // above, as it came off at no more than anything offered afterwards.
+        // Except by an offer smaller than what it came off at, which a search
+        // that settles in order never makes and which this refuses anyway.
+        if held.key == 0 {
             return false;
         }
         self.held[place].weight = weight;
         self.held[place].data = data;
+        self.best[node] = offered;
         self.heap[held.key].1 = weight;
         self.stats.decreased(node);
         self.up_heap(held.key);

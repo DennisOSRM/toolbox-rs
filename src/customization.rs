@@ -74,6 +74,23 @@ impl CellDistances {
         }
     }
 
+    /// What it costs to get from one border node to each of the others, as a
+    /// row of the table.
+    ///
+    /// A search walks the whole row against `border_nodes`, and asking for the
+    /// entries one at a time makes it work out where each sits: the width of
+    /// the cell is read, multiplied, added and then checked against the length
+    /// of the table, for every one of a couple of million arcs. The row is one
+    /// piece of memory and the two are walked in step, so it is handed over
+    /// whole and walked as it lies.
+    ///
+    /// An entry of `u32::MAX` is a pair with no way between them.
+    #[must_use]
+    pub fn row(&self, source: usize) -> &[u32] {
+        let width = self.border_nodes.len();
+        &self.matrix[source * width..(source + 1) * width]
+    }
+
     /// Where a node sits in `border_nodes`, and `None` for a node that is not
     /// on the border of this cell at all.
     #[must_use]
