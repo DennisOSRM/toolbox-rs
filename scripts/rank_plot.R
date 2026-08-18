@@ -140,14 +140,15 @@ if ("mld" %in% engines && length(engines) > 1) {
   # test of those answers would say a word.
   abline(h = 1, lty = 2, col = "#808080")
   # what each curve is worth at its best goes in the legend rather than beside
-  # it, so that nothing is written over the curves. They end high on the right,
-  # so the bottom right corner is the empty one.
+  # it, so that nothing is written over the curves. They start low on the left
+  # and end high on the right, so the top left corner is the empty one — the
+  # bottom right has the line at one running through it.
   best_of <- sapply(against, function(engine) {
     best <- which.max(ratios[, engine])
     sprintf("%s / mld (best %.0fx at 2^%d)", name_of(engine), ratios[best, engine],
             exponents[best])
   })
-  legend("bottomright", legend = best_of, col = colour_of[against],
+  legend("topleft", legend = best_of, col = colour_of[against],
          lty = 1, pch = 19, bty = "n")
 
 } else {
