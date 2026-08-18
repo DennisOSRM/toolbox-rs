@@ -34,8 +34,23 @@ use std::{
 /// The distances between the border nodes of one cell, in the order the border
 /// nodes are listed in.
 pub struct CellDistances {
-    pub border_nodes: Vec<NodeID>,
-    matrix: Vec<usize>,
+    /// The nodes on the edge of the cell, as four byte numbers.
+    ///
+    /// Read side by side with a row of the table above, once per arc a query
+    /// takes across the cell, so the two are streamed together and both are
+    /// worth keeping narrow. A graph of four thousand million nodes is not one
+    /// this crate can hold anyway, as the tables address it with four bytes.
+    pub border_nodes: Vec<u32>,
+    /// What it costs to cross the cell, as four byte numbers.
+    ///
+    /// A query reads one of these for every arc it takes across a cell, and
+    /// that walk is where such a query spends most of its time. Eight byte
+    /// numbers would be twice the memory to stream for the same answers: on a
+    /// partition of a continent the tables come to some sixty million entries,
+    /// and the row of a coarse cell is a few hundred of them read one after
+    /// another. Four bytes reach four thousand million, and the longest way
+    /// across europe by the clock is under a million.
+    matrix: Vec<u32>,
     /// Where each border node sits in `border_nodes`.
     ///
     /// A query reads the matrix once per arc it takes across a cell, and the
@@ -51,7 +66,29 @@ impl CellDistances {
     /// both given as their place in `border_nodes`.
     #[must_use]
     pub fn distance(&self, source: usize, target: usize) -> usize {
-        self.matrix[source * self.border_nodes.len() + target]
+        let across = self.matrix[source * self.border_nodes.len() + target];
+        if across == u32::MAX {
+            usize::MAX
+        } else {
+            across as usize
+        }
+    }
+
+    /// What it costs to get from one border node to each of the others, as a
+    /// row of the table.
+    ///
+    /// A search walks the whole row against `border_nodes`, and asking for the
+    /// entries one at a time makes it work out where each sits: the width of
+    /// the cell is read, multiplied, added and then checked against the length
+    /// of the table, for every one of a couple of million arcs. The row is one
+    /// piece of memory and the two are walked in step, so it is handed over
+    /// whole and walked as it lies.
+    ///
+    /// An entry of `u32::MAX` is a pair with no way between them.
+    #[must_use]
+    pub fn row(&self, source: usize) -> &[u32] {
+        let width = self.border_nodes.len();
+        &self.matrix[source * width..(source + 1) * width]
     }
 
     /// Where a node sits in `border_nodes`, and `None` for a node that is not
@@ -364,12 +401,17 @@ impl Customization {
 
         // whichever graph it is, the border nodes lead its numbering
         let border = (0..border_nodes.len()).collect::<Vec<_>>();
-        let mut matrix = vec![usize::MAX; border_nodes.len() * border_nodes.len()];
+        let mut matrix = vec![u32::MAX; border_nodes.len() * border_nodes.len()];
         let mut dijkstra = OneToManyDijkstra::new();
         for &source in &border {
             dijkstra.run(&cell_graph, source, &border);
             for &target in &border {
-                matrix[source * border_nodes.len() + target] = dijkstra.distance(target);
+                let across = dijkstra.distance(target);
+                // what cannot be reached keeps the largest four byte number,
+                // and a cell that really did cost that much would be a graph
+                // nobody has
+                matrix[source * border_nodes.len() + target] =
+                    u32::try_from(across).unwrap_or(u32::MAX);
             }
         }
         drop(of_node);
@@ -408,7 +450,10 @@ impl Customization {
             .map(|(place, &node)| (node, place))
             .collect();
         Some(CellDistances {
-            border_nodes,
+            border_nodes: border_nodes
+                .into_iter()
+                .map(|node| u32::try_from(node).expect("the graph is too large to hold"))
+                .collect(),
             matrix,
             place_of,
         })
@@ -491,9 +536,9 @@ impl Customization {
                         continue;
                     }
                     let next = of_node.len();
-                    let from = *of_node.entry(from).or_insert(next);
+                    let from = *of_node.entry(from as usize).or_insert(next);
                     let next = of_node.len();
-                    let to = *of_node.entry(to).or_insert(next);
+                    let to = *of_node.entry(to as usize).or_insert(next);
                     edges.push(InputEdge::new(from, to, weight));
                 }
             }
@@ -576,15 +621,15 @@ impl Customization {
             ..Default::default()
         };
         for (source, &from) in built.border_nodes.iter().enumerate() {
-            let reached = distances_within_cell(&self.graph, &cells.of_node, cell, from);
+            let reached = distances_within_cell(&self.graph, &cells.of_node, cell, from as usize);
             for (target, &to) in built.border_nodes.iter().enumerate() {
-                let expected = reached.get(&to).copied().unwrap_or(usize::MAX);
+                let expected = reached.get(&(to as usize)).copied().unwrap_or(usize::MAX);
                 let built = built.distance(source, target);
                 if built != expected {
                     check.mismatches.push(Mismatch {
                         cell,
-                        from,
-                        to,
+                        from: from as usize,
+                        to: to as usize,
                         built,
                         expected,
                     });
@@ -639,7 +684,7 @@ mod tests {
         let distances = customization.distances_of(0, 0).expect("no cell");
 
         for (place, &node) in distances.border_nodes.iter().enumerate() {
-            assert_eq!(distances.place_of(node), Some(place));
+            assert_eq!(distances.place_of(node as usize), Some(place));
         }
         // and a node that is not on this border has no place on it
         let elsewhere = *customization
@@ -648,8 +693,11 @@ mod tests {
             .border_nodes
             .first()
             .expect("a cell with no border nodes");
-        assert_eq!(distances.place_of(elsewhere), None);
-        assert_eq!(distances.distance_between(elsewhere, elsewhere), None);
+        assert_eq!(distances.place_of(elsewhere as usize), None);
+        assert_eq!(
+            distances.distance_between(elsewhere as usize, elsewhere as usize),
+            None
+        );
     }
 
     /// Asking by node and asking by place are the same question.
@@ -660,6 +708,7 @@ mod tests {
 
         for &source in &distances.border_nodes {
             for &target in &distances.border_nodes {
+                let (source, target) = (source as usize, target as usize);
                 let places = distances.distance(
                     distances.place_of(source).expect("not on the border"),
                     distances.place_of(target).expect("not on the border"),
@@ -856,7 +905,11 @@ mod tests {
             let indices = (0..border.len()).collect::<Vec<_>>();
             let mut dijkstra = OneToManyDijkstra::new();
 
-            assert_eq!(built_up.border_nodes, border, "cell {cell}");
+            assert_eq!(
+                built_up.border_nodes,
+                border.iter().map(|&n| n as u32).collect::<Vec<_>>(),
+                "cell {cell}"
+            );
             for (source, _) in border.iter().enumerate() {
                 dijkstra.run(&graph, source, &indices);
                 for (target, _) in border.iter().enumerate() {
@@ -1050,7 +1103,7 @@ mod tests {
                         .border_nodes
                         .iter()
                         .enumerate()
-                        .map(|(place, &node)| (node, place))
+                        .map(|(place, &node)| (node as usize, place))
                         .collect(),
                     border_nodes: built.border_nodes.clone(),
                     matrix,
@@ -1065,7 +1118,7 @@ mod tests {
         );
         let wrong = check.mismatches[0];
         assert_eq!(wrong.built, wrong.expected + 100);
-        assert_eq!(wrong.from, built.border_nodes[0]);
-        assert_eq!(wrong.to, built.border_nodes[1]);
+        assert_eq!(wrong.from, built.border_nodes[0] as usize);
+        assert_eq!(wrong.to, built.border_nodes[1] as usize);
     }
 }

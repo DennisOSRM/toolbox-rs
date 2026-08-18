@@ -52,6 +52,7 @@ fn bar_of(count: usize, what: &str) -> ProgressBar {
 }
 
 use toolbox_rs::{
+    bidirectional_dijkstra::BidirectionalDijkstra,
     customization::Customization,
     edge::InputEdge,
     graph::{Graph, NodeID},
@@ -313,6 +314,18 @@ fn run_time(args: &Time) -> Result<(), Box<dyn Error>> {
 
     let timings = match args.engine {
         Engine::Dijkstra => time_dijkstra(&graph, &pairs, args.warmup),
+        Engine::Bidirectional => {
+            // the backward side walks arcs into a node, which on a network
+            // read in both directions is the same graph read the same way
+            if is_symmetric(&graph) {
+                info!("the graph is its own reverse, so the backward side shares it");
+                time_bidirectional(&graph, &graph, &pairs, args.warmup)
+            } else {
+                warn!("the graph is directed, so a reversed copy is being built");
+                let reverse = reverse_of(&graph);
+                time_bidirectional(&graph, &reverse, &pairs, args.warmup)
+            }
+        }
         Engine::Mld => {
             let directory: LevelDirectory = io::read_from_file(&args.directory);
             info!(
@@ -338,6 +351,16 @@ fn run_time(args: &Time) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Clearing what the last query left behind belongs to that query, not to the
+/// next one.
+///
+/// A search clears itself as the first thing it does, and what that costs goes
+/// with the size of the run before it, not of the run being timed. Over pairs
+/// drawn from every rank and then shuffled, that puts the cost of clearing a
+/// search of sixteen million nodes onto whichever query happens to follow it:
+/// a small query measured after a large one came out thirty times what the
+/// same query costs after another small one. Clearing before the clock starts
+/// puts it back where it belongs.
 /// The pairs, timed one at a time on one thread. Timing under rayon would say
 /// as much about the scheduler as about the search.
 fn time_dijkstra(graph: &StaticGraph<usize>, pairs: &[ToTime], warmup: usize) -> Vec<Timing> {
@@ -353,11 +376,76 @@ fn time_dijkstra(graph: &StaticGraph<usize>, pairs: &[ToTime], warmup: usize) ->
     let timings = pairs
         .iter()
         .map(|&(source, target, rank)| {
+            search.clear();
             let started = Instant::now();
             let distance = search.run(graph, source, target);
             let elapsed = started.elapsed().as_nanos();
             // outside the reading above, so what is drawn is not what is
             // measured
+            bar.inc(1);
+            (source, target, rank, elapsed, distance)
+        })
+        .collect();
+    bar.finish_and_clear();
+    timings
+}
+
+/// Whether every arc of the graph has its opposite, at the same cost.
+///
+/// A network read in both directions is its own reverse, and then the backward
+/// side of a search from both ends can walk the forward graph and no second
+/// copy of it is needed. That is worth one pass to establish rather than
+/// assuming: assuming it of a graph that is directed somewhere would quietly
+/// hand back distances that are wrong only for the pairs that go that way.
+fn is_symmetric(graph: &StaticGraph<usize>) -> bool {
+    graph.node_range().all(|u| {
+        graph.edge_range(u).all(|edge| {
+            let v = graph.target(edge);
+            graph
+                .find_edge(v, u)
+                .is_some_and(|back| graph.data(back) == graph.data(edge))
+        })
+    })
+}
+
+/// The graph with every arc turned around.
+fn reverse_of(graph: &StaticGraph<usize>) -> StaticGraph<usize> {
+    let mut edges = Vec::with_capacity(graph.number_of_edges());
+    for u in graph.node_range() {
+        for edge in graph.edge_range(u) {
+            edges.push(InputEdge::new(graph.target(edge), u, *graph.data(edge)));
+        }
+    }
+    StaticGraph::new(edges)
+}
+
+/// The same pairs, run from both ends at once.
+///
+/// This is the yardstick that costs nothing to have: no preprocessing, no
+/// overlay, just a second queue. What the overlay is worth is what it beats
+/// this by, not what it beats the one-ended search by.
+fn time_bidirectional(
+    graph: &StaticGraph<usize>,
+    reverse: &StaticGraph<usize>,
+    pairs: &[ToTime],
+    warmup: usize,
+) -> Vec<Timing> {
+    let mut search = BidirectionalDijkstra::new();
+    let bar = bar_of(warmup.min(pairs.len()), "warming");
+    for &(source, target, _) in pairs.iter().take(warmup) {
+        search.run(graph, reverse, source, target);
+        bar.inc(1);
+    }
+    bar.finish_and_clear();
+
+    let bar = bar_of(pairs.len(), "timing");
+    let timings = pairs
+        .iter()
+        .map(|&(source, target, rank)| {
+            search.clear();
+            let started = Instant::now();
+            let distance = search.run(graph, reverse, source, target);
+            let elapsed = started.elapsed().as_nanos();
             bar.inc(1);
             (source, target, rank, elapsed, distance)
         })
@@ -397,6 +485,7 @@ fn time_mld(
     let timings = pairs
         .iter()
         .map(|&(source, target, rank)| {
+            query.clear();
             let started = Instant::now();
             let reached = query.run(&customization, source, &[target]);
             let elapsed = started.elapsed().as_nanos();

@@ -8,8 +8,9 @@
 # to end:
 #
 #   ranks time -g graph -i pairs.csv -e dijkstra -o d.csv
+#   ranks time -g graph -i pairs.csv -e bidirectional -o b.csv
 #   ranks time -g graph -d levels -i pairs.csv -e mld -o m.csv
-#   cat d.csv <(tail -n +2 m.csv) > timings.csv
+#   cat d.csv <(tail -n +2 b.csv) <(tail -n +2 m.csv) > timings.csv
 #
 # Base graphics only, and no package beyond what R ships with. A plot that
 # wants an install first is a plot that does not get looked at, and this one is
@@ -34,12 +35,26 @@ if (nrow(timings) == 0) {
   stop("there is nothing to plot")
 }
 
-# microseconds read better than nanoseconds, and the rank axis is drawn at the
+# milliseconds read better than nanoseconds, and the rank axis is drawn at the
 # exponent so the ticks say 2^10 rather than 1024
-timings$micros <- timings$nanos / 1000
+timings$millis <- timings$nanos / 1e6
 timings$exponent <- round(log2(timings$rank))
 engines <- sort(unique(timings$engine))
 exponents <- sort(unique(timings$exponent))
+
+# the engine column says which search wrote the row; a legend wants to say
+# which search it was, and "dijkstra" does not distinguish the plain search
+# from the one that runs from both ends
+display <- c(dijkstra = "unidirectional", bidirectional = "bidirectional", mld = "mld")
+name_of <- function(engine) ifelse(engine %in% names(display), display[engine], engine)
+
+# every power of ten the numbers reach, written out rather than as 1e+03: a
+# reader who wants to know what a query costs should not have to decode it
+decades_over <- function(values) {
+  values <- values[is.finite(values) & values > 0]
+  10^(floor(log10(min(values))):ceiling(log10(max(values))))
+}
+plainly <- function(values) formatC(values, format = "fg", drop0trailing = TRUE)
 
 # a bucket holding a handful of samples is drawn like the rest and marked, so
 # that a thin tail reads as a thin tail rather than as a result
@@ -62,7 +77,7 @@ width <- 0.8 / length(engines)
 for (index in seq_along(exponents)) {
   for (which in seq_along(engines)) {
     rows <- timings$exponent == exponents[index] & timings$engine == engines[which]
-    groups[[length(groups) + 1]] <- timings$micros[rows]
+    groups[[length(groups) + 1]] <- timings$millis[rows]
     offset <- (which - (length(engines) + 1) / 2) * width
     at <- c(at, exponents[index] + offset)
     fill <- c(fill, colour_of[engines[which]])
@@ -71,13 +86,17 @@ for (index in seq_along(exponents)) {
 
 boxplot(groups,
   at = at, boxwex = width * 0.9, col = fill, log = "y",
-  xaxt = "n", xlab = "", ylab = "microseconds",
+  xaxt = "n", yaxt = "n", xlab = "", ylab = "milliseconds",
   main = sprintf("query time by Dijkstra rank (%s)", basename(input)),
   outcex = 0.3, whisklty = 1, staplewex = 0.5
 )
 axis(1, at = exponents, labels = parse(text = sprintf("2^%d", exponents)))
+ticks <- decades_over(timings$millis)
+axis(2, at = ticks, labels = plainly(ticks))
 abline(v = exponents[-1] - 0.5, col = "#00000012")
-legend("topleft", legend = engines, fill = colour_of[engines], bty = "n")
+# the searches climb from left to right, so the top left corner is the one
+# nothing is drawn in
+legend("topleft", legend = name_of(engines), fill = colour_of[engines], bty = "n")
 if (length(thin) > 0) {
   mtext(sprintf("thin buckets, under %d samples: 2^%s", THIN,
                 paste(thin, collapse = ", 2^")),
@@ -89,34 +108,53 @@ par(mar = c(4.5, 4.5, 1, 1))
 medians <- sapply(engines, function(engine) {
   sapply(exponents, function(exponent) {
     rows <- timings$exponent == exponent & timings$engine == engine
-    if (any(rows)) median(timings$micros[rows]) else NA
+    if (any(rows)) median(timings$millis[rows]) else NA
   })
 })
 medians <- matrix(medians, nrow = length(exponents), dimnames = list(NULL, engines))
 
-if (all(c("dijkstra", "mld") %in% engines)) {
-  speedup <- medians[, "dijkstra"] / medians[, "mld"]
-  ylim <- range(c(speedup, 1), na.rm = TRUE)
-  plot(exponents, speedup,
-    type = "b", pch = 19, log = "y", ylim = ylim, xaxt = "n",
-    xlab = "Dijkstra rank", ylab = "dijkstra / mld", col = "#204080"
+if ("mld" %in% engines && length(engines) > 1) {
+  # every plain search in the file, against the one over the cells. The plain
+  # unidirectional search is the one a rank axis is defined by, but it is not
+  # the yardstick an overlay has to beat: two searches from two ends cost
+  # nothing but a second queue, so what the cells are worth is what they beat
+  # that by.
+  against <- setdiff(engines, "mld")
+  ratios <- sapply(against, function(engine) medians[, engine] / medians[, "mld"])
+  ratios <- matrix(ratios, nrow = length(exponents), dimnames = list(NULL, against))
+  ylim <- range(c(ratios, 1), na.rm = TRUE)
+  plot(NA,
+    xlim = range(exponents), ylim = ylim, log = "y", xaxt = "n", yaxt = "n",
+    xlab = "Dijkstra rank", ylab = "plain search / mld"
   )
+  for (engine in against) {
+    lines(exponents, ratios[, engine], type = "b", pch = 19, col = colour_of[engine])
+  }
   axis(1, at = exponents, labels = parse(text = sprintf("2^%d", exponents)))
+  ticks <- decades_over(c(ratios, 1))
+  axis(2, at = ticks, labels = plainly(ticks))
   # at one the two cost the same; below it the cells are not paying for
   # themselves, and it should climb as more of them can be stepped over. A
   # curve that does not climb is the thing to look for: every level is sound to
   # step over, so a query that picks a low one gives the same answers and no
   # test of those answers would say a word.
   abline(h = 1, lty = 2, col = "#808080")
-  best <- which.max(speedup)
-  if (length(best) == 1 && is.finite(speedup[best])) {
-    mtext(sprintf("best %.1fx at 2^%d", speedup[best], exponents[best]),
-          side = 3, line = -1.2, adj = 0.98, cex = 0.75, col = "#204080")
-  }
+  # what each curve is worth at its best goes in the legend rather than beside
+  # it, so that nothing is written over the curves. They start low on the left
+  # and end high on the right, so the top left corner is the empty one — the
+  # bottom right has the line at one running through it.
+  best_of <- sapply(against, function(engine) {
+    best <- which.max(ratios[, engine])
+    sprintf("%s / mld (best %.0fx at 2^%d)", name_of(engine), ratios[best, engine],
+            exponents[best])
+  })
+  legend("topleft", legend = best_of, col = colour_of[against],
+         lty = 1, pch = 19, bty = "n")
+
 } else {
   plot.new()
-  mtext("a speedup wants both engines in the file", side = 3, line = -3,
-        cex = 0.8, col = "#808080")
+  mtext("a speedup wants the cells and a plain search in the same file",
+        side = 3, line = -3, cex = 0.8, col = "#808080")
 }
 
 invisible(dev.off())

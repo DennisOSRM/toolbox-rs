@@ -3,6 +3,7 @@ pub mod alpha_shape;
 pub mod as_bytes;
 pub mod assembly;
 pub mod bfs;
+pub mod bidirectional_dijkstra;
 pub mod bin_pack;
 pub mod bit_weight_iterator;
 pub mod bitset_subset_iterator;
