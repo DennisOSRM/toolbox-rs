@@ -224,6 +224,32 @@ impl<
         self.inserted_nodes[index].node
     }
 
+    /// What the node with minimum weight is held at, without looking that node
+    /// up.
+    ///
+    /// Asking for [`min`](Self::min) and then for its weight walks the map of
+    /// places to get back to a weight the heap already has in hand. A search
+    /// that asks what its front stands at once per settled node — which is
+    /// what a search from both ends does, to know when the two fronts have met
+    /// — pays that for nothing.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the heap is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use toolbox_rs::addressable_binary_heap::AddressableHeap;
+    /// let mut heap = AddressableHeap::new();
+    /// heap.insert(1, 7, 0);
+    /// heap.insert(2, 3, 0);
+    /// assert_eq!(heap.min_weight(), 3);
+    /// ```
+    pub fn min_weight(&self) -> Weight {
+        self.heap[1].weight
+    }
+
     /// Returns the node with minimum weight without removing it, or None if the heap is empty.
     ///
     /// # Examples

@@ -122,6 +122,8 @@ pub struct Time {
 pub enum Engine {
     /// a plain unidirectional Dijkstra over the graph
     Dijkstra,
+    /// a plain Dijkstra run from both ends at once
+    Bidirectional,
     /// a search over the cells of the partition
     Mld,
 }
@@ -130,6 +132,7 @@ impl Display for Engine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Engine::Dijkstra => write!(f, "dijkstra"),
+            Engine::Bidirectional => write!(f, "bidirectional"),
             Engine::Mld => write!(f, "mld"),
         }
     }
