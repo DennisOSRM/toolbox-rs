@@ -15,6 +15,7 @@ pub mod count_min_sketch;
 pub mod customization;
 pub mod cycle_check;
 pub mod ddsg;
+pub mod dense_heap;
 pub mod dfs;
 pub mod dimacs;
 pub mod dinic;
