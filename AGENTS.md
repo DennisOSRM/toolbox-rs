@@ -53,10 +53,19 @@ the reasoning.
 
 ## Commits
 
-Write the subject as a plain sentence saying what the change does — "Read a
-single rkyv value from a file", not a conventional-commit prefix. The body
-says why the change is worth making and what it rules out; wrap it at 72
-columns.
+Write the subject as a plain sentence naming the algorithm or the structure
+the change touches — "Read a single rkyv value from a file", "Add a packed
+partition", "Use NodeID for the node containers in the graph searches". Not a
+conventional-commit prefix.
+
+Name what was done, not what it was worth. "Halve what a query costs" says
+nothing about what was changed to halve it, and somebody later asking where
+the packed partition came from, or which commit narrowed the arcs, will not
+find it by reading the subjects. The measurement belongs in the body, where
+there is room to say what it was measured against.
+
+The body says why the change is worth making and what it rules out; wrap it
+at 72 columns.
 
 Do not sign the commit as an agent. No `Co-authored-by:` line, no
 `Claude-Session:` trailer, no tool footer — the commit message is about the
@@ -68,8 +77,15 @@ Say in the PR description that it was written with agent assistance, and link
 the session there. That is the place for it, and it keeps the history clean
 while the provenance stays where a reviewer looks for it.
 
+The title follows the same rule as a commit subject: name the algorithm or
+the structure, not the effect. A pull request doing several things names the
+ones a reviewer would search for rather than reaching for the sum of them.
+
 Otherwise the description carries the reasoning: what the change does, why,
-what it leaves for later, and which PR it is stacked on if any.
+what it leaves for later, and which PR it is stacked on if any. Lead it with
+the change itself — the signatures, the fields, the behaviour — and put the
+motivation after; a reviewer opens a diff already knowing they want to see
+what moved.
 
 Releases are cut by release-plz from `main`; do not bump the version in
 `Cargo.toml` by hand.
