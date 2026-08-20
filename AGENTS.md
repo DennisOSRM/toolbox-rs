@@ -25,6 +25,32 @@ macOS and Windows. Run them locally before pushing.
   seems to need it, say so instead of adding it.
 - Benchmarks are criterion, under `benches/`.
 
+## Routing changes
+
+A change to the routing code — the searches over the cells, the customization,
+the partition, the heaps they sit on — ships with a plot showing what it did.
+That includes a change that turns out to do nothing: "no measurable effect" is a
+result, and a plot is how it is shown rather than asserted. A speedup claimed in
+a commit message and nowhere else is not a measurement.
+
+```
+ranks sample -g graph.toolbox -s 200 -o pairs.csv
+ranks time -g graph.toolbox -i pairs.csv -e dijkstra -o d.csv
+ranks time -g graph.toolbox -d levels.bin -i pairs.csv -e mld --warmup 4800 -o m.csv
+cat d.csv <(tail -n +2 m.csv) > timings.csv
+Rscript scripts/rank_plot.R timings.csv ranks.png
+```
+
+Give `--warmup` the number of pairs in the file. The overlay is worked out as it
+is asked for, so without it the run measures customizing cells rather than
+searching them, and the cost lands on whichever pairs happened to come first.
+
+Hold the change against the code it replaces on the same machine in the same
+sitting, and say which instance the numbers came from. A rank axis is the point:
+a change that helps a query across a continent and hurts one across a town is a
+trade to show, not an average to hide. Put the plot in the pull request beside
+the reasoning.
+
 ## Commits
 
 Write the subject as a plain sentence saying what the change does — "Read a
