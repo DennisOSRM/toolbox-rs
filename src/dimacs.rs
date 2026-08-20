@@ -123,7 +123,7 @@ mod tests {
         writeln!(file, "a 4 1 1").unwrap();
         writeln!(file, "a 1 3 1").unwrap();
 
-        let edges = read_graph::<NodeID>(file_path.to_str().unwrap(), WeightType::Unit);
+        let edges = read_graph::<usize>(file_path.to_str().unwrap(), WeightType::Unit);
         assert_eq!(edges.len(), 5);
         assert_eq!(edges[0].source, 0);
         assert_eq!(edges[0].target, 1);
@@ -147,7 +147,7 @@ mod tests {
         writeln!(file, "a 1 3 1").unwrap();
         writeln!(file, "a 1 1 1").unwrap();
 
-        let edges = read_graph::<NodeID>(file_path.to_str().unwrap(), WeightType::Unit);
+        let edges = read_graph::<usize>(file_path.to_str().unwrap(), WeightType::Unit);
         assert_eq!(edges.len(), 5);
         assert_eq!(edges[0].source, 0);
         assert_eq!(edges[0].target, 1);
@@ -173,7 +173,7 @@ mod tests {
         writeln!(file, "h 4 1 1").unwrap();
         writeln!(file, "a 1 3 1").unwrap();
 
-        let edges = read_graph::<NodeID>(file_path.to_str().unwrap(), WeightType::Unit);
+        let edges = read_graph::<usize>(file_path.to_str().unwrap(), WeightType::Unit);
         assert_eq!(edges.len(), 5);
         assert_eq!(edges[0].source, 0);
         assert_eq!(edges[0].target, 1);
@@ -196,7 +196,7 @@ mod tests {
         writeln!(file, "a 4 1 40").unwrap();
         writeln!(file, "a 1 3 50").unwrap();
 
-        let edges = read_graph::<NodeID>(file_path.to_str().unwrap(), WeightType::Original);
+        let edges = read_graph::<usize>(file_path.to_str().unwrap(), WeightType::Original);
         assert_eq!(edges.len(), 5);
         assert_eq!(edges[0].source, 0);
         assert_eq!(edges[0].target, 1);
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn test_read_graph_invalid_file() {
         let result = std::panic::catch_unwind(|| {
-            read_graph::<NodeID>("invalid_file.txt", WeightType::Unit);
+            read_graph::<usize>("invalid_file.txt", WeightType::Unit);
         });
         assert!(result.is_err());
     }
