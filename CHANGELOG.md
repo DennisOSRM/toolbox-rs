@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2](https://github.com/DennisOSRM/toolbox-rs/compare/v0.7.1...v0.7.2) - 2026-08-20
+
+### Other
+
+- Add a packed partition, per-arc border levels and a border-first node numbering ([#599](https://github.com/DennisOSRM/toolbox-rs/pull/599))
+- Say NodeID where a node id is meant ([#598](https://github.com/DennisOSRM/toolbox-rs/pull/598))
+- Assemble the levels by boundary, and search from both ends ([#597](https://github.com/DennisOSRM/toolbox-rs/pull/597))
+- Find a node in an array rather than in a map ([#595](https://github.com/DennisOSRM/toolbox-rs/pull/595))
+- Hold the query against a plain search on a road network ([#592](https://github.com/DennisOSRM/toolbox-rs/pull/592))
+- Step over a cell once for each way in, not once for each node on its edge ([#594](https://github.com/DennisOSRM/toolbox-rs/pull/594))
+- Empty the queue by whichever way is cheaper, and relax in one look ([#593](https://github.com/DennisOSRM/toolbox-rs/pull/593))
+- Measure the query against a plain search, and the overlay against both ([#591](https://github.com/DennisOSRM/toolbox-rs/pull/591))
+- Draw pairs on the rank axis, and time what they cost ([#590](https://github.com/DennisOSRM/toolbox-rs/pull/590))
+- Search over the cells of a partition rather than through them ([#589](https://github.com/DennisOSRM/toolbox-rs/pull/589))
+- Say where a border node sits, and build a grid where anyone can reach it ([#588](https://github.com/DennisOSRM/toolbox-rs/pull/588))
+- Let a queue say what it did, when it is asked to ([#587](https://github.com/DennisOSRM/toolbox-rs/pull/587))
+- Hand a node the way it was reached by, not itself ([#586](https://github.com/DennisOSRM/toolbox-rs/pull/586))
+- Add an example that compares alpha shapes with convex hulls ([#585](https://github.com/DennisOSRM/toolbox-rs/pull/585))
+- Carve a concave hull out of a set of points ([#584](https://github.com/DennisOSRM/toolbox-rs/pull/584))
+- Let a tree be told which measure to search in ([#582](https://github.com/DennisOSRM/toolbox-rs/pull/582))
+- Measure to the nearest point of a box, not its nearest corner ([#580](https://github.com/DennisOSRM/toolbox-rs/pull/580))
+- Ask an R-tree what lies under a window ([#579](https://github.com/DennisOSRM/toolbox-rs/pull/579))
+- Let a node say how many children it has ([#583](https://github.com/DennisOSRM/toolbox-rs/pull/583))
+- Ask two boxes whether they share ground ([#577](https://github.com/DennisOSRM/toolbox-rs/pull/577))
+- Hold the nodes of the linked list in a vector ([#576](https://github.com/DennisOSRM/toolbox-rs/pull/576))
+- Batch the routine dependency bumps into one pull request ([#575](https://github.com/DennisOSRM/toolbox-rs/pull/575))
+- Write down how an agent works on this repository ([#572](https://github.com/DennisOSRM/toolbox-rs/pull/572))
+- Hand every cell to whoever is watching ([#568](https://github.com/DennisOSRM/toolbox-rs/pull/568))
+- Check a partition with sound ([#567](https://github.com/DennisOSRM/toolbox-rs/pull/567))
+- Cut chipper by size and assemble the levels that were asked for ([#574](https://github.com/DennisOSRM/toolbox-rs/pull/574))
+- Hold the cells of a partition against the graph they came from ([#566](https://github.com/DennisOSRM/toolbox-rs/pull/566))
+- Keep track of which cell the cutting left each node in ([#573](https://github.com/DennisOSRM/toolbox-rs/pull/573))
+- Build a cell out of the cells beneath it ([#565](https://github.com/DennisOSRM/toolbox-rs/pull/565))
+- Tabulate what it costs to cross a cell of the finest level ([#564](https://github.com/DennisOSRM/toolbox-rs/pull/564))
+- Assemble the levels a caller asked for ([#558](https://github.com/DennisOSRM/toolbox-rs/pull/558))
+- Let a graph be built over the nodes it was asked for ([#571](https://github.com/DennisOSRM/toolbox-rs/pull/571))
+- Check a level directory against the graph it was built from ([#570](https://github.com/DennisOSRM/toolbox-rs/pull/570))
+- Merge neighbouring cells, heaviest pair first ([#557](https://github.com/DennisOSRM/toolbox-rs/pull/557))
+- Split the edges on the side of the cut, not on the partition id ([#569](https://github.com/DennisOSRM/toolbox-rs/pull/569))
+- Work out the cells of a level from a partition ([#563](https://github.com/DennisOSRM/toolbox-rs/pull/563))
+- Build the graph on the cells a partition left behind ([#556](https://github.com/DennisOSRM/toolbox-rs/pull/556))
+- Take a cell that fell into pieces apart ([#555](https://github.com/DennisOSRM/toolbox-rs/pull/555))
+- Check the directory against hierarchies drawn at random ([#554](https://github.com/DennisOSRM/toolbox-rs/pull/554))
+- Say which cells of a level lie in which cell above ([#553](https://github.com/DennisOSRM/toolbox-rs/pull/553))
+- Build the geometry of a vector tile feature ([#560](https://github.com/DennisOSRM/toolbox-rs/pull/560))
+- Ask the directory where two nodes meet ([#561](https://github.com/DennisOSRM/toolbox-rs/pull/561))
+- Pack and unpack the command integers of a vector tile ([#559](https://github.com/DennisOSRM/toolbox-rs/pull/559))
+- Give the level directory a nested shape ([#551](https://github.com/DennisOSRM/toolbox-rs/pull/551))
+- Read a single rkyv value from a file ([#550](https://github.com/DennisOSRM/toolbox-rs/pull/550))
+- Drop the redundant references from the log lines ([#549](https://github.com/DennisOSRM/toolbox-rs/pull/549))
+- Lower the key the heap is ordered by, not only the one beside the node ([#548](https://github.com/DennisOSRM/toolbox-rs/pull/548))
+
 ## [0.7.1](https://github.com/DennisOSRM/toolbox-rs/compare/v0.7.0...v0.7.1) - 2026-08-12
 
 ### Other
