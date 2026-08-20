@@ -28,7 +28,6 @@ use rayon::prelude::*;
 use std::{error::Error, time::Instant};
 use toolbox_rs::{
     customization::{CellCheck, Customization, Mismatch},
-    edge::InputEdge,
     graph::Graph,
     io,
     level_directory::{CellId, LevelDirectory},
@@ -57,7 +56,7 @@ struct LevelCheck {
     mismatches: Vec<Mismatch>,
 }
 
-fn check_level(customization: &Customization, level: usize, keep: usize) -> LevelCheck {
+fn check_level(customization: &mut Customization, level: usize, keep: usize) -> LevelCheck {
     let cells = customization.level(level);
     let count = cells.nodes_of_cell.len();
     info!(
@@ -81,9 +80,12 @@ fn check_level(customization: &Customization, level: usize, keep: usize) -> Leve
     };
     for start in (0..count as CellId).step_by(BATCH) {
         let end = (start + BATCH as CellId).min(count as CellId);
+        // shared for the searching, and asked for again below to let the
+        // tables of the batch go
+        let shared = &*customization;
         let checks = (start..end)
             .into_par_iter()
-            .map(|cell| customization.check(level, cell))
+            .map(|cell| shared.check(level, cell))
             .collect::<Vec<CellCheck>>();
 
         for check in checks {
@@ -116,7 +118,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args = <Arguments as clap::Parser>::parse();
     info!("{args}");
 
-    let edges = io::read_vec_from_file::<InputEdge<usize>>(&args.graph);
+    let edges = io::read_edges_from_file(&args.graph);
     info!("loaded {} graph edges", edges.len());
     let directory: LevelDirectory = io::read_from_file(&args.directory);
     info!(
@@ -141,12 +143,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         None => 0..directory.levels(),
     };
-    let customization = Customization::new(graph, directory);
+    let mut customization = Customization::new(graph, directory);
 
     let started = Instant::now();
     let mut sound = true;
     for level in levels {
-        let found = check_level(&customization, level, args.report);
+        let found = check_level(&mut customization, level, args.report);
         info!(
             "level {level}: checked {} pairs over {} cells, leaving out {} that hold no border node",
             found.pairs,

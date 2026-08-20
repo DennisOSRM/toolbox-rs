@@ -34,7 +34,7 @@ const SIDES: [usize; 3] = [64, 128, 256];
 /// Working this out here rather than in the loop is what keeps the counting
 /// out of the measurement. Nothing timed below collects anything.
 fn pairs_of(
-    graph: &toolbox_rs::static_graph::StaticGraph<usize>,
+    graph: &toolbox_rs::static_graph::StaticGraph<u32>,
     sources: usize,
 ) -> Vec<(NodeID, NodeID)> {
     let mut rng = StdRng::seed_from_u64(0x_5EED);
@@ -42,7 +42,7 @@ fn pairs_of(
     let mut pairs = Vec::new();
 
     for _ in 0..sources {
-        let source = rand::RngExt::random_range(&mut rng, 0..graph.number_of_nodes());
+        let source = rand::RngExt::random_range(&mut rng, 0..graph.number_of_nodes() as NodeID);
         search.run(graph, source, NodeID::MAX);
         pairs.extend(
             search

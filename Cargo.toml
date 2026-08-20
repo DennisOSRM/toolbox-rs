@@ -35,6 +35,10 @@ path = "src/solver/bin/main.rs"
 name = "ranks"
 path = "src/ranks/bin/main.rs"
 
+[[bin]]
+name = "renumber"
+path = "src/renumber/bin/main.rs"
+
 [dependencies]
 rkyv = "0.8.15"
 bitvec = "1.0.1"

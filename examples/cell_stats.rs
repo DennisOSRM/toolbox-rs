@@ -8,14 +8,14 @@
 //! between those two numbers is what a skewed assembly costs.
 use std::env::args;
 
-use toolbox_rs::{edge::InputEdge, io, level_directory::LevelDirectory};
+use toolbox_rs::{graph::NodeID, io, level_directory::LevelDirectory};
 
 fn main() {
     let mut argv = args().skip(1);
     let graph_path = argv.next().expect("usage: cell_stats <graph> <directory>");
     let directory_path = argv.next().expect("usage: cell_stats <graph> <directory>");
 
-    let edges = io::read_vec_from_file::<InputEdge<usize>>(&graph_path);
+    let edges = io::read_edges_from_file(&graph_path);
     let directory: LevelDirectory = io::read_from_file(&directory_path);
     println!(
         "{} arcs, {} nodes, {} levels",
@@ -28,7 +28,7 @@ fn main() {
     for level in 0..directory.levels() {
         let cells = directory.cells_on_level(level);
         let of_node: Vec<u32> = (0..nodes)
-            .map(|node| directory.cell_of(node, level) as u32)
+            .map(|node| directory.cell_of(node as NodeID, level) as u32)
             .collect();
 
         let mut size = vec![0_u32; cells];

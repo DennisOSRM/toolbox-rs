@@ -28,7 +28,7 @@ use std::{
     time::Instant,
 };
 
-use command_line::{Arguments, Check, Engine, Mode, Sample, Time};
+use command_line::{Arguments, Check, Engine, Mode, Sample, Scans, Time};
 use env_logger::{Builder, Env};
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{info, warn};
@@ -53,13 +53,17 @@ fn bar_of(count: usize, what: &str) -> ProgressBar {
 
 use toolbox_rs::{
     bidirectional_dijkstra::BidirectionalDijkstra,
+    bidirectional_mld_query::{BidirectionalMldQuery, TrackedBidirectionalMldQuery},
+    border_levels::BorderLevels,
     customization::Customization,
     edge::InputEdge,
     graph::{Graph, NodeID},
     heap_stats::{Counters, RankTargets},
     io,
     level_directory::LevelDirectory,
-    mld_query::MldQuery,
+    mld_query::{MldQuery, TrackedMldQuery},
+    node_ordering::NodeOrdering,
+    packed_partition::PackedPartition,
     static_graph::StaticGraph,
     unidirectional_dijkstra::{UnidirectionalDijkstra, UnidirectionalSearch},
 };
@@ -95,6 +99,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Mode::Sample(sample) => run_sample(sample),
         Mode::Check(check) => run_check(check),
         Mode::Time(time) => run_time(time),
+        Mode::Scans(scans) => run_scans(scans),
     }
 }
 
@@ -110,8 +115,8 @@ fn readable(path: &str, what: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn load_graph(path: &str) -> StaticGraph<usize> {
-    let edges = io::read_vec_from_file::<InputEdge<usize>>(path);
+fn load_graph(path: &str) -> StaticGraph<u32> {
+    let edges = io::read_edges_from_file(path);
     info!("loaded {} graph edges", edges.len());
     let graph = StaticGraph::new(edges);
     info!(
@@ -199,7 +204,7 @@ fn run_sample(args: &Sample) -> Result<(), Box<dyn Error>> {
 ///
 /// The search is given a target it will never reach, so it runs until the
 /// queue is empty and the whole of what the source can reach is walked.
-fn ranks_of(graph: &StaticGraph<usize>, source: NodeID) -> Vec<Pair> {
+fn ranks_of(graph: &StaticGraph<u32>, source: NodeID) -> Vec<Pair> {
     let mut search = UnidirectionalSearch::<RankTargets>::new();
     search.run(graph, source, NodeID::MAX);
 
@@ -220,7 +225,7 @@ fn ranks_of(graph: &StaticGraph<usize>, source: NodeID) -> Vec<Pair> {
 
 /// One search per pair, which is what asking about a pair drawn at random
 /// costs.
-fn one_pair(graph: &StaticGraph<usize>, source: NodeID, target: NodeID) -> Option<Pair> {
+fn one_pair(graph: &StaticGraph<u32>, source: NodeID, target: NodeID) -> Option<Pair> {
     let mut search = UnidirectionalSearch::<Counters>::new();
     let distance = search.run(graph, source, target);
     if distance == usize::MAX || source == target {
@@ -297,7 +302,7 @@ fn run_time(args: &Time) -> Result<(), Box<dyn Error>> {
     if args.engine == Engine::Mld {
         readable(&args.directory, "level directory")?;
     }
-    let graph = load_graph(&args.graph);
+    let mut graph = load_graph(&args.graph);
     let mut pairs = read_pairs(&args.input)?;
     info!("read {} pairs from {}", pairs.len(), args.input);
     if pairs.is_empty() {
@@ -311,6 +316,76 @@ fn run_time(args: &Time) -> Result<(), Box<dyn Error>> {
     // source run from low to high, so the bias lines up with the very axis
     // being plotted. Shuffling spreads it out.
     pairs.shuffle(&mut StdRng::seed_from_u64(args.seed));
+
+    // An instance written under a numbering of its own is read under it by
+    // every engine, not only the ones that walk the cells. A plain search is
+    // the yardstick a search over the cells is held against, and a yardstick
+    // read off another copy of the graph is not one: the numbering lays the
+    // nodes of a cell side by side, which a plain search feels too. Timing the
+    // two over different copies would credit the cells with what the numbering
+    // did.
+    let mut ordering = None;
+    if !args.ordering.is_empty() {
+        let moved: NodeOrdering = io::read_from_file(&args.ordering);
+        info!(
+            "read a numbering of {} nodes, {} of them on the border of a cell",
+            moved.len(),
+            moved.on_a_border()
+        );
+        assert_eq!(
+            moved.len(),
+            graph.number_of_nodes(),
+            "the numbering was worked out over another graph"
+        );
+        // the pairs arrived as the nodes the input had
+        for pair in &mut pairs {
+            pair.0 = moved.new_of(pair.0);
+            pair.1 = moved.new_of(pair.1);
+        }
+        ordering = Some(moved);
+    }
+
+    let directory = match args.engine {
+        Engine::Mld | Engine::BidirectionalMld => {
+            let directory: LevelDirectory = io::read_from_file(&args.directory);
+            info!(
+                "loaded a directory of {} levels over {} nodes",
+                directory.levels(),
+                directory.number_of_nodes()
+            );
+            if ordering.is_some() {
+                // already written under a numbering, and the pairs are in it
+                assert_eq!(
+                    graph.number_of_nodes(),
+                    directory.number_of_nodes(),
+                    "the directory was built over another graph"
+                );
+                Some(directory)
+            } else if !args.renumber {
+                Some(directory)
+            } else {
+                let started = Instant::now();
+                let moved = NodeOrdering::of(&graph, &PackedPartition::of(&directory));
+                info!(
+                    "numbered {} nodes in {:.1} s, {} of them ({:.1}%) on the border of a cell",
+                    moved.len(),
+                    started.elapsed().as_secs_f64(),
+                    moved.on_a_border(),
+                    100.0 * moved.on_a_border() as f64 / moved.len() as f64
+                );
+                graph = renumbered_of(&graph, &moved);
+                let directory = moved.renumber_directory(&directory);
+                // the pairs arrived as the numbers the input had
+                for pair in &mut pairs {
+                    pair.0 = moved.new_of(pair.0);
+                    pair.1 = moved.new_of(pair.1);
+                }
+                ordering = Some(moved);
+                Some(directory)
+            }
+        }
+        _ => None,
+    };
 
     let timings = match args.engine {
         Engine::Dijkstra => time_dijkstra(&graph, &pairs, args.warmup),
@@ -327,14 +402,33 @@ fn run_time(args: &Time) -> Result<(), Box<dyn Error>> {
             }
         }
         Engine::Mld => {
-            let directory: LevelDirectory = io::read_from_file(&args.directory);
-            info!(
-                "loaded a directory of {} levels over {} nodes",
-                directory.levels(),
-                directory.number_of_nodes()
-            );
+            let directory = directory.expect("a directory was read for the cells");
             time_mld(graph, directory, &pairs, args.warmup)
         }
+        Engine::BidirectionalMld => {
+            let directory = directory.expect("a directory was read for the cells");
+            let reverse = reverse_of(&graph);
+            info!("turned {} arcs around", reverse.number_of_edges());
+            time_bidirectional_mld(graph, reverse, directory, &pairs, args.warmup)
+        }
+    };
+
+    // written out as the numbers they arrived as, so that a run that was
+    // renumbered can be laid against one that was not
+    let timings = match &ordering {
+        None => timings,
+        Some(moved) => timings
+            .into_iter()
+            .map(|(source, target, rank, nanos, distance)| {
+                (
+                    moved.old_of(source),
+                    moved.old_of(target),
+                    rank,
+                    nanos,
+                    distance,
+                )
+            })
+            .collect(),
     };
 
     let mut out = BufWriter::new(File::create(&args.out)?);
@@ -363,7 +457,7 @@ fn run_time(args: &Time) -> Result<(), Box<dyn Error>> {
 /// puts it back where it belongs.
 /// The pairs, timed one at a time on one thread. Timing under rayon would say
 /// as much about the scheduler as about the search.
-fn time_dijkstra(graph: &StaticGraph<usize>, pairs: &[ToTime], warmup: usize) -> Vec<Timing> {
+fn time_dijkstra(graph: &StaticGraph<u32>, pairs: &[ToTime], warmup: usize) -> Vec<Timing> {
     let mut search = UnidirectionalDijkstra::new();
     let bar = bar_of(warmup.min(pairs.len()), "warming");
     for &(source, target, _) in pairs.iter().take(warmup) {
@@ -390,6 +484,70 @@ fn time_dijkstra(graph: &StaticGraph<usize>, pairs: &[ToTime], warmup: usize) ->
     timings
 }
 
+/// Counts what each query settles, rather than what it costs.
+///
+/// A settled node is one the search took off its queue and was done with, and
+/// how many of those a query needs is the figure that does not move when the
+/// machine changes, the baseline changes, or the heap underneath changes. It
+/// is what to hold against a published number.
+fn run_scans(args: &Scans) -> Result<(), Box<dyn Error>> {
+    let graph = load_graph(&args.graph);
+    let directory: LevelDirectory = io::read_from_file(&args.directory);
+    info!(
+        "loaded a directory of {} levels over {} nodes",
+        directory.levels(),
+        directory.number_of_nodes()
+    );
+    let pairs = read_pairs(&args.input)?;
+    info!("read {} pairs from {}", pairs.len(), args.input);
+
+    let reverse = match args.engine {
+        Engine::BidirectionalMld => Some(reverse_of(&graph)),
+        _ => None,
+    };
+    let customization = Customization::new(graph, directory);
+    let backward = reverse
+        .as_ref()
+        .map(|reverse| BorderLevels::of(reverse, customization.partition()));
+
+    let bar = bar_of(pairs.len(), "counting");
+    let mut out = BufWriter::new(File::create(&args.out)?);
+    writeln!(out, "engine,source,target,rank,settled,inserted,decreased")?;
+
+    let mut one = TrackedMldQuery::new();
+    let mut both = TrackedBidirectionalMldQuery::new();
+    for &(source, target, rank) in &pairs {
+        let (settled, inserted, decreased) = match args.engine {
+            Engine::BidirectionalMld => {
+                let reverse = reverse.as_ref().expect("a reversed graph was built");
+                let backward = backward.as_ref().expect("its arcs were levelled");
+                both.run(&customization, reverse, backward, source, target);
+                let (forward, backward) = both.stats();
+                (
+                    forward.deleted + backward.deleted,
+                    forward.inserted + backward.inserted,
+                    forward.decreased + backward.decreased,
+                )
+            }
+            _ => {
+                one.run(&customization, source, &[target]);
+                let stats = one.stats();
+                (stats.deleted, stats.inserted, stats.decreased)
+            }
+        };
+        writeln!(
+            out,
+            "{},{source},{target},{rank},{settled},{inserted},{decreased}",
+            args.engine
+        )?;
+        bar.inc(1);
+    }
+    bar.finish_and_clear();
+    out.flush()?;
+    info!("wrote {} counts to {}", pairs.len(), args.out);
+    Ok(())
+}
+
 /// Whether every arc of the graph has its opposite, at the same cost.
 ///
 /// A network read in both directions is its own reverse, and then the backward
@@ -397,7 +555,7 @@ fn time_dijkstra(graph: &StaticGraph<usize>, pairs: &[ToTime], warmup: usize) ->
 /// copy of it is needed. That is worth one pass to establish rather than
 /// assuming: assuming it of a graph that is directed somewhere would quietly
 /// hand back distances that are wrong only for the pairs that go that way.
-fn is_symmetric(graph: &StaticGraph<usize>) -> bool {
+fn is_symmetric(graph: &StaticGraph<u32>) -> bool {
     graph.node_range().all(|u| {
         graph.edge_range(u).all(|edge| {
             let v = graph.target(edge);
@@ -408,8 +566,28 @@ fn is_symmetric(graph: &StaticGraph<usize>) -> bool {
     })
 }
 
+/// The same arcs, between the numbers a renumbering gave their ends.
+///
+/// Walked off the graph rather than kept beside it: a continent is forty odd
+/// million arcs, and holding a second copy of them to renumber costs more than
+/// building the one that is wanted.
+fn renumbered_of(graph: &StaticGraph<u32>, ordering: &NodeOrdering) -> StaticGraph<u32> {
+    let mut edges = Vec::with_capacity(graph.number_of_edges());
+    for u in graph.node_range() {
+        let moved = ordering.new_of(u);
+        for edge in graph.edge_range(u) {
+            edges.push(InputEdge::new(
+                moved,
+                ordering.new_of(graph.target(edge)),
+                *graph.data(edge),
+            ));
+        }
+    }
+    StaticGraph::new(edges)
+}
+
 /// The graph with every arc turned around.
-fn reverse_of(graph: &StaticGraph<usize>) -> StaticGraph<usize> {
+fn reverse_of(graph: &StaticGraph<u32>) -> StaticGraph<u32> {
     let mut edges = Vec::with_capacity(graph.number_of_edges());
     for u in graph.node_range() {
         for edge in graph.edge_range(u) {
@@ -425,8 +603,8 @@ fn reverse_of(graph: &StaticGraph<usize>) -> StaticGraph<usize> {
 /// overlay, just a second queue. What the overlay is worth is what it beats
 /// this by, not what it beats the one-ended search by.
 fn time_bidirectional(
-    graph: &StaticGraph<usize>,
-    reverse: &StaticGraph<usize>,
+    graph: &StaticGraph<u32>,
+    reverse: &StaticGraph<u32>,
     pairs: &[ToTime],
     warmup: usize,
 ) -> Vec<Timing> {
@@ -460,7 +638,7 @@ fn time_bidirectional(
 /// here than it does for the plain search: without it the first pairs would be
 /// paying for the customization of every cell they touch.
 fn time_mld(
-    graph: StaticGraph<usize>,
+    graph: StaticGraph<u32>,
     directory: LevelDirectory,
     pairs: &[ToTime],
     warmup: usize,
@@ -494,6 +672,49 @@ fn time_mld(
             } else {
                 usize::MAX
             };
+            bar.inc(1);
+            (source, target, rank, elapsed, distance)
+        })
+        .collect();
+    bar.finish_and_clear();
+    timings
+}
+
+/// The same pairs over the cells, with a front growing from each end.
+fn time_bidirectional_mld(
+    graph: StaticGraph<u32>,
+    reverse: StaticGraph<u32>,
+    directory: LevelDirectory,
+    pairs: &[ToTime],
+    warmup: usize,
+) -> Vec<Timing> {
+    let customization = Customization::new(graph, directory);
+    // the backward side walks the reversed graph, whose arcs are held in
+    // another order than the ones the customization holds
+    let backward = BorderLevels::of(&reverse, customization.partition());
+    let mut query = BidirectionalMldQuery::new();
+
+    let started = Instant::now();
+    let bar = bar_of(warmup.min(pairs.len()), "warming the overlay");
+    for &(source, target, _) in pairs.iter().take(warmup) {
+        query.run(&customization, &reverse, &backward, source, target);
+        bar.inc(1);
+    }
+    bar.finish_and_clear();
+    info!(
+        "warmed {} cells in {:.1} s",
+        customization.customized_cells(),
+        started.elapsed().as_secs_f64()
+    );
+
+    let bar = bar_of(pairs.len(), "timing");
+    let timings = pairs
+        .iter()
+        .map(|&(source, target, rank)| {
+            query.clear();
+            let started = Instant::now();
+            let distance = query.run(&customization, &reverse, &backward, source, target);
+            let elapsed = started.elapsed().as_nanos();
             bar.inc(1);
             (source, target, rank, elapsed, distance)
         })

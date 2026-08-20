@@ -14,8 +14,24 @@ pub trait EdgeData {
     fn data(&self) -> &Self::DATA;
 }
 
-pub trait EdgeWithData: Edge<ID = usize> + EdgeData<DATA = i32> {}
+pub trait EdgeWithData: Edge<ID = NodeID> + EdgeData<DATA = i32> {}
 impl EdgeWithData for InputEdge<i32> {}
+
+/// An arc as it lies on disk.
+///
+/// Its ends are eight bytes wide because that is what the crate wrote when a
+/// node id was eight bytes wide. Narrowing [`NodeID`] narrows what an
+/// [`InputEdge`] is in memory and so what it would be on disk, which would
+/// leave every instance already written unreadable. The stored shape is
+/// therefore pinned here and read through
+/// [`read_edges_from_file`](crate::io::read_edges_from_file), which narrows on
+/// the way in.
+#[derive(Clone, Copy, Debug, Archive, Serialize, Deserialize)]
+pub struct StoredEdge<EdgeDataT> {
+    pub source: usize,
+    pub target: usize,
+    pub data: EdgeDataT,
+}
 
 #[derive(Clone, Copy, Debug, Archive, Serialize, Deserialize)]
 pub struct TrivialEdge {

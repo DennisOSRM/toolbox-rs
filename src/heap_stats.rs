@@ -23,8 +23,8 @@
 //! };
 //!
 //! let graph = StaticGraph::new(vec![
-//!     InputEdge::new(0, 1, 1_usize),
-//!     InputEdge::new(1, 2, 1_usize),
+//!     InputEdge::new(0, 1, 1_u32),
+//!     InputEdge::new(1, 2, 1_u32),
 //! ]);
 //!
 //! // the plain search carries nothing
@@ -109,6 +109,51 @@ impl<Node> HeapStats<Node> for Counters {
     fn decreased(&mut self, _node: Node) {
         self.decreased += 1;
     }
+}
+
+/// Keeps every node that came off the queue, in the order they came off.
+///
+/// [`RankTargets`] exists because a search over a whole continent settles
+/// eighteen million nodes and keeping all of them is a vector as long as the
+/// graph. A search over the cells of a partition settles a few thousand, so
+/// for that one the whole order costs a few tens of kilobytes and is worth
+/// having: it is what lets a check say which level each settled node was
+/// stepped over at, and that is a property no test of the distances would ever
+/// notice going wrong.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SettledNodes<Node = NodeID> {
+    settled: Vec<Node>,
+}
+
+/// Written out rather than derived, as a derived one would ask the node type
+/// to have a default of its own and nothing here ever needs one.
+impl<Node> Default for SettledNodes<Node> {
+    fn default() -> Self {
+        Self {
+            settled: Vec::new(),
+        }
+    }
+}
+
+impl<Node> SettledNodes<Node> {
+    /// The nodes that came off the queue, in the order they came off.
+    #[must_use]
+    pub fn settled(&self) -> &[Node] {
+        &self.settled
+    }
+}
+
+impl<Node> HeapStats<Node> for SettledNodes<Node> {
+    #[inline]
+    fn inserted(&mut self, _node: Node) {}
+
+    #[inline]
+    fn deleted(&mut self, node: Node) {
+        self.settled.push(node);
+    }
+
+    #[inline]
+    fn decreased(&mut self, _node: Node) {}
 }
 
 /// The node settled at each power of two, and nothing else.

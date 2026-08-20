@@ -29,6 +29,15 @@ pub enum Mode {
     /// not exercised by asking for a single target.
     Check(Check),
 
+    /// Counts what a search does rather than how long it takes.
+    ///
+    /// The number of nodes a query settles is what a paper reports when it
+    /// wants a figure that does not depend on the machine it ran on, and it is
+    /// the one number that says whether a query is doing too much work or
+    /// merely doing it slowly. For a plain search this is the rank itself, by
+    /// definition, so only the searches over the cells are worth counting.
+    Scans(Scans),
+
     /// Times the pairs, and counts nothing while doing it.
     ///
     /// A run that is being counted is not a run worth timing, so this reads
@@ -87,6 +96,29 @@ pub struct Check {
 }
 
 #[derive(Parser, Debug)]
+pub struct Scans {
+    /// path to the input graph
+    #[clap(short, long, action)]
+    pub graph: String,
+
+    /// path to the level directory that chipper wrote
+    #[clap(short, long, action)]
+    pub directory: String,
+
+    /// which search to count
+    #[clap(short, long, value_enum, default_value_t = Engine::Mld)]
+    pub engine: Engine,
+
+    /// the pairs to count over, as written by the sample mode
+    #[clap(short, long, action)]
+    pub input: String,
+
+    /// where to write the counts
+    #[clap(short, long, action)]
+    pub out: String,
+}
+
+#[derive(Parser, Debug)]
 pub struct Time {
     /// path to the input graph
     #[clap(short, long, action)]
@@ -116,6 +148,18 @@ pub struct Time {
     /// What to seed the shuffling with, so a run can be repeated.
     #[clap(long, default_value_t = 0x_5EED, action)]
     pub seed: u64,
+
+    /// Number the nodes so that the ones a search over the cells reads come
+    /// first, which is what the searches spend their misses on. Says nothing
+    /// for the engines that do not walk the cells.
+    #[clap(long, action)]
+    pub renumber: bool,
+
+    /// The numbering an instance was already written under, as the renumber
+    /// binary wrote it. The pairs arrive as nodes of the input, so this is
+    /// what puts them into the numbering and reads the answers back out.
+    #[clap(long, default_value_t = String::new(), action)]
+    pub ordering: String,
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,6 +170,8 @@ pub enum Engine {
     Bidirectional,
     /// a search over the cells of the partition
     Mld,
+    /// a search over the cells of the partition, run from both ends
+    BidirectionalMld,
 }
 
 impl Display for Engine {
@@ -134,6 +180,7 @@ impl Display for Engine {
             Engine::Dijkstra => write!(f, "dijkstra"),
             Engine::Bidirectional => write!(f, "bidirectional"),
             Engine::Mld => write!(f, "mld"),
+            Engine::BidirectionalMld => write!(f, "bidirectional-mld"),
         }
     }
 }
@@ -150,6 +197,14 @@ impl Display for Arguments {
                 writeln!(f, "out: {}", sample.out)?;
                 writeln!(f, "pairs of nodes drawn at random: {}", sample.pairs)
             }
+            Mode::Scans(scans) => {
+                writeln!(f, "mode: scans")?;
+                writeln!(f, "graph: {}", scans.graph)?;
+                writeln!(f, "directory: {}", scans.directory)?;
+                writeln!(f, "engine: {}", scans.engine)?;
+                writeln!(f, "in: {}", scans.input)?;
+                writeln!(f, "out: {}", scans.out)
+            }
             Mode::Check(check) => {
                 writeln!(f, "mode: check")?;
                 writeln!(f, "graph: {}", check.graph)?;
@@ -164,7 +219,9 @@ impl Display for Arguments {
                 writeln!(f, "in: {}", time.input)?;
                 writeln!(f, "out: {}", time.out)?;
                 writeln!(f, "warmup: {} pairs", time.warmup)?;
-                writeln!(f, "seed: {}", time.seed)
+                writeln!(f, "seed: {}", time.seed)?;
+                writeln!(f, "renumbered: {}", time.renumber)?;
+                writeln!(f, "ordering: {}", time.ordering)
             }
         }
     }

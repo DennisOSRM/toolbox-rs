@@ -48,7 +48,7 @@ pub fn node_at(side: usize, row: usize, column: usize) -> NodeID {
 /// different amount to cross in each direction. A query that assumed otherwise
 /// would be right on a grid of the other kind and wrong on a road.
 #[must_use]
-pub fn grid_edges(side: usize, both_ways: bool) -> Vec<InputEdge<usize>> {
+pub fn grid_edges(side: usize, both_ways: bool) -> Vec<InputEdge<u32>> {
     let mut edges = Vec::new();
     for row in 0..side {
         for column in 0..side {
@@ -142,7 +142,7 @@ pub fn grid_directory(side: usize) -> LevelDirectory {
 /// Panics unless the side is a power of two of at least four. See
 /// [`grid_directory`].
 #[must_use]
-pub fn grid(side: usize, both_ways: bool) -> (StaticGraph<usize>, LevelDirectory) {
+pub fn grid(side: usize, both_ways: bool) -> (StaticGraph<u32>, LevelDirectory) {
     (
         StaticGraph::new(grid_edges(side, both_ways)),
         grid_directory(side),

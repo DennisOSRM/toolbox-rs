@@ -6,7 +6,7 @@
 //! ```
 use std::env;
 use toolbox_rs::{
-    alpha_shape::alpha_shape, convex_hull::monotone_chain, geometry::Point2D, io,
+    alpha_shape::alpha_shape, convex_hull::monotone_chain, geometry::Point2D, graph::NodeID, io,
     level_directory::LevelDirectory,
 };
 
@@ -25,7 +25,7 @@ fn main() {
 
     let mut nodes_of_cell = vec![Vec::new(); directory.cells_on_level(level)];
     for node in 0..directory.number_of_nodes() {
-        nodes_of_cell[directory.cell_of(node, level) as usize].push(node);
+        nodes_of_cell[directory.cell_of(node as NodeID, level) as usize].push(node);
     }
 
     // metres to degrees of latitude, near enough over a cell
