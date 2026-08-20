@@ -7,7 +7,7 @@ use core::cmp::min;
 struct DFSNode {
     caller: NodeID,
     index: usize,
-    lowlink: NodeID,
+    lowlink: usize,
     neighbor: usize,
     on_stack: bool,
 }
@@ -17,7 +17,7 @@ impl DFSNode {
         DFSNode {
             caller: NodeID::MAX,
             index: usize::MAX,
-            lowlink: NodeID::MAX,
+            lowlink: usize::MAX,
             neighbor: usize::MAX,
             on_stack: false,
         }
@@ -55,7 +55,7 @@ impl Tarjan {
             }
             // TODO: consider moving the following to a function to save indentation
 
-            self.stack_push(n, usize::MAX, index);
+            self.stack_push(n, NodeID::MAX, index);
             index += 1;
             let mut last = n;
 
@@ -93,7 +93,7 @@ impl Tarjan {
                     }
 
                     let new_last = self.dfs_state[last].caller;
-                    if new_last != usize::MAX {
+                    if new_last != NodeID::MAX {
                         self.dfs_state[new_last].lowlink = min(
                             self.dfs_state[new_last].lowlink,
                             self.dfs_state[last].lowlink,
@@ -109,7 +109,7 @@ impl Tarjan {
         assignment
     }
 
-    fn stack_push(&mut self, w: usize, caller: usize, index: usize) {
+    fn stack_push(&mut self, w: NodeID, caller: NodeID, index: usize) {
         self.dfs_state[w].caller = caller;
         self.dfs_state[w].neighbor = 0;
         self.dfs_state[w].index = index;

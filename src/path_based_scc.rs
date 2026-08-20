@@ -17,6 +17,8 @@
  * - Last SCC gets number 2
  */
 
+use crate::graph::NodeID;
+
 use crate::graph::Graph;
 
 #[derive(Clone, Copy)]
@@ -28,7 +30,7 @@ enum DfsState {
 
 pub struct PathBasedScc {
     scc: Vec<usize>,
-    stack: Vec<usize>,  // Stack S
+    stack: Vec<NodeID>, // Stack S
     bounds: Vec<usize>, // Stack B
     component: usize,
 }

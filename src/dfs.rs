@@ -9,7 +9,7 @@ pub struct DFS {
     target_set: BitVec,
     parents: Vec<NodeID>,
     target: NodeID,
-    stack: Vec<usize>,
+    stack: Vec<NodeID>,
     empty_target_set: bool,
 }
 
@@ -145,7 +145,7 @@ impl DFS {
 
 pub struct PathIter<'a> {
     dfs: &'a DFS,
-    id: usize,
+    id: NodeID,
 }
 
 impl PathIter<'_> {
@@ -180,6 +180,7 @@ impl Iterator for PathIter<'_> {
 mod tests {
     use crate::edge::InputEdge;
     use crate::graph::Graph;
+    use crate::graph::NodeID;
     use crate::{dfs::DFS, static_graph::StaticGraph};
 
     #[test]
@@ -202,7 +203,7 @@ mod tests {
         let path = dfs.fetch_node_path();
         assert_eq!(path, vec![0, 4, 5]);
 
-        let path: Vec<usize> = dfs.path_iter().collect();
+        let path: Vec<NodeID> = dfs.path_iter().collect();
         assert_eq!(path, vec![5, 4, 0]);
     }
 
@@ -246,7 +247,7 @@ mod tests {
         let path = dfs.fetch_node_path_from_node(3);
         assert_eq!(path, vec![0, 4, 5, 3]);
 
-        let path: Vec<usize> = dfs.path_iter().collect();
+        let path: Vec<NodeID> = dfs.path_iter().collect();
         assert!(path.is_empty());
     }
 
@@ -271,7 +272,7 @@ mod tests {
         let path = dfs.fetch_node_path_from_node(3);
         assert_eq!(path, vec![1, 5, 3]);
 
-        let path: Vec<usize> = dfs.path_iter().collect();
+        let path: Vec<NodeID> = dfs.path_iter().collect();
         assert!(path.is_empty());
     }
 }
