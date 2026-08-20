@@ -46,7 +46,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
             && self
                 .edge_array
                 .iter()
-                .all(|edge_entry| (edge_entry.target) < self.number_of_nodes())
+                .all(|edge_entry| (edge_entry.target as usize) < self.number_of_nodes())
             && self
                 .node_array
                 .windows(2)
@@ -73,7 +73,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
         }
         let range = self.edge_range(s);
         self.edge_array[range.clone()]
-            .binary_search_by_key(&t, |entry| entry.target)
+            .binary_search_by_key(&t, |entry| entry.target as NodeID)
             .ok()
             .map(|offset| range.start + offset)
     }
@@ -163,7 +163,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
         graph.edge_array = input
             .iter()
             .map(move |edge| EdgeArrayEntry {
-                target: edge.target(),
+                target: u32::try_from(edge.target()).expect("the graph is too large to hold"),
                 data: *edge.data(),
             })
             .collect();
@@ -210,7 +210,7 @@ impl<T: Ord + Copy> Graph<T> for StaticGraph<T> {
     }
 
     fn target(&self, e: EdgeID) -> NodeID {
-        self.edge_array[e].target
+        self.edge_array[e].target as NodeID
     }
 
     fn data(&self, e: EdgeID) -> &T {

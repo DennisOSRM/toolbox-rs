@@ -18,22 +18,22 @@
 //! ```
 use std::env;
 use toolbox_rs::{
-    edge::InputEdge, graph::Graph, io, level_directory::LevelDirectory, static_graph,
+    edge::InputEdge, graph::Graph, graph::NodeID, io, level_directory::LevelDirectory, static_graph,
 };
 
 fn main() {
     let args = env::args().collect::<Vec<_>>();
     assert!(args.len() >= 3, "usage: cell_components <graph> <levels>");
 
-    let edges = io::read_vec_from_file::<InputEdge<usize>>(&args[1]);
+    let edges = io::read_edges_from_file(&args[1]);
     // walk the arcs both ways round, as a cell is built out of the cells it has
     // an arc to whichever way that arc runs
     let both_ways = edges
         .iter()
         .flat_map(|edge| {
             [
-                InputEdge::new(edge.source, edge.target, 1_usize),
-                InputEdge::new(edge.target, edge.source, 1_usize),
+                InputEdge::new(edge.source, edge.target, 1_u32),
+                InputEdge::new(edge.target, edge.source, 1_u32),
             ]
         })
         .collect::<Vec<_>>();
@@ -54,7 +54,7 @@ fn main() {
 
     for level in 0..directory.levels() {
         let cells = (0..graph.number_of_nodes())
-            .map(|node| directory.cell_of(node, level))
+            .map(|node| directory.cell_of(node as NodeID, level))
             .collect::<Vec<_>>();
 
         // walk each cell without leaving it and count how many walks it takes
@@ -77,8 +77,8 @@ fn main() {
                 size += 1;
                 for edge in graph.edge_range(node) {
                     let target = graph.target(edge);
-                    if !seen[target] && cells[target] as usize == cell {
-                        seen[target] = true;
+                    if !seen[target as usize] && cells[target as usize] as usize == cell {
+                        seen[target as usize] = true;
                         stack.push(target);
                     }
                 }

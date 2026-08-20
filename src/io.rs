@@ -1,13 +1,16 @@
 use std::{
     fs::File,
-    io::{self, BufRead, BufReader, Read},
+    io::{self, BufRead, BufReader, Read, Write},
     path::Path,
 };
 
 use itertools::Itertools;
 use rkyv::rancor;
 
-use crate::edge::{InputEdge, TrivialEdge};
+use crate::{
+    edge::{InputEdge, StoredEdge, TrivialEdge},
+    graph::NodeID,
+};
 
 // The output is wrapped in a Result to allow matching on errors
 // Returns an Iterator to the Reader of the lines of the file.
@@ -66,8 +69,99 @@ where
     rkyv::from_bytes::<T, rancor::Error>(&buf).unwrap()
 }
 
+/// Reads a graph's arcs, narrowing what each costs to four bytes.
+///
+/// What is on disk holds a cost of eight bytes, which is what the crate wrote
+/// before the adjacency array was narrowed. Reading it as it lies and narrowing
+/// here keeps every instance already written readable, and the wide form never
+/// reaches the array a search walks.
+///
+/// # Panics
+///
+/// Panics if the file cannot be read, or holds a cost too wide for four bytes.
+#[must_use]
+pub fn read_edges_from_file(filename: &str) -> Vec<InputEdge<u32>> {
+    read_vec_from_file::<StoredEdge<usize>>(filename)
+        .into_iter()
+        .map(|edge| {
+            InputEdge::new(
+                NodeID::try_from(edge.source).expect("the graph is too large to hold"),
+                NodeID::try_from(edge.target).expect("the graph is too large to hold"),
+                u32::try_from(edge.data).expect("an arc costing more than four bytes reach"),
+            )
+        })
+        .collect()
+}
+
+/// Writes a value for [`read_from_file`] to read back.
+///
+/// # Panics
+///
+/// Panics if the file cannot be written or the value cannot be laid out.
+pub fn write_to_file<T>(filename: &str, value: &T)
+where
+    T: for<'a> rkyv::Serialize<
+            rkyv::api::high::HighSerializer<
+                rkyv::util::AlignedVec,
+                rkyv::ser::allocator::ArenaHandle<'a>,
+                rancor::Error,
+            >,
+        >,
+{
+    let bytes = rkyv::to_bytes::<rancor::Error>(value).unwrap();
+    let mut file = std::io::BufWriter::new(File::create(filename).unwrap());
+    file.write_all(&bytes).unwrap();
+    file.flush().unwrap();
+}
+
+/// Writes a list for [`read_vec_from_file`] to read back.
+///
+/// # Panics
+///
+/// Panics if the file cannot be written or the list cannot be laid out.
+pub fn write_vec_to_file<T>(filename: &str, values: &Vec<T>)
+where
+    Vec<T>: for<'a> rkyv::Serialize<
+            rkyv::api::high::HighSerializer<
+                rkyv::util::AlignedVec,
+                rkyv::ser::allocator::ArenaHandle<'a>,
+                rancor::Error,
+            >,
+        >,
+{
+    write_to_file(filename, values);
+}
+
 #[cfg(test)]
 mod tests {
+    /// What was written has to read back as what it was, or an instance
+    /// written out by one step is not the instance the next one reads.
+    #[test]
+    fn a_list_reads_back_as_it_was_written() {
+        use crate::edge::InputEdge;
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let path = file.path().to_str().unwrap();
+        let written = vec![
+            InputEdge::new(0, 1, 7_usize),
+            InputEdge::new(1, 2, 11),
+            InputEdge::new(2, 0, 3),
+        ];
+        super::write_vec_to_file(path, &written);
+        let read = super::read_vec_from_file::<InputEdge<usize>>(path);
+        assert_eq!(read, written);
+    }
+
+    #[test]
+    fn a_value_reads_back_as_it_was_written() {
+        use crate::level_directory::LevelDirectory;
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let path = file.path().to_str().unwrap();
+        let written = LevelDirectory::new(vec![0, 0, 1, 1], vec![vec![0, 0]]);
+        super::write_to_file(path, &written);
+        let read: LevelDirectory = super::read_from_file(path);
+        assert_eq!(read, written);
+    }
+
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;

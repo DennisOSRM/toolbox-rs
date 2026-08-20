@@ -25,12 +25,47 @@ macOS and Windows. Run them locally before pushing.
   seems to need it, say so instead of adding it.
 - Benchmarks are criterion, under `benches/`.
 
+## Routing changes
+
+A change to the routing code — the searches over the cells, the customization,
+the partition, the heaps they sit on — ships with a plot showing what it did.
+That includes a change that turns out to do nothing: "no measurable effect" is a
+result, and a plot is how it is shown rather than asserted. A speedup claimed in
+a commit message and nowhere else is not a measurement.
+
+```
+ranks sample -g graph.toolbox -s 200 -o pairs.csv
+ranks time -g graph.toolbox -i pairs.csv -e dijkstra -o d.csv
+ranks time -g graph.toolbox -d levels.bin -i pairs.csv -e mld --warmup 4800 -o m.csv
+cat d.csv <(tail -n +2 m.csv) > timings.csv
+Rscript scripts/rank_plot.R timings.csv ranks.png
+```
+
+Give `--warmup` the number of pairs in the file. The overlay is worked out as it
+is asked for, so without it the run measures customizing cells rather than
+searching them, and the cost lands on whichever pairs happened to come first.
+
+Hold the change against the code it replaces on the same machine in the same
+sitting, and say which instance the numbers came from. A rank axis is the point:
+a change that helps a query across a continent and hurts one across a town is a
+trade to show, not an average to hide. Put the plot in the pull request beside
+the reasoning.
+
 ## Commits
 
-Write the subject as a plain sentence saying what the change does — "Read a
-single rkyv value from a file", not a conventional-commit prefix. The body
-says why the change is worth making and what it rules out; wrap it at 72
-columns.
+Write the subject as a plain sentence naming the algorithm or the structure
+the change touches — "Read a single rkyv value from a file", "Add a packed
+partition", "Use NodeID for the node containers in the graph searches". Not a
+conventional-commit prefix.
+
+Name what was done, not what it was worth. "Halve what a query costs" says
+nothing about what was changed to halve it, and somebody later asking where
+the packed partition came from, or which commit narrowed the arcs, will not
+find it by reading the subjects. The measurement belongs in the body, where
+there is room to say what it was measured against.
+
+The body says why the change is worth making and what it rules out; wrap it
+at 72 columns.
 
 Do not sign the commit as an agent. No `Co-authored-by:` line, no
 `Claude-Session:` trailer, no tool footer — the commit message is about the
@@ -42,8 +77,15 @@ Say in the PR description that it was written with agent assistance, and link
 the session there. That is the place for it, and it keeps the history clean
 while the provenance stays where a reviewer looks for it.
 
+The title follows the same rule as a commit subject: name the algorithm or
+the structure, not the effect. A pull request doing several things names the
+ones a reviewer would search for rather than reaching for the sum of them.
+
 Otherwise the description carries the reasoning: what the change does, why,
-what it leaves for later, and which PR it is stacked on if any.
+what it leaves for later, and which PR it is stacked on if any. Lead it with
+the change itself — the signatures, the fields, the behaviour — and put the
+motivation after; a reviewer opens a diff already knowing they want to see
+what moved.
 
 Releases are cut by release-plz from `main`; do not bump the version in
 `Cargo.toml` by hand.

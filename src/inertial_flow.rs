@@ -10,6 +10,7 @@ use crate::{
     dinic::Dinic,
     edge::{InputEdge, TrivialEdge},
     geometry::FPCoordinate,
+    graph::NodeID,
     max_flow::{MaxFlow, ResidualEdgeData},
     renumbering_table::RenumberingTable,
 };
@@ -129,8 +130,8 @@ pub fn sub_step(
         .iter()
         .map(|edge| -> InputEdge<ResidualEdgeData> {
             InputEdge::<ResidualEdgeData> {
-                source: edge.source,
-                target: edge.target,
+                source: edge.source as NodeID,
+                target: edge.target as NodeID,
                 data: ResidualEdgeData::new(1),
             }
         })
@@ -147,8 +148,8 @@ pub fn sub_step(
             renumbering_table.set(e.target, current_id);
             current_id += 1;
         }
-        e.source = renumbering_table.get(e.source);
-        e.target = renumbering_table.get(e.target);
+        e.source = renumbering_table.get(e.source) as NodeID;
+        e.target = renumbering_table.get(e.target) as NodeID;
     }
     debug!("[{axis}] instantiating min-cut solver, epsilon 0.25");
 

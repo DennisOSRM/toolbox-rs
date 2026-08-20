@@ -176,8 +176,8 @@ impl Dinic {
 impl MaxFlow for Dinic {
     fn from_edge_list(
         edge_list: Vec<InputEdge<ResidualEdgeData>>,
-        source: usize,
-        target: usize,
+        source: NodeID,
+        target: NodeID,
     ) -> Self {
         debug_assert!(!edge_list.is_empty());
 
@@ -219,7 +219,7 @@ impl MaxFlow for Dinic {
             let forward = node_array[edge.source];
             node_array[edge.source] += 1;
             edge_array[forward] = EdgeArrayEntry {
-                target: edge.target,
+                target: u32::try_from(edge.target).expect("the graph is too large to hold"),
                 data: ResidualArcData {
                     capacity: edge.data.capacity,
                     reverse_capacity: 0,
@@ -229,7 +229,7 @@ impl MaxFlow for Dinic {
             let reverse = node_array[edge.target];
             node_array[edge.target] += 1;
             edge_array[reverse] = EdgeArrayEntry {
-                target: edge.source,
+                target: u32::try_from(edge.source).expect("the graph is too large to hold"),
                 data: ResidualArcData {
                     capacity: 0,
                     reverse_capacity: edge.data.capacity,

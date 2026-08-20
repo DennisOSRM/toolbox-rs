@@ -31,14 +31,14 @@
 
 use log::debug;
 use rustc_hash::FxHashSet;
-use std::sync::Arc;
 
 use crate::{
-    customization::{CellDistances, Customization, Level},
+    border_levels::BorderLevels,
+    customization::Customization,
     dense_heap::DenseHeap,
     graph::{Graph, NodeID},
     heap_stats::{Counters, HeapStats, Untracked},
-    level_directory::CellId,
+    packed_partition::PackedPartition,
 };
 
 /// A query that counts nothing, which is what a run whose time is being taken
@@ -50,41 +50,31 @@ pub type TrackedMldQuery = MldSearch<Counters>;
 
 pub struct MldSearch<S: HeapStats<NodeID>> {
     queue: DenseHeap<S>,
-    /// The cells of every level, held for the length of a run.
-    ///
-    /// `of_node` is a flat array over the nodes, so the cell a node sits in on
-    /// a level is one index. Asking the directory instead walks the parent of
-    /// a cell once per level between the finest and the one asked about, and
-    /// the walk happens for every node the search settles.
-    levels: Vec<Arc<Level>>,
-    /// The tabulated cells, by level and then by cell.
-    ///
-    /// Filled as cells are first stepped over. Reaching for one through the
-    /// customization takes a lock, and a query that did that per settled node
-    /// would spend its time queueing rather than searching. Cell ids run from
-    /// zero without gaps, so this is an index rather than a hash.
-    matrices: Vec<Vec<Option<Arc<CellDistances>>>>,
-    /// Which cells hold a target, by level and then by cell.
+    /// Which cells hold a target, every level in one run of memory with
+    /// `holds_target_at` saying where each of them starts.
     ///
     /// Worked out once per run by walking each target up the levels. Asking
     /// instead whether any target shares a cell with a node would cost the
     /// number of targets, every time a node is settled.
-    holds_target: Vec<Vec<bool>>,
-    /// The cells opened and the cells marked, so that the two above can be put
-    /// back the way they were without walking them.
     ///
-    /// Both are as wide as the partition, which on a continent is two thirds
-    /// of a million cells over six levels. Building them per run costs more
-    /// than the search does by a factor of ten thousand at a low rank: a
-    /// search that settles a hundred nodes was paying to allocate and zero six
-    /// megabytes first. They are built once, and a run puts back only what it
-    /// touched.
-    opened: Vec<(usize, CellId)>,
-    marked: Vec<(usize, CellId)>,
+    /// One run rather than a run per level: a level apiece is a vector of
+    /// vectors, so reading it is the pointer of the level and then the entry,
+    /// two reads that depend on one another, and the query makes that read for
+    /// every node it settles.
+    holds_target: Vec<bool>,
+    holds_target_at: Vec<usize>,
+    /// The cells marked, so that `holds_target` can be put back the way it was
+    /// without walking it.
+    ///
+    /// It is as wide as the partition, which on a continent is two thirds of a
+    /// million cells over six levels. Building it per run costs more than the
+    /// search does by a factor of ten thousand at a low rank: a search that
+    /// settles a hundred nodes was paying to allocate and zero six megabytes
+    /// first. It is built once, and a run puts back only what it touched.
+    marked: Vec<usize>,
     targets: FxHashSet<NodeID>,
-    /// The cell the source sits in on each level, worked out once rather than
-    /// per settled node.
-    source_cells: Vec<CellId>,
+    /// The cells the source sits in, as the one word that says all of them.
+    source_word: u128,
     reached_target_count: usize,
 }
 
@@ -99,13 +89,11 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
     pub fn new() -> Self {
         Self {
             queue: DenseHeap::<S>::new(),
-            levels: Vec::new(),
-            matrices: Vec::new(),
             holds_target: Vec::new(),
-            opened: Vec::new(),
+            holds_target_at: Vec::new(),
             marked: Vec::new(),
             targets: FxHashSet::default(),
-            source_cells: Vec::new(),
+            source_word: 0,
             reached_target_count: 0,
         }
     }
@@ -132,48 +120,34 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
         self.queue.clear();
         self.targets.clear();
         self.reached_target_count = 0;
-        for (level, cell) in self.opened.drain(..) {
-            self.matrices[level][cell as usize] = None;
+        for place in self.marked.drain(..) {
+            self.holds_target[place] = false;
         }
-        for (level, cell) in self.marked.drain(..) {
-            self.holds_target[level][cell as usize] = false;
-        }
-        self.levels.clear();
-        self.source_cells.clear();
+        self.source_word = 0;
     }
 
     /// Makes room for the cells of this partition, once.
     ///
     /// A second run over the same partition finds the room already there and
     /// the entries already put back by `clear`.
-    ///
-    /// How many cells a level holds is read off `nodes_of_cell`, which has an
-    /// entry apiece and is already in hand. `LevelDirectory::cells_on_level`
-    /// answers the same question by taking the largest cell id it can find,
-    /// which on the finest level is a walk of every node of the graph. Asking
-    /// it here, once per level per run, cost a query of eighteen million
-    /// comparisons before it settled its first node.
-    fn make_room_for(&mut self) {
-        let wanted = self
-            .levels
-            .iter()
-            .map(|level| level.nodes_of_cell.len())
-            .collect::<Vec<_>>();
-        let fits = self.matrices.len() == wanted.len()
-            && self
-                .matrices
-                .iter()
-                .zip(&wanted)
-                .all(|(held, &cells)| held.len() == cells);
-        if fits {
+    fn make_room_for(&mut self, customization: &Customization) {
+        let levels = customization.directory().levels();
+        let mut at = Vec::with_capacity(levels + 1);
+        let mut total = 0;
+        for level in 0..levels {
+            at.push(total);
+            total += customization.cells_on_level(level);
+        }
+        at.push(total);
+        if self.holds_target_at == at {
             debug_assert!(
-                self.matrices.iter().all(|l| l.iter().all(Option::is_none)),
-                "a cell was left open by the run before this one"
+                !self.holds_target.iter().any(|&marked| marked),
+                "a cell was left marked by the run before this one"
             );
             return;
         }
-        self.matrices = wanted.iter().map(|&cells| vec![None; cells]).collect();
-        self.holds_target = wanted.iter().map(|&cells| vec![false; cells]).collect();
+        self.holds_target_at = at;
+        self.holds_target = vec![false; total];
     }
 
     /// Runs the search, and says whether every target was reached.
@@ -192,31 +166,27 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
         self.targets.extend(targets.iter().copied());
         debug!("[start] source: {source}, {} targets", self.targets.len());
 
-        let directory = customization.directory();
-        let level_count = directory.levels();
-
         // everything that is asked per settled node is worked out once here
-        self.levels = (0..level_count)
-            .map(|level| customization.level(level))
-            .collect();
-        self.make_room_for();
+        let partition = customization.partition();
+        let level_count = partition.levels();
+        self.make_room_for(customization);
         for &target in &self.targets {
+            let word = partition.word(target);
             for level in 0..level_count {
-                let cell = self.levels[level].of_node[target];
-                if !self.holds_target[level][cell as usize] {
-                    self.holds_target[level][cell as usize] = true;
-                    self.marked.push((level, cell));
+                let place = self.holds_target_at[level] + partition.cell_in(word, level) as usize;
+                if !self.holds_target[place] {
+                    self.holds_target[place] = true;
+                    self.marked.push(place);
                 }
             }
         }
 
-        // the source's cell never moves during a run, so it is not asked for
-        // once per settled node
-        self.source_cells = (0..level_count)
-            .map(|level| self.levels[level].of_node[source])
-            .collect();
+        // the source's cells never move during a run, so they are not asked
+        // for once per settled node
+        self.source_word = partition.word(source);
 
         let graph = customization.graph();
+        let borders = customization.border_levels();
         self.queue.insert(source, 0, source);
 
         while !self.queue.is_empty() && self.reached_target_count < self.targets.len() {
@@ -228,7 +198,7 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
                 debug!("[done] reached {u} at {distance}");
             }
 
-            match self.level_to_step_over(u) {
+            match self.level_to_step_over(partition, u) {
                 Some(level) => {
                     // The cell is stepped over once for each way into it, not
                     // once for each of its border nodes. A node reached from
@@ -241,12 +211,17 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
                     // continent with a thousand nodes on its border that is a
                     // thousand relaxations for each of a thousand nodes, in
                     // place of a thousand for each way in.
-                    let cell = self.levels[level].of_node[u];
                     let came_from = self.queue.data(u);
-                    if u == came_from || self.levels[level].of_node[came_from] != cell {
-                        self.relax_across_cell(customization, u, distance, level);
+                    if u == came_from
+                        || !partition.same_cell_at(
+                            partition.word(u),
+                            partition.word(came_from),
+                            level,
+                        )
+                    {
+                        self.relax_across_cell(customization, partition, u, distance, level);
                     }
-                    self.relax_out_of_cell(graph, u, distance, level);
+                    self.relax_out_of_cell(graph, borders, u, distance, level);
                 }
                 None => self.relax_every_arc(graph, u, distance),
             }
@@ -257,11 +232,18 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
 
     /// The highest level whose cell around this node holds neither the source
     /// nor a target, and `None` when even the finest one does.
+    ///
+    /// The source is answered by the bits of the two words, which needs no
+    /// cell id at all. The targets are a set rather than one node, so those
+    /// are still asked cell by cell, and the walk runs no further than the
+    /// level the source alone allows.
     #[inline(never)]
-    fn level_to_step_over(&self, node: NodeID) -> Option<usize> {
-        (0..self.levels.len()).rev().find(|&level| {
-            let cell = self.levels[level].of_node[node];
-            cell != self.source_cells[level] && !self.holds_target[level][cell as usize]
+    fn level_to_step_over(&self, partition: &PackedPartition, node: NodeID) -> Option<usize> {
+        let word = partition.word(node);
+        let highest = partition.highest_different_level(word, self.source_word)?;
+        (0..=highest).rev().find(|&level| {
+            let place = self.holds_target_at[level] + partition.cell_in(word, level) as usize;
+            !self.holds_target[place]
         })
     }
 
@@ -270,23 +252,16 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
     fn relax_across_cell(
         &mut self,
         customization: &Customization,
+        partition: &PackedPartition,
         node: NodeID,
         distance: usize,
         level: usize,
     ) {
-        let cell = self.levels[level].of_node[node];
-        let distances = match &self.matrices[level][cell as usize] {
-            Some(distances) => distances.clone(),
-            None => {
-                // the one time this cell is reached for, and the only time a
-                // lock is taken for it
-                let Some(distances) = customization.distances_of(level, cell) else {
-                    return;
-                };
-                self.matrices[level][cell as usize] = Some(distances.clone());
-                self.opened.push((level, cell));
-                distances
-            }
+        let cell = partition.cell_of(node, level);
+        // an index into the customization, which lends the table out rather
+        // than counting it, so this is a load rather than a lock and a hash
+        let Some(distances) = customization.distances_of(level, cell) else {
+            return;
         };
 
         let Some(from) = distances.place_of(node) else {
@@ -308,30 +283,33 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
     /// The arcs of the graph that leave the cell, which is how the search gets
     /// out of one.
     #[inline(never)]
-    fn relax_out_of_cell<G: Graph<usize>>(
+    fn relax_out_of_cell<G: Graph<u32>>(
         &mut self,
         graph: &G,
+        borders: &BorderLevels,
         node: NodeID,
         distance: usize,
         level: usize,
     ) {
-        let cell = self.levels[level].of_node[node];
         for edge in graph.edge_range(node) {
-            let target = graph.target(edge);
-            if self.levels[level].of_node[target] == cell {
+            // read in step with the arcs rather than asked of the partition,
+            // which would be a jump into an array as wide as the graph for
+            // every arc of every node the search settles
+            if !borders.leaves_cell(edge, level) {
                 continue;
             }
-            self.relax(target, distance + *graph.data(edge), node);
+            let target = graph.target(edge);
+            self.relax(target, distance + *graph.data(edge) as usize, node);
         }
     }
 
     /// Every arc of the graph, which is what a plain Dijkstra does and what
     /// this does inside a cell that holds the source or a target.
     #[inline(never)]
-    fn relax_every_arc<G: Graph<usize>>(&mut self, graph: &G, node: NodeID, distance: usize) {
+    fn relax_every_arc<G: Graph<u32>>(&mut self, graph: &G, node: NodeID, distance: usize) {
         for edge in graph.edge_range(node) {
             let target = graph.target(edge);
-            self.relax(target, distance + *graph.data(edge), node);
+            self.relax(target, distance + *graph.data(edge) as usize, node);
         }
     }
 
@@ -355,6 +333,7 @@ mod tests {
         customization::Customization,
         edge::InputEdge,
         grid_graph::{grid, grid_directory, grid_edges},
+        heap_stats::SettledNodes,
         level_directory::LevelDirectory,
         static_graph::StaticGraph,
         unidirectional_dijkstra::{TrackedUnidirectionalDijkstra, UnidirectionalDijkstra},
@@ -364,12 +343,12 @@ mod tests {
     /// Four nodes in a line, cut into two cells of two, joined above.
     fn two_cells() -> Customization {
         let edges = vec![
-            InputEdge::new(0, 1, 3_usize),
-            InputEdge::new(1, 0, 3_usize),
-            InputEdge::new(1, 2, 7_usize),
-            InputEdge::new(2, 1, 7_usize),
-            InputEdge::new(2, 3, 5_usize),
-            InputEdge::new(3, 2, 5_usize),
+            InputEdge::new(0, 1, 3_u32),
+            InputEdge::new(1, 0, 3_u32),
+            InputEdge::new(1, 2, 7_u32),
+            InputEdge::new(2, 1, 7_u32),
+            InputEdge::new(2, 3, 5_u32),
+            InputEdge::new(3, 2, 5_u32),
         ];
         let directory = LevelDirectory::new(vec![0, 0, 1, 1], vec![vec![0, 0]]);
         Customization::new(StaticGraph::new(edges), directory)
@@ -413,7 +392,7 @@ mod tests {
     #[test]
     fn a_target_that_cannot_be_reached_is_reported() {
         // one arc into node 1 and none out of it, so nothing reaches node 0
-        let edges = vec![InputEdge::new(0, 1, 1_usize)];
+        let edges = vec![InputEdge::new(0, 1, 1_u32)];
         let directory = LevelDirectory::new(vec![0, 1], vec![vec![0, 0]]);
         let customization = Customization::new(StaticGraph::new(edges), directory);
         let mut query = MldQuery::new();
@@ -430,14 +409,14 @@ mod tests {
             // the same grid, with weights that give the cells something to say
             let mut edges = grid_edges(side, both_ways);
             for edge in &mut edges {
-                edge.data = rng.random_range(1..25_usize);
+                edge.data = rng.random_range(1..25_u32);
             }
             let customization = Customization::new(StaticGraph::new(edges), grid_directory(side));
 
             let count = side * side;
-            let source = rng.random_range(0..count);
+            let source = rng.random_range(0..count as NodeID);
             let targets = (0..rng.random_range(1..6))
-                .map(|_| rng.random_range(0..count))
+                .map(|_| rng.random_range(0..count as NodeID))
                 .collect::<Vec<_>>();
 
             let mut query = MldQuery::new();
@@ -480,6 +459,58 @@ mod tests {
     #[test]
     fn a_grid_of_six_levels_agrees_with_a_plain_search() {
         agrees_with_dijkstra_on(64, false, 0x_51E5, 3);
+    }
+
+    /// The query holds the coarsest level it can, and goes finer only inside
+    /// the two cells that force it to.
+    ///
+    /// Every level of a partition is sound to step over, so a query that
+    /// descended early would hand back exactly the same distances and no test
+    /// of those distances would say a word. It would only be slower. The rule
+    /// is worked out here from the directory rather than asked of the query,
+    /// so that this checks the rule rather than the code that implements it.
+    #[test]
+    fn nothing_is_stepped_over_below_the_top_level_without_cause() {
+        let side = 64;
+        let (graph, directory) = grid(side, true);
+        let customization = Customization::new(graph, directory);
+        let directory = customization.directory();
+        let top = directory.levels() - 1;
+
+        let mut query = MldSearch::<SettledNodes>::new();
+        let count = side * side;
+        for (source, target) in [
+            (0, count - 1),
+            (count - 1, 0),
+            (7, count / 2),
+            (count / 3, 11),
+        ] {
+            query.run(&customization, source, &[target]);
+            let source_top = directory.cell_of(source, top);
+            let target_top = directory.cell_of(target, top);
+
+            let mut settled = 0;
+            for &node in query.stats().settled() {
+                settled += 1;
+                let cell = directory.cell_of(node, top);
+                if cell == source_top || cell == target_top {
+                    continue;
+                }
+                // outside both ends' top cells, so the top level holds neither
+                // end and is the one to step over
+                let used = (0..=top).rev().find(|&level| {
+                    let at = directory.cell_of(node, level);
+                    at != directory.cell_of(source, level) && at != directory.cell_of(target, level)
+                });
+                assert_eq!(
+                    used,
+                    Some(top),
+                    "{source} to {target}: node {node} sits outside both ends' top cells \
+                     and was stepped over at {used:?} rather than at {top}"
+                );
+            }
+            assert!(settled > 0, "{source} to {target}: nothing was settled");
+        }
     }
 
     /// Stepping over a cell is supposed to save work, not merely give the same

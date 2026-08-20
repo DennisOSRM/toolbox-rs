@@ -15,17 +15,19 @@
 //! path through the level above may take.
 
 use crate::{
+    border_levels::BorderLevels,
     edge::InputEdge,
     graph::{Graph, NodeID},
     level_directory::{CellId, LevelDirectory},
     one_to_many_dijkstra::OneToManyDijkstra,
+    packed_partition::PackedPartition,
     static_graph::StaticGraph,
 };
 use log::debug;
 use rustc_hash::FxHashMap;
 use std::{
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
@@ -51,6 +53,16 @@ pub struct CellDistances {
     /// another. Four bytes reach four thousand million, and the longest way
     /// across europe by the clock is under a million.
     matrix: Vec<u32>,
+    /// The same table with its rows and columns swapped.
+    ///
+    /// A search running backwards through a cell wants what it costs to reach
+    /// one border node from each of the others, which is a column of the table
+    /// above: on the coarsest cells of a continent that is a few hundred reads
+    /// with a couple of thousand bytes between one and the next, where the
+    /// forward side reads the same count off one run of memory. Measured, the
+    /// stride cost more at the top of the rank axis than running from both
+    /// ends saved there. Held twice, both sides read a run.
+    transposed: Vec<u32>,
     /// Where each border node sits in `border_nodes`.
     ///
     /// A query reads the matrix once per arc it takes across a cell, and the
@@ -62,6 +74,31 @@ pub struct CellDistances {
 }
 
 impl CellDistances {
+    /// Holds a table and the same table with rows and columns swapped.
+    ///
+    /// `matrix` is by row: entry `source * width + target` is what it costs to
+    /// get from the border node in place `source` to the one in place
+    /// `target`.
+    fn holding(
+        border_nodes: Vec<u32>,
+        matrix: Vec<u32>,
+        place_of: FxHashMap<NodeID, usize>,
+    ) -> Self {
+        let width = border_nodes.len();
+        let mut transposed = vec![u32::MAX; matrix.len()];
+        for source in 0..width {
+            for target in 0..width {
+                transposed[target * width + source] = matrix[source * width + target];
+            }
+        }
+        Self {
+            border_nodes,
+            matrix,
+            transposed,
+            place_of,
+        }
+    }
+
     /// What it costs to get from one border node of the cell to another,
     /// both given as their place in `border_nodes`.
     #[must_use]
@@ -89,6 +126,20 @@ impl CellDistances {
     pub fn row(&self, source: usize) -> &[u32] {
         let width = self.border_nodes.len();
         &self.matrix[source * width..(source + 1) * width]
+    }
+
+    /// What it costs to reach one border node from each of the others, as a
+    /// column of the table.
+    ///
+    /// This is what a search running backwards through the cell reads, where a
+    /// search running forwards reads a [`row`](Self::row). It is held as a run
+    /// of memory of its own, so that both sides walk their entries in step
+    /// with `border_nodes` rather than one of them striding the whole table.
+    ///
+    /// An entry of `u32::MAX` is a pair with no way between them.
+    pub fn column(&self, target: usize) -> &[u32] {
+        let width = self.border_nodes.len();
+        &self.transposed[target * width..(target + 1) * width]
     }
 
     /// Where a node sits in `border_nodes`, and `None` for a node that is not
@@ -127,7 +178,7 @@ impl CellDistances {
 /// Panics in a debug build if the node it starts from is not in the cell,
 /// which would answer about a cell the caller did not ask about.
 pub(crate) fn distances_within_cell(
-    graph: &StaticGraph<usize>,
+    graph: &StaticGraph<u32>,
     of_node: &[CellId],
     cell: CellId,
     from: NodeID,
@@ -150,7 +201,7 @@ pub(crate) fn distances_within_cell(
             if of_node[target] != cell || settled.contains_key(&target) {
                 continue;
             }
-            queue.push(Reverse((cost + *graph.data(edge), target)));
+            queue.push(Reverse((cost + *graph.data(edge) as usize, target)));
         }
     }
     settled
@@ -194,7 +245,7 @@ pub struct CellReport<'a> {
 
 /// The cells of a partition, worked out level by level as they are asked for.
 pub struct Customization {
-    graph: StaticGraph<usize>,
+    graph: StaticGraph<u32>,
     directory: LevelDirectory,
     /// The cells of a level, and the nodes of each of them, worked out the
     /// first time that level is asked about. Walking the directory per node
@@ -204,10 +255,33 @@ pub struct Customization {
     /// report on it. What a cell is worth saying about differs by caller, and
     /// the bounding box a map wants means nothing to a checker.
     report: Option<Reporter>,
-    /// A cell is customized the first time it is asked about and kept
-    /// afterwards. Doing it up front would mean walking every cell of the
-    /// input before the first request can be answered.
-    tabulated: Mutex<FxHashMap<(usize, CellId), Arc<CellDistances>>>,
+    /// The table of every cell, by level and then by cell, worked out the
+    /// first time that cell is asked about and kept afterwards. Doing it up
+    /// front would mean walking every cell of the input before the first
+    /// request can be answered.
+    ///
+    /// Cell ids are places on their level and run from zero without gaps, so
+    /// this is an index rather than a hash. That is what it is for. A query
+    /// reads a table out of here for every node it settles, and behind a map
+    /// under a lock that read was a hash of a pair, a probe into a table of
+    /// two thirds of a million entries scattered over the heap, and a pair of
+    /// atomics to hand out a counted pointer. Behind an index it is a load and
+    /// a branch.
+    ///
+    /// The tables are boxed, so an empty slot is a pointer and a word rather
+    /// than a whole [`CellDistances`]. A continent has cells enough for that
+    /// to be the difference between ten megabytes of slots and a hundred.
+    tabulated: Vec<Vec<OnceLock<Box<CellDistances>>>>,
+    /// The cells of every level a node sits in, one word apiece, worked out on
+    /// the first request for them.
+    ///
+    /// This is what a query asks per settled node, and the reason it is here
+    /// rather than built per run is that it costs a walk of the whole graph.
+    partition: OnceLock<PackedPartition>,
+    /// The level each arc of the graph leaves a cell at, worked out on the
+    /// first request for it. This is what a query reads instead of asking the
+    /// partition about the far end of every arc it looks at.
+    border_levels: OnceLock<BorderLevels>,
     /// how many cells have been customized so far, and how long that took in
     /// total. The customization runs cell by cell as the cells are asked
     /// about, so the sum is what the whole of it would have cost up front.
@@ -217,18 +291,30 @@ pub struct Customization {
 
 impl Customization {
     #[must_use]
-    pub fn new(graph: StaticGraph<usize>, directory: LevelDirectory) -> Self {
+    pub fn new(graph: StaticGraph<u32>, directory: LevelDirectory) -> Self {
         assert_eq!(
             graph.number_of_nodes(),
             directory.number_of_nodes(),
             "the directory was built over another graph"
         );
+        // A slot apiece, so that a table is found by index later. How many
+        // cells a level holds is a walk of the level below it, which is why it
+        // is asked here once rather than per request.
+        let tabulated = (0..directory.levels())
+            .map(|level| {
+                (0..directory.cells_on_level(level))
+                    .map(|_| OnceLock::new())
+                    .collect()
+            })
+            .collect();
         Self {
             graph,
             directory,
             levels: Mutex::new(FxHashMap::default()),
             report: None,
-            tabulated: Mutex::new(FxHashMap::default()),
+            tabulated,
+            partition: OnceLock::new(),
+            border_levels: OnceLock::new(),
             customized_cells: AtomicUsize::new(0),
             customization_nanos: AtomicU64::new(0),
         }
@@ -245,13 +331,46 @@ impl Customization {
     }
 
     /// the graph the partition was built over
-    pub const fn graph(&self) -> &StaticGraph<usize> {
+    pub const fn graph(&self) -> &StaticGraph<u32> {
         &self.graph
     }
 
     /// which cell each node sits in on each level
     pub const fn directory(&self) -> &LevelDirectory {
         &self.directory
+    }
+
+    /// The same, packed one word to a node, which is what a query reads.
+    ///
+    /// Worked out on the first request and kept, as it is a walk of the whole
+    /// graph and every run over this partition wants the same answer.
+    pub fn partition(&self) -> &PackedPartition {
+        self.partition
+            .get_or_init(|| PackedPartition::of(&self.directory))
+    }
+
+    /// The level each arc of the graph leaves a cell at.
+    ///
+    /// Worked out on the first request and kept. A search running backwards
+    /// walks the graph turned around, whose arcs are held in another order, so
+    /// that side builds its own over the reversed graph.
+    pub fn border_levels(&self) -> &BorderLevels {
+        self.border_levels
+            .get_or_init(|| BorderLevels::of(&self.graph, self.partition()))
+    }
+
+    /// How many cells a level holds.
+    ///
+    /// Read off the room made for their tables, which was counted when this
+    /// was built. Asking the directory instead is a walk of the level below,
+    /// and on the finest level that is every node of the graph.
+    ///
+    /// # Panics
+    ///
+    /// Panics for a level the partition does not have.
+    #[must_use]
+    pub fn cells_on_level(&self, level: usize) -> usize {
+        self.tabulated[level].len()
     }
 
     /// how many cells have been worked out so far
@@ -268,11 +387,17 @@ impl Customization {
     /// Drops the distances worked out so far, for a caller that is done with
     /// them. The cells of a level are kept, as they cost a walk of the whole
     /// graph and take no room per cell.
-    pub fn forget(&self) {
-        self.tabulated
-            .lock()
-            .expect("the tabulation cache is poisoned")
-            .clear();
+    ///
+    /// This asks for the customization to itself, rather than sharing it as
+    /// everything else here does. Handing a table out is a borrow that lasts
+    /// as long as the caller reads it, and dropping the tables underneath a
+    /// reader is the one thing the slots cannot be asked to allow.
+    pub fn forget(&mut self) {
+        for level in &mut self.tabulated {
+            for slot in level {
+                slot.take();
+            }
+        }
     }
 
     /// The cells of a level, worked out on the first request for it and kept.
@@ -289,9 +414,10 @@ impl Customization {
         let of_node = (0..self.directory.number_of_nodes())
             .map(|node| self.directory.cell_of(node, level))
             .collect::<Vec<_>>();
-        let mut nodes_of_cell = vec![Vec::new(); self.directory.cells_on_level(level)];
+        let mut nodes_of_cell: Vec<Vec<NodeID>> =
+            vec![Vec::new(); self.directory.cells_on_level(level)];
         for (node, &cell) in of_node.iter().enumerate() {
-            nodes_of_cell[cell as usize].push(node);
+            nodes_of_cell[cell as usize].push(node as NodeID);
         }
 
         // one walk of the arcs marks both ends of every arc that leaves a cell,
@@ -339,29 +465,28 @@ impl Customization {
             .clone()
     }
 
-    /// Hands out the distances of a cell, tabulating them on the first request.
-    pub fn distances_of(&self, level: usize, cell: CellId) -> Option<Arc<CellDistances>> {
-        if let Some(distances) = self
-            .tabulated
-            .lock()
-            .expect("the tabulation cache is poisoned")
-            .get(&(level, cell))
-        {
-            return Some(distances.clone());
+    /// Hands out the distances of a cell, tabulating them on the first
+    /// request, and `None` for a cell with no border node to tabulate.
+    ///
+    /// The table is lent out rather than counted, so a caller that reads one
+    /// per settled node pays a load for it and nothing else.
+    #[inline]
+    pub fn distances_of(&self, level: usize, cell: CellId) -> Option<&CellDistances> {
+        let slot = self.tabulated.get(level)?.get(cell as usize)?;
+        if let Some(distances) = slot.get() {
+            return Some(distances.as_ref());
         }
 
-        // as with the levels, the first entry to land is the one that is kept.
+        // As with the levels, the first table to land is the one that is kept.
         // Two callers asking for the same cell at once both work it out, and
-        // the tally counts both, as both were really paid for.
-        let distances = Arc::new(self.tabulate(level, cell)?);
-        Some(
-            self.tabulated
-                .lock()
-                .expect("the tabulation cache is poisoned")
-                .entry((level, cell))
-                .or_insert(distances)
-                .clone(),
-        )
+        // the tally counts both, as both were really paid for. This is asked
+        // for by hand rather than through `get_or_init` because a cell is
+        // built out of the cells below it, so tabulating one asks for others
+        // while this is running, and because a cell with no border has no
+        // table to put in the slot at all.
+        let distances = self.tabulate(level, cell)?;
+        let _ = slot.set(Box::new(distances));
+        slot.get().map(Box::as_ref)
     }
 
     /// Builds the graph of a cell and runs a search from each of its border
@@ -400,7 +525,7 @@ impl Customization {
         };
 
         // whichever graph it is, the border nodes lead its numbering
-        let border = (0..border_nodes.len()).collect::<Vec<_>>();
+        let border = (0..border_nodes.len() as NodeID).collect::<Vec<_>>();
         let mut matrix = vec![u32::MAX; border_nodes.len() * border_nodes.len()];
         let mut dijkstra = OneToManyDijkstra::new();
         for &source in &border {
@@ -449,14 +574,14 @@ impl Customization {
             .enumerate()
             .map(|(place, &node)| (node, place))
             .collect();
-        Some(CellDistances {
-            border_nodes: border_nodes
+        Some(CellDistances::holding(
+            border_nodes
                 .into_iter()
                 .map(|node| u32::try_from(node).expect("the graph is too large to hold"))
                 .collect(),
             matrix,
             place_of,
-        })
+        ))
     }
 
     /// The arcs of the graph that stay inside a cell, with its border nodes
@@ -468,7 +593,7 @@ impl Customization {
         cell: CellId,
         nodes: &[NodeID],
         border_nodes: &[NodeID],
-    ) -> StaticGraph<usize> {
+    ) -> StaticGraph<u32> {
         // TODO: faster hashmap implementation using tabhash or fibonacci hash
         let mut of_node = FxHashMap::default();
         for &node in border_nodes {
@@ -509,7 +634,7 @@ impl Customization {
         level: usize,
         cell: CellId,
         cells: &Level,
-    ) -> (StaticGraph<usize>, FxHashMap<NodeID, usize>, usize) {
+    ) -> (StaticGraph<u32>, FxHashMap<NodeID, usize>, usize) {
         let below = self.level(level - 1);
 
         // the border nodes of this cell lead the numbering, the border nodes of
@@ -535,6 +660,9 @@ impl Customization {
                     if source == target || weight == usize::MAX {
                         continue;
                     }
+                    // it came out of a table of four byte numbers, and the one
+                    // that would not fit is the one the guard above turned away
+                    let weight = u32::try_from(weight).expect("a cell wider than four bytes");
                     let next = of_node.len();
                     let from = *of_node.entry(from as usize).or_insert(next);
                     let next = of_node.len();
@@ -643,6 +771,32 @@ impl Customization {
 
 #[cfg(test)]
 mod tests {
+
+    /// A column of the table says what a row of it says, read the other way
+    /// round. A search running backwards through a cell reads columns, so the
+    /// two have to agree or one direction of it is wrong.
+    #[test]
+    fn a_column_reads_what_the_rows_hold() {
+        let (graph, directory) = crate::grid_graph::grid(8, true);
+        let customization = Customization::new(graph, directory);
+        let distances = customization
+            .distances_of(0, 0)
+            .expect("the first cell has a table");
+
+        let width = distances.border_nodes.len();
+        assert!(width > 1, "a cell of a grid has a border");
+        for target in 0..width {
+            let column = distances.column(target);
+            assert_eq!(
+                column.len(),
+                width,
+                "a column is as tall as the cell is wide"
+            );
+            for (source, &across) in column.iter().enumerate() {
+                assert_eq!(across, distances.row(source)[target]);
+            }
+        }
+    }
     use super::*;
     use rand::{RngExt, SeedableRng, prelude::StdRng};
 
@@ -653,12 +807,12 @@ mod tests {
     /// Two cells of two nodes each, joined on the level above.
     fn two_cells() -> Customization {
         let edges = vec![
-            InputEdge::new(0, 1, 3_usize),
-            InputEdge::new(1, 0, 3_usize),
-            InputEdge::new(1, 2, 7_usize),
-            InputEdge::new(2, 1, 7_usize),
-            InputEdge::new(2, 3, 5_usize),
-            InputEdge::new(3, 2, 5_usize),
+            InputEdge::new(0, 1, 3_u32),
+            InputEdge::new(1, 0, 3_u32),
+            InputEdge::new(1, 2, 7_u32),
+            InputEdge::new(2, 1, 7_u32),
+            InputEdge::new(2, 3, 5_u32),
+            InputEdge::new(3, 2, 5_u32),
         ];
         // nodes 0 and 1 in one cell, nodes 2 and 3 in the other, joined above
         let directory = LevelDirectory::new(vec![0, 0, 1, 1], vec![vec![0, 0]]);
@@ -746,7 +900,7 @@ mod tests {
     fn a_border_node_is_one_an_arc_reaches_as_well_as_one_it_leaves() {
         // 0 -> 1 only, and the two sit in different cells. Node 1 can only be
         // entered from outside, and is a way into its cell all the same.
-        let edges = vec![InputEdge::new(0, 1, 1_usize)];
+        let edges = vec![InputEdge::new(0, 1, 1_u32)];
         let directory = LevelDirectory::new(vec![0, 1], vec![vec![0, 0]]);
         let customization = Customization::new(StaticGraph::new(edges), directory);
 
@@ -786,19 +940,25 @@ mod tests {
         let first = customization.distances_of(0, 0).expect("no cell 0");
         let second = customization.distances_of(0, 0).expect("no cell 0");
         // the second request is answered from the same tabulation
-        assert!(Arc::ptr_eq(&first, &second));
+        assert!(std::ptr::eq(first, second));
     }
 
     #[test]
     fn what_was_forgotten_is_worked_out_again() {
-        let customization = two_cells();
-        let first = customization.distances_of(0, 0).expect("no cell 0");
+        let mut customization = two_cells();
+        let first = customization
+            .distances_of(0, 0)
+            .expect("no cell 0")
+            .border_nodes
+            .clone();
         customization.forget();
         let second = customization.distances_of(0, 0).expect("no cell 0");
 
-        assert!(!Arc::ptr_eq(&first, &second), "the cell was kept");
-        assert_eq!(first.border_nodes, second.border_nodes);
-        assert_eq!(customization.customized_cells(), 2);
+        // the tally is what says it was worked out twice. Holding the two
+        // tables against each other would not: the second is free to land on
+        // the memory the first was let go of.
+        assert_eq!(customization.customized_cells(), 2, "the cell was kept");
+        assert_eq!(first, second.border_nodes);
     }
 
     /// A border node whose arcs all leave its cell has none inside it, so it
@@ -809,10 +969,10 @@ mod tests {
         // nodes 0 and 1 sit in one cell and are joined only through node 2,
         // which sits in another, so the first cell holds no arc at all
         let edges = vec![
-            InputEdge::new(0, 2, 1_usize),
-            InputEdge::new(2, 0, 1_usize),
-            InputEdge::new(1, 2, 1_usize),
-            InputEdge::new(2, 1, 1_usize),
+            InputEdge::new(0, 2, 1_u32),
+            InputEdge::new(2, 0, 1_u32),
+            InputEdge::new(1, 2, 1_u32),
+            InputEdge::new(2, 1, 1_u32),
         ];
         let directory = LevelDirectory::new(vec![0, 0, 1], vec![vec![0, 0]]);
         let customization = Customization::new(StaticGraph::new(edges), directory);
@@ -831,7 +991,7 @@ mod tests {
     #[test]
     fn a_cell_without_a_border_is_not_tabulated() {
         // one cell holding the whole graph, so no arc ever leaves it
-        let edges = vec![InputEdge::new(0, 1, 1_usize), InputEdge::new(1, 0, 1_usize)];
+        let edges = vec![InputEdge::new(0, 1, 1_u32), InputEdge::new(1, 0, 1_u32)];
         let directory = LevelDirectory::new(vec![0, 0], Vec::new());
         let customization = Customization::new(StaticGraph::new(edges), directory);
 
@@ -866,10 +1026,10 @@ mod tests {
         // two cells of the finest level under one cell above, joined to the
         // world outside but not to each other
         let edges = vec![
-            InputEdge::new(0, 2, 1_usize),
-            InputEdge::new(2, 0, 1_usize),
-            InputEdge::new(1, 2, 1_usize),
-            InputEdge::new(2, 1, 1_usize),
+            InputEdge::new(0, 2, 1_u32),
+            InputEdge::new(2, 0, 1_u32),
+            InputEdge::new(1, 2, 1_u32),
+            InputEdge::new(2, 1, 1_u32),
         ];
         // nodes 0 and 1 in cells 0 and 1, which meet above; node 2 sits apart
         let directory = LevelDirectory::new(vec![0, 1, 2], vec![vec![0, 0, 1]]);
@@ -902,12 +1062,12 @@ mod tests {
                 .filter(|&node| cells.on_border[node])
                 .collect::<Vec<_>>();
             let graph = customization.subgraph_of(&cells, cell, nodes, &border);
-            let indices = (0..border.len()).collect::<Vec<_>>();
+            let indices = (0..border.len() as NodeID).collect::<Vec<_>>();
             let mut dijkstra = OneToManyDijkstra::new();
 
             assert_eq!(
                 built_up.border_nodes,
-                border.iter().map(|&n| n as u32).collect::<Vec<_>>(),
+                border.iter().map(|&node| node as u32).collect::<Vec<_>>(),
                 "cell {cell}"
             );
             for (source, _) in border.iter().enumerate() {
@@ -940,7 +1100,7 @@ mod tests {
                 .filter(|&node| cells.on_border[node])
                 .collect::<Vec<_>>();
             let graph = customization.subgraph_of(&cells, cell, nodes, &border);
-            let indices = (0..border.len()).collect::<Vec<_>>();
+            let indices = (0..border.len() as NodeID).collect::<Vec<_>>();
             let mut dijkstra = OneToManyDijkstra::new();
 
             for source in 0..border.len() {
@@ -1054,7 +1214,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "the directory was built over another graph")]
     fn a_directory_of_another_graph_is_caught() {
-        let edges = vec![InputEdge::new(0, 1, 1_usize), InputEdge::new(1, 0, 1_usize)];
+        let edges = vec![InputEdge::new(0, 1, 1_u32), InputEdge::new(1, 0, 1_u32)];
         let directory = LevelDirectory::new(vec![0, 0, 1], Vec::new());
         let _ = Customization::new(StaticGraph::new(edges), directory);
     }
@@ -1083,32 +1243,26 @@ mod tests {
         // It is this cell's own table that is bent rather than one of the
         // cells below it. Bending a cell below only makes the overlay route
         // around it, and on a grid there is always a way round.
-        let customization = grid(8);
-        let built = customization.distances_of(1, 0).expect("no cell to bend");
-        assert!(
-            built.border_nodes.len() > 1,
-            "a 1x1 matrix holds only a zero"
-        );
-
-        let mut matrix = built.matrix.clone();
-        matrix[1] += 100;
-        customization
-            .tabulated
-            .lock()
-            .expect("the tabulation cache is poisoned")
-            .insert(
-                (1, 0),
-                Arc::new(CellDistances {
-                    place_of: built
-                        .border_nodes
-                        .iter()
-                        .enumerate()
-                        .map(|(place, &node)| (node as usize, place))
-                        .collect(),
-                    border_nodes: built.border_nodes.clone(),
-                    matrix,
-                }),
+        let mut customization = grid(8);
+        let (border_nodes, mut matrix) = {
+            let built = customization.distances_of(1, 0).expect("no cell to bend");
+            assert!(
+                built.border_nodes.len() > 1,
+                "a 1x1 matrix holds only a zero"
             );
+            (built.border_nodes.clone(), built.matrix.clone())
+        };
+        matrix[1] += 100;
+        let place_of = border_nodes
+            .iter()
+            .enumerate()
+            .map(|(place, &node)| (node as usize, place))
+            .collect();
+        customization.tabulated[1][0] = OnceLock::from(Box::new(CellDistances::holding(
+            border_nodes.clone(),
+            matrix,
+            place_of,
+        )));
 
         let check = customization.check(1, 0);
         assert_eq!(
@@ -1118,7 +1272,7 @@ mod tests {
         );
         let wrong = check.mismatches[0];
         assert_eq!(wrong.built, wrong.expected + 100);
-        assert_eq!(wrong.from, built.border_nodes[0] as usize);
-        assert_eq!(wrong.to, built.border_nodes[1] as usize);
+        assert_eq!(wrong.from, border_nodes[0] as usize);
+        assert_eq!(wrong.to, border_nodes[1] as usize);
     }
 }

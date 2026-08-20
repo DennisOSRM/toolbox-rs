@@ -18,7 +18,7 @@
 //! needs the graph with every arc turned around. On an undirected network the
 //! two are the same object and it can simply be handed over twice.
 use crate::{
-    addressable_binary_heap::AddressableHeapWithStats,
+    dense_heap::DenseHeap,
     graph::{Graph, INVALID_NODE_ID, NodeID},
     heap_stats::{Counters, HeapStats, Untracked},
 };
@@ -33,8 +33,8 @@ pub type BidirectionalDijkstra = BidirectionalSearch<Untracked>;
 pub type TrackedBidirectionalDijkstra = BidirectionalSearch<Counters>;
 
 pub struct BidirectionalSearch<S: HeapStats<NodeID>> {
-    forward: AddressableHeapWithStats<NodeID, usize, NodeID, S>,
-    backward: AddressableHeapWithStats<NodeID, usize, NodeID, S>,
+    forward: DenseHeap<S>,
+    backward: DenseHeap<S>,
     upper_bound: usize,
     meeting_node: NodeID,
 }
@@ -49,8 +49,8 @@ impl<S: HeapStats<NodeID>> BidirectionalSearch<S> {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            forward: AddressableHeapWithStats::new(),
-            backward: AddressableHeapWithStats::new(),
+            forward: DenseHeap::new(),
+            backward: DenseHeap::new(),
             upper_bound: usize::MAX,
             meeting_node: INVALID_NODE_ID,
         }
@@ -87,9 +87,9 @@ impl<S: HeapStats<NodeID>> BidirectionalSearch<S> {
     /// The node it settles is done for this side, so whatever the other side
     /// holds for that node is a path from one end to the other through it, and
     /// the shortest such path seen so far is what the search is bounded by.
-    fn advance<G: Graph<usize>>(
-        queue: &mut AddressableHeapWithStats<NodeID, usize, NodeID, S>,
-        other: &AddressableHeapWithStats<NodeID, usize, NodeID, S>,
+    fn advance<G: Graph<u32>>(
+        queue: &mut DenseHeap<S>,
+        other: &DenseHeap<S>,
         graph: &G,
         bound: &mut usize,
         meeting: &mut NodeID,
@@ -111,7 +111,7 @@ impl<S: HeapStats<NodeID>> BidirectionalSearch<S> {
 
         for edge in graph.edge_range(u) {
             let v = graph.target(edge);
-            queue.insert_or_decrease(v, distance + *graph.data(edge), u);
+            queue.insert_or_decrease(v, distance + *graph.data(edge) as usize, u);
         }
     }
 
@@ -122,7 +122,7 @@ impl<S: HeapStats<NodeID>> BidirectionalSearch<S> {
     /// network the same graph is handed over twice.
     ///
     /// The object is reusable and clears itself on every run.
-    pub fn run<G: Graph<usize>>(&mut self, graph: &G, reverse: &G, s: NodeID, t: NodeID) -> usize {
+    pub fn run<G: Graph<u32>>(&mut self, graph: &G, reverse: &G, s: NodeID, t: NodeID) -> usize {
         self.clear();
 
         self.forward.insert(s, 0, s);
@@ -176,7 +176,7 @@ impl<S: HeapStats<NodeID>> BidirectionalSearch<S> {
         let mut path = vec![self.meeting_node];
         let mut node = self.meeting_node;
         loop {
-            let parent = *self.forward.data(node);
+            let parent = self.forward.data(node);
             if parent == node {
                 break;
             }
@@ -187,7 +187,7 @@ impl<S: HeapStats<NodeID>> BidirectionalSearch<S> {
 
         let mut node = self.meeting_node;
         loop {
-            let parent = *self.backward.data(node);
+            let parent = self.backward.data(node);
             if parent == node {
                 break;
             }
@@ -214,7 +214,7 @@ mod tests {
     };
 
     /// The same arcs, turned around, which is what the backward side walks.
-    fn reversed(edges: &[InputEdge<usize>]) -> StaticGraph<usize> {
+    fn reversed(edges: &[InputEdge<u32>]) -> StaticGraph<u32> {
         StaticGraph::new(
             edges
                 .iter()
@@ -223,16 +223,16 @@ mod tests {
         )
     }
 
-    fn create_graph() -> Vec<InputEdge<usize>> {
+    fn create_graph() -> Vec<InputEdge<u32>> {
         vec![
-            InputEdge::new(0, 1, 3),
-            InputEdge::new(1, 2, 3),
-            InputEdge::new(4, 2, 1),
-            InputEdge::new(2, 3, 6),
-            InputEdge::new(0, 4, 2),
-            InputEdge::new(4, 5, 2),
-            InputEdge::new(5, 3, 7),
-            InputEdge::new(1, 5, 2),
+            InputEdge::new(0, 1, 3_u32),
+            InputEdge::new(1, 2, 3_u32),
+            InputEdge::new(4, 2, 1_u32),
+            InputEdge::new(2, 3, 6_u32),
+            InputEdge::new(0, 4, 2_u32),
+            InputEdge::new(4, 5, 2_u32),
+            InputEdge::new(5, 3, 7_u32),
+            InputEdge::new(1, 5, 2_u32),
         ]
     }
 
@@ -276,11 +276,7 @@ mod tests {
             for source in 0..count {
                 for target in 0..count {
                     if source != target && rng.random_range(0..3) == 0 {
-                        edges.push(InputEdge::new(
-                            source,
-                            target,
-                            rng.random_range(1..20_usize),
-                        ));
+                        edges.push(InputEdge::new(source, target, rng.random_range(1..20_u32)));
                     }
                 }
             }
@@ -319,11 +315,7 @@ mod tests {
             for source in 0..count {
                 for target in 0..count {
                     if source != target && rng.random_range(0..3) == 0 {
-                        edges.push(InputEdge::new(
-                            source,
-                            target,
-                            rng.random_range(1..20_usize),
-                        ));
+                        edges.push(InputEdge::new(source, target, rng.random_range(1..20_u32)));
                     }
                 }
             }
@@ -346,12 +338,12 @@ mod tests {
                     assert_eq!(path.first(), Some(&source), "round {round}: {path:?}");
                     assert_eq!(path.last(), Some(&target), "round {round}: {path:?}");
 
-                    let mut walked = 0;
+                    let mut walked = 0_usize;
                     for step in path.windows(2) {
                         let edge = graph
                             .find_edge(step[0], step[1])
                             .expect("the way takes an arc the graph does not have");
-                        walked += *graph.data(edge);
+                        walked += *graph.data(edge) as usize;
                     }
                     assert_eq!(walked, distance, "round {round}: {path:?}");
                 }
@@ -428,7 +420,7 @@ mod tests {
     /// some distance the two sides happened to agree on.
     #[test]
     fn an_unreachable_end_stays_unreachable() {
-        let edges = vec![InputEdge::new(0, 1, 1_usize), InputEdge::new(2, 3, 1_usize)];
+        let edges = vec![InputEdge::new(0, 1, 1_u32), InputEdge::new(2, 3, 1_u32)];
         let graph = StaticGraph::new(edges.clone());
         let reverse = reversed(&edges);
         let mut search = BidirectionalDijkstra::new();

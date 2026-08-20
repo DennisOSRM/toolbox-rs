@@ -4,7 +4,7 @@
 /// edge.
 use crate::{
     edge::{Edge, EdgeData},
-    graph::{EdgeArrayEntry, EdgeID, Graph, INVALID_NODE_ID, NodeID},
+    graph::{EdgeArrayEntry, EdgeID, Graph, NodeID},
 };
 use core::ops::Range;
 
@@ -58,12 +58,12 @@ impl<T: Clone + Copy> DynamicGraph<T> {
     pub fn check_integrity(&self) -> bool {
         self.edge_array
             .iter()
-            .filter(|edge_entry| edge_entry.target != usize::MAX)
-            .all(|edge_entry| (edge_entry.target) < self.number_of_nodes())
+            .filter(|edge_entry| edge_entry.target != u32::MAX)
+            .all(|edge_entry| (edge_entry.target as usize) < self.number_of_nodes())
             && self
                 .edge_array
                 .iter()
-                .filter(|edge_entry| edge_entry.target != usize::MAX)
+                .filter(|edge_entry| edge_entry.target != u32::MAX)
                 .count()
                 == self.number_of_edges
             && self.node_array[..self.number_of_nodes]
@@ -123,7 +123,7 @@ impl<T: Clone + Copy> DynamicGraph<T> {
         graph.edge_array = input
             .iter()
             .map(move |edge| EdgeArrayEntry {
-                target: edge.target(),
+                target: u32::try_from(edge.target()).expect("the graph is too large to hold"),
                 data: *edge.data(),
             })
             .collect();
@@ -181,7 +181,7 @@ impl<T: Clone + Copy> DynamicGraph<T> {
                 self.edge_array.resize(
                     new_first_edge + new_slice_len,
                     EdgeArrayEntry {
-                        target: INVALID_NODE_ID,
+                        target: u32::MAX,
                         data, // TODO: this is dummy data, should it be T::Default()?
                     },
                 );
@@ -197,6 +197,7 @@ impl<T: Clone + Copy> DynamicGraph<T> {
         // spare edge. The following lines write the edge array entry there and
         // do the necessary book keeping to keep the graph integrity.
         let edge_id = self.node_array[source].slice_end();
+        let target = u32::try_from(target).expect("the graph is too large to hold");
         self.edge_array[edge_id] = EdgeArrayEntry { target, data };
         self.node_array[source].edge_count += 1;
         self.number_of_edges += 1;
@@ -204,12 +205,12 @@ impl<T: Clone + Copy> DynamicGraph<T> {
 
     /// Check whether the edge is unused.
     fn is_spare_edge(&self, edge: EdgeID) -> bool {
-        self.edge_array[edge].target == usize::MAX
+        self.edge_array[edge].target == u32::MAX
     }
 
     /// Make the edge unused.
     fn make_spare_edge(&mut self, edge: EdgeID) {
-        self.edge_array[edge].target = usize::MAX
+        self.edge_array[edge].target = u32::MAX
     }
 
     /// Removes an edge by adjusting counters, moving the edge-to-delete to the
@@ -264,7 +265,7 @@ impl<T: Copy> Graph<T> for DynamicGraph<T> {
     }
 
     fn target(&self, e: EdgeID) -> NodeID {
-        self.edge_array[e].target
+        self.edge_array[e].target as NodeID
     }
 
     fn data(&self, e: EdgeID) -> &T {

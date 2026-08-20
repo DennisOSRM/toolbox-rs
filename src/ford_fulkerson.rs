@@ -24,8 +24,8 @@ pub struct FordFulkerson {
 impl MaxFlow for FordFulkerson {
     fn from_edge_list(
         mut edge_list: Vec<InputEdge<ResidualEdgeData>>,
-        source: usize,
-        target: usize,
+        source: NodeID,
+        target: NodeID,
     ) -> Self {
         let number_of_edges = edge_list.len();
 
