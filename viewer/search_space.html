@@ -14,9 +14,11 @@
   ground to each cell it steps over and comes back down, so it can be followed
   end to end and every jump in it is a level the search changed at.
 
-  Nothing draws a line at a height. What a map draws at a height is a polygon
-  pushed up between two of them, so the steps and the risers were written out
-  as polygons already, each carrying the two heights it is drawn between.
+  Nothing draws a line or a point at a height. What a map draws at a height is
+  a polygon pushed up between two of them, so every mark here was written out
+  as a polygon already, each carrying the two heights it is drawn between and
+  the colour it is drawn in. Which is why there is so little in this file: the
+  thinking is upstream, and this only hands it to maplibre.
 
   There is no basemap. The tiles would say nothing this is about, and asking
   for them means asking somebody else's server for permission to look at your
@@ -31,7 +33,7 @@
                font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
   #map { position: absolute; inset: 0; }
   .panel {
-    position: absolute; top: 12px; left: 12px; z-index: 2; width: 232px;
+    position: absolute; top: 12px; left: 12px; z-index: 2; width: 252px;
     background: #17171a; border: 1px solid #2b2b30; border-radius: 8px;
     padding: 12px 14px; box-shadow: 0 6px 24px rgba(0,0,0,.45);
   }
@@ -53,25 +55,15 @@
 <div id="map"></div>
 <div class="panel">
   <h1>Search space over the cells</h1>
-  <p class="sub">Each level floats above the one below. Drag with the right button to tilt.</p>
+  <p class="sub">A cell is a shade of the cell holding it. Drag with the right button to tilt.</p>
   <div id="levels"></div>
   <hr>
-  <div class="row"><label><input type="checkbox" id="settled" checked>
-    <span class="sw" style="background:#6f8fd8"></span>settled nodes</label></div>
-  <div class="row"><label><input type="checkbox" id="packed" checked>
-    <span class="sw" style="background:#e0a33c"></span>the way, by level</label></div>
-  <div class="row"><label><input type="checkbox" id="riser" checked>
-    <span class="sw" style="background:#7c6ba8"></span>jumps between levels</label></div>
-  <div class="row"><label><input type="checkbox" id="unpacked" checked>
-    <span class="sw" style="background:#e8503c"></span>the way through the graph</label></div>
+  <div id="kinds"></div>
   <hr>
   <div class="row"><label for="spread">level spacing</label></div>
   <input type="range" id="spread" min="0" max="200" value="100">
   <hr>
-  <div class="stat"><span>settled</span><b id="n-settled">-</b></div>
-  <div class="stat"><span>cells stepped over</span><b id="n-cells">-</b></div>
-  <div class="stat"><span>steps</span><b id="n-packed">-</b></div>
-  <div class="stat"><span>levels</span><b id="n-levels">-</b></div>
+  <div id="stats"></div>
 </div>
 <div id="err"></div>
 
@@ -79,20 +71,29 @@
 <script>
 const source = new URLSearchParams(location.search).get('data') || 'search_space.geojson';
 
+// How far the camera is lifted off the ground fit, in pixels, so that the
+// levels standing over it are on screen.
+const RAISE = 230;
+
+// Everything drawn but the way on the ground is a polygon pushed up between
+// two heights, and every one of them carries the colour it is drawn in, so
+// there is one paint block here and the file decides the rest.
+const LIFTED = [
+  { id: 'cells',   kind: 'cell',    opacity: 0.32, label: null },
+  { id: 'relaxed', kind: 'relaxed', opacity: 0.7,  label: 'arcs it relaxed' },
+  { id: 'reached', kind: 'reached', opacity: 0.8,  label: 'reached, not settled' },
+  { id: 'settled', kind: 'settled', opacity: 0.95, label: 'settled' },
+  { id: 'packed',  kind: 'packed',  opacity: 1,    label: 'the way, by level' },
+  { id: 'riser',   kind: 'riser',   opacity: 0.9,  label: 'jumps between levels' },
+];
+// what a level's checkbox hides, being everything that happened at a level
+const BY_LEVEL = ['cells', 'relaxed', 'reached', 'settled'];
+
 const fail = message => {
   const box = document.getElementById('err');
   box.style.display = 'grid';
   box.textContent = message;
 };
-
-// One hue per level, coarse levels warmer, so a glance says how high something
-// is without reading the panel.
-// How far the camera is lifted off the ground fit, in pixels, so that the
-// levels standing over it are on screen.
-const RAISE = 230;
-
-const LEVEL_COLOURS = ['#3f7fbf', '#3f9f9f', '#5fae5f', '#c9a83c', '#d1783c', '#c9503c', '#b03c8f'];
-const colourFor = level => LEVEL_COLOURS[Math.max(0, level) % LEVEL_COLOURS.length];
 
 fetch(source)
   .then(r => r.ok ? r.json() : Promise.reject(new Error(`${source}: ${r.status}`)))
@@ -119,10 +120,22 @@ function draw(data) {
   const levels = [...new Set(features.map(f => f.properties.level))]
     .filter(l => l >= 0).sort((a, b) => a - b);
 
-  document.getElementById('n-settled').textContent = of('settled').length.toLocaleString();
-  document.getElementById('n-cells').textContent = of('cell').length.toLocaleString();
-  document.getElementById('n-packed').textContent = of('packed').length.toLocaleString();
-  document.getElementById('n-levels').textContent = levels.length;
+  const stats = document.getElementById('stats');
+  for (const [name, count] of [['settled', of('settled').length],
+                               ['reached, not settled', of('reached').length],
+                               ['arcs relaxed', of('relaxed').length],
+                               ['cells stepped over', of('cell').length],
+                               ['steps', of('packed').length],
+                               ['levels', levels.length]]) {
+    const row = document.createElement('div');
+    row.className = 'stat';
+    const what = document.createElement('span');
+    what.textContent = name;
+    const many = document.createElement('b');
+    many.textContent = count.toLocaleString();
+    row.append(what, many);
+    stats.append(row);
+  }
 
   const bounds = new maplibregl.LngLatBounds();
   for (const f of features) {
@@ -153,55 +166,18 @@ function draw(data) {
   map.on('load', () => {
     map.addSource('space', { type: 'geojson', data });
 
-    // the sheets a level's cells are drawn as
-    map.addLayer({
-      id: 'cells', type: 'fill-extrusion', source: 'space',
-      filter: ['==', ['get', 'kind'], 'cell'],
-      paint: {
-        'fill-extrusion-color': ['case',
-          ...levels.flatMap(l => [['==', ['get', 'level'], l], colourFor(l)]), '#666'],
-        'fill-extrusion-base': ['get', 'base'],
-        'fill-extrusion-height': ['get', 'height'],
-        'fill-extrusion-opacity': 0.30,
-      },
-    });
-
-    // what the search took off its queue, at the height it took it
-    map.addLayer({
-      id: 'settled', type: 'circle', source: 'space',
-      filter: ['==', ['get', 'kind'], 'settled'],
-      paint: {
-        'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 1.6, 10, 3.4],
-        'circle-color': ['case',
-          ['<', ['get', 'level'], 0], '#8d8d95',
-          ...levels.flatMap(l => [['==', ['get', 'level'], l], colourFor(l)]), '#888'],
-        'circle-opacity': 0.85,
-      },
-    });
-
-    // the way the search found, each step at its own level
-    map.addLayer({
-      id: 'packed', type: 'fill-extrusion', source: 'space',
-      filter: ['==', ['get', 'kind'], 'packed'],
-      paint: {
-        'fill-extrusion-color': '#e0a33c',
-        'fill-extrusion-base': ['get', 'base'],
-        'fill-extrusion-height': ['get', 'height'],
-        'fill-extrusion-opacity': 0.95,
-      },
-    });
-
-    // and the jump where it changes level, joining the two heights
-    map.addLayer({
-      id: 'riser', type: 'fill-extrusion', source: 'space',
-      filter: ['==', ['get', 'kind'], 'riser'],
-      paint: {
-        'fill-extrusion-color': '#7c6ba8',
-        'fill-extrusion-base': ['get', 'base'],
-        'fill-extrusion-height': ['get', 'height'],
-        'fill-extrusion-opacity': 0.55,
-      },
-    });
+    for (const layer of LIFTED) {
+      map.addLayer({
+        id: layer.id, type: 'fill-extrusion', source: 'space',
+        filter: ['==', ['get', 'kind'], layer.kind],
+        paint: {
+          'fill-extrusion-color': ['get', 'colour'],
+          'fill-extrusion-base': ['get', 'base'],
+          'fill-extrusion-height': ['get', 'height'],
+          'fill-extrusion-opacity': layer.opacity,
+        },
+      });
+    }
 
     // the way through the graph, on the ground, which is what all of it means
     map.addLayer({
@@ -209,7 +185,7 @@ function draw(data) {
       filter: ['==', ['get', 'kind'], 'unpacked'],
       layout: { 'line-cap': 'round', 'line-join': 'round' },
       paint: {
-        'line-color': '#e8503c',
+        'line-color': ['get', 'colour'],
         'line-width': ['interpolate', ['linear'], ['zoom'], 4, 2.2, 12, 5],
       },
     });
@@ -221,12 +197,14 @@ function draw(data) {
     // and the camera is then lifted to put the levels in the picture.
     map.panBy([0, -RAISE], { duration: 0 });
 
-    for (const [box, layer] of [['settled','settled'], ['packed','packed'],
-                                ['riser','riser'], ['unpacked','unpacked']]) {
-      document.getElementById(box).addEventListener('change', event => {
-        map.setLayoutProperty(layer, 'visibility', event.target.checked ? 'visible' : 'none');
-      });
+    // one row per thing the search did, so any of it can be looked at alone
+    const kinds = document.getElementById('kinds');
+    for (const layer of LIFTED.filter(l => l.label)) {
+      kinds.append(toggle(layer.label, mean(of(layer.kind).map(f => f.properties.colour)),
+        on => map.setLayoutProperty(layer.id, 'visibility', on ? 'visible' : 'none')));
     }
+    kinds.append(toggle('the way through the graph', '#f2f2f0',
+      on => map.setLayoutProperty('unpacked', 'visibility', on ? 'visible' : 'none')));
 
     // The levels are drawn where the file said, and this scales that. Pulling
     // them together is how the way is read against the ground; pushing them
@@ -234,43 +212,68 @@ function draw(data) {
     const spread = document.getElementById('spread');
     spread.addEventListener('input', () => {
       const factor = spread.value / 100;
-      for (const layer of ['cells', 'packed', 'riser']) {
-        map.setPaintProperty(layer, 'fill-extrusion-base',
-          ['*', ['get', 'base'], factor]);
-        map.setPaintProperty(layer, 'fill-extrusion-height', ['*', ['get', 'height'], factor]);
+      for (const layer of LIFTED) {
+        map.setPaintProperty(layer.id, 'fill-extrusion-base', ['*', ['get', 'base'], factor]);
+        map.setPaintProperty(layer.id, 'fill-extrusion-height', ['*', ['get', 'height'], factor]);
       }
     });
 
-    // one row per level, so a level can be looked at on its own
+    // one row per level, so a level can be looked at on its own. The swatch is
+    // the middle of what that level's cells came out, there being no one
+    // colour for a level any more.
     const rows = document.getElementById('levels');
+    const shown = new Set(levels);
     for (const level of [...levels].reverse()) {
-      const row = document.createElement('div');
-      row.className = 'row';
-      const label = document.createElement('label');
-      const box = document.createElement('input');
-      box.type = 'checkbox'; box.checked = true;
-      const swatch = document.createElement('span');
-      swatch.className = 'sw'; swatch.style.background = colourFor(level);
-      const text = document.createElement('span');
-      text.textContent = `level ${level}`;
+      const cells = features.filter(f => f.properties.level === level
+                                      && f.properties.kind === 'cell');
+      const row = toggle(`level ${level}`, mean(cells.map(f => f.properties.colour)), on => {
+        if (on) { shown.add(level); } else { shown.delete(level); }
+        const keep = ['in', ['get', 'level'], ['literal', [...shown]]];
+        for (const id of BY_LEVEL) {
+          const kind = LIFTED.find(l => l.id === id).kind;
+          // what happened below the levels happened on the ground, and no
+          // level's checkbox owns it
+          map.setFilter(id, ['all', ['==', ['get', 'kind'], kind],
+            id === 'cells' ? keep : ['any', ['<', ['get', 'level'], 0], keep]]);
+        }
+      });
       const count = document.createElement('span');
       count.className = 'count';
-      count.textContent = features.filter(f => f.properties.level === level
-                                            && f.properties.kind === 'cell').length;
-      label.append(box, swatch, text);
-      row.append(label, count);
+      count.textContent = cells.length;
+      row.append(count);
       rows.append(row);
-      box.addEventListener('change', () => {
-        const shown = [...rows.querySelectorAll('input')]
-          .map((b, i) => b.checked ? [...levels].reverse()[i] : null)
-          .filter(l => l !== null);
-        const keep = ['in', ['get', 'level'], ['literal', shown]];
-        map.setFilter('cells', ['all', ['==', ['get', 'kind'], 'cell'], keep]);
-        map.setFilter('settled', ['all', ['==', ['get', 'kind'], 'settled'],
-          ['any', ['<', ['get', 'level'], 0], keep]]);
-      });
     }
   });
+}
+
+// a labelled checkbox with a colour beside it
+function toggle(label, colour, onChange) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  const box = document.createElement('input');
+  box.type = 'checkbox'; box.checked = true;
+  const swatch = document.createElement('span');
+  swatch.className = 'sw'; swatch.style.background = colour;
+  const text = document.createElement('span');
+  text.textContent = label;
+  const wrap = document.createElement('label');
+  wrap.append(box, swatch, text);
+  row.append(wrap);
+  box.addEventListener('change', () => onChange(box.checked));
+  return row;
+}
+
+// the middle of a set of colours, for a swatch standing in for all of them
+function mean(colours) {
+  if (!colours.length) return '#777777';
+  const sum = [0, 0, 0];
+  for (const colour of colours) {
+    for (let band = 0; band < 3; band++) {
+      sum[band] += parseInt(colour.slice(1 + band * 2, 3 + band * 2), 16);
+    }
+  }
+  return '#' + sum.map(v => Math.round(v / colours.length)
+    .toString(16).padStart(2, '0')).join('');
 }
 </script>
 </body>
