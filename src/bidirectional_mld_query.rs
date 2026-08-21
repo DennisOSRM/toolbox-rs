@@ -99,6 +99,51 @@ impl<S: HeapStats<NodeID>> BidirectionalMldSearch<S> {
         self.meeting_node
     }
 
+    /// The nodes of the way that was found, from source to target, as the
+    /// search found them.
+    ///
+    /// Walked out of both queues, as with a plain search from both ends: back
+    /// from the meeting node through the forward parents, and on from it
+    /// through the backward ones.
+    ///
+    /// These are not all the nodes of the way. A step over a cell is one entry
+    /// here and a path through that cell in the graph, and turning the one
+    /// into the other is what
+    /// [`unpack`](crate::path_unpacking::unpack) is for.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a queue holds a node whose parent it does not.
+    #[must_use]
+    pub fn retrieve_packed_path(&self) -> Option<Vec<NodeID>> {
+        if self.upper_bound == usize::MAX || self.meeting_node == INVALID_NODE_ID {
+            return None;
+        }
+
+        let mut path = vec![self.meeting_node];
+        let mut node = self.meeting_node;
+        loop {
+            let parent = self.forward.data(node);
+            if parent == node {
+                break;
+            }
+            path.push(parent);
+            node = parent;
+        }
+        path.reverse();
+
+        let mut node = self.meeting_node;
+        loop {
+            let parent = self.backward.data(node);
+            if parent == node {
+                break;
+            }
+            path.push(parent);
+            node = parent;
+        }
+        Some(path)
+    }
+
     /// Clears the search space, keeping what was allocated for it.
     pub fn clear(&mut self) {
         self.forward.clear();
