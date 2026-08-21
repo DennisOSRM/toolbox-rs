@@ -156,6 +156,68 @@ impl<Node> HeapStats<Node> for SettledNodes<Node> {
     fn decreased(&mut self, _node: Node) {}
 }
 
+/// Every node that went onto the queue, and every node that came off it.
+///
+/// [`SettledNodes`] keeps what a search decided. This also keeps what it looked
+/// at and never got round to deciding, which is the other half of a picture of
+/// a search: a node it settled is one it knows the distance to, and a node it
+/// only reached is one it had a distance for and stopped before using. Drawn
+/// alike the two say the search did more work than it did.
+///
+/// Both are kept in the order the queue handed them over, and neither is
+/// de-duplicated because neither has to be: a node goes onto an addressable
+/// queue once and comes off it once. So the reached hold every node the search
+/// touched, exactly once each, and the settled are a subset of them.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Frontier<Node = NodeID> {
+    settled: Vec<Node>,
+    reached: Vec<Node>,
+}
+
+/// Written out rather than derived, as a derived one would ask the node type
+/// to have a default of its own and nothing here ever needs one.
+impl<Node> Default for Frontier<Node> {
+    fn default() -> Self {
+        Self {
+            settled: Vec::new(),
+            reached: Vec::new(),
+        }
+    }
+}
+
+impl<Node> Frontier<Node> {
+    /// The nodes that came off the queue, in the order they came off.
+    #[must_use]
+    pub fn settled(&self) -> &[Node] {
+        &self.settled
+    }
+
+    /// Every node that went onto the queue, in the order it went on.
+    ///
+    /// This holds the settled as well. What was reached and not settled is the
+    /// one without the other, which is a question for whoever is asking rather
+    /// than a second list to keep.
+    #[must_use]
+    pub fn reached(&self) -> &[Node] {
+        &self.reached
+    }
+}
+
+impl<Node> HeapStats<Node> for Frontier<Node> {
+    #[inline]
+    fn inserted(&mut self, node: Node) {
+        self.reached.push(node);
+    }
+
+    #[inline]
+    fn deleted(&mut self, node: Node) {
+        self.settled.push(node);
+    }
+
+    #[inline]
+    fn decreased(&mut self, _node: Node) {}
+}
+
 /// The node settled at each power of two, and nothing else.
 ///
 /// The place of a node in the settling is its Dijkstra rank from the source,
@@ -258,6 +320,21 @@ mod tests {
         // of five while 8 is not
         assert_eq!(ranks.targets(), &[(1, 0), (2, 1), (4, 3)]);
         assert_eq!(ranks.settled_count(), 5);
+    }
+
+    #[test]
+    fn the_frontier_keeps_what_went_on_and_what_came_off() {
+        let mut frontier = Frontier::default();
+        frontier.inserted(1);
+        frontier.inserted(2);
+        frontier.inserted(3);
+        frontier.decreased(2);
+        frontier.deleted(1);
+        frontier.deleted(2);
+
+        // the reached hold the settled as well, and a decrease is neither
+        assert_eq!(frontier.reached(), &[1, 2, 3]);
+        assert_eq!(frontier.settled(), &[1, 2]);
     }
 
     #[test]
