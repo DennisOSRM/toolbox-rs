@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Search space over the cells</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  Draws what `cargo run --example search_space` wrote.
+
+  A search over the cells is a thing of levels, and drawn flat it all lands on
+  top of itself. So each level is given a height: the arcs of the graph lie on
+  the ground, the cells of the finest level float above them, and each level
+  above that floats higher again. Under each node of the way the search found,
+  a column runs down to the ground, so a coarse step can be followed to the
+  arcs it stands for.
+
+  Nothing draws a line at a height. What a map draws at a height is a polygon
+  pushed up between two of them, so the steps and the columns were written out
+  as polygons already, each carrying the two heights it is drawn between.
+
+  There is no basemap. The tiles would say nothing this is about, and asking
+  for them means asking somebody else's server for permission to look at your
+  own data.
+
+    python3 -m http.server 8000
+    open http://localhost:8000/viewer/search_space.html?data=search_space.geojson
+-->
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<style>
+  html, body { margin: 0; height: 100%; background: #0e0e10; color: #e8e8e6;
+               font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #map { position: absolute; inset: 0; }
+  .panel {
+    position: absolute; top: 12px; left: 12px; z-index: 2; width: 232px;
+    background: #17171a; border: 1px solid #2b2b30; border-radius: 8px;
+    padding: 12px 14px; box-shadow: 0 6px 24px rgba(0,0,0,.45);
+  }
+  .panel h1 { font-size: 13px; margin: 0 0 2px; font-weight: 600; }
+  .panel .sub { color: #8d8d95; font-size: 11.5px; margin: 0 0 10px; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+  .row label { flex: 1; display: flex; align-items: center; gap: 7px; cursor: pointer; }
+  .sw { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+  .count { color: #75757d; font-variant-numeric: tabular-nums; font-size: 11px; }
+  hr { border: 0; border-top: 1px solid #2b2b30; margin: 10px 0; }
+  .stat { display: flex; justify-content: space-between; font-size: 11.5px; color: #a9a9b2; }
+  .stat b { color: #e8e8e6; font-weight: 600; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; }
+  #err { position: absolute; inset: 0; display: none; place-items: center; z-index: 3;
+         background: #0e0e10; color: #e0605a; padding: 40px; text-align: center; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="panel">
+  <h1>Search space over the cells</h1>
+  <p class="sub">Each level floats above the one below. Drag with the right button to tilt.</p>
+  <div id="levels"></div>
+  <hr>
+  <div class="row"><label><input type="checkbox" id="settled" checked>
+    <span class="sw" style="background:#6f8fd8"></span>settled nodes</label></div>
+  <div class="row"><label><input type="checkbox" id="packed" checked>
+    <span class="sw" style="background:#e0a33c"></span>the way, by level</label></div>
+  <div class="row"><label><input type="checkbox" id="column" checked>
+    <span class="sw" style="background:#7c6ba8"></span>drops to the ground</label></div>
+  <div class="row"><label><input type="checkbox" id="unpacked" checked>
+    <span class="sw" style="background:#e8503c"></span>the way through the graph</label></div>
+  <hr>
+  <div class="row"><label for="spread">level spacing</label></div>
+  <input type="range" id="spread" min="0" max="200" value="100">
+  <hr>
+  <div class="stat"><span>settled</span><b id="n-settled">-</b></div>
+  <div class="stat"><span>cells stepped over</span><b id="n-cells">-</b></div>
+  <div class="stat"><span>steps</span><b id="n-packed">-</b></div>
+  <div class="stat"><span>levels</span><b id="n-levels">-</b></div>
+</div>
+<div id="err"></div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+const source = new URLSearchParams(location.search).get('data') || 'search_space.geojson';
+
+const fail = message => {
+  const box = document.getElementById('err');
+  box.style.display = 'grid';
+  box.textContent = message;
+};
+
+// One hue per level, coarse levels warmer, so a glance says how high something
+// is without reading the panel.
+const LEVEL_COLOURS = ['#3f7fbf', '#3f9f9f', '#5fae5f', '#c9a83c', '#d1783c', '#c9503c', '#b03c8f'];
+const colourFor = level => LEVEL_COLOURS[Math.max(0, level) % LEVEL_COLOURS.length];
+
+fetch(source)
+  .then(r => r.ok ? r.json() : Promise.reject(new Error(`${source}: ${r.status}`)))
+  .then(draw)
+  .catch(e => fail(`${e.message}\n\nRun the search_space example to write it, and serve this directory over http.`));
+
+function draw(data) {
+  window.onerror = (m, _f, l) => fail(`${m} (line ${l})`);
+  // A map loads on an animation frame, and a tab that is hidden never runs
+  // one, so it would sit here for ever saying nothing about why.
+  if (document.hidden) {
+    setTimeout(() => {
+      if (!window.map || !window.map.isStyleLoaded()) {
+        fail('this tab is not visible, so the browser is not running animation '
+           + 'frames and the map cannot finish loading. Bring the window to the '
+           + 'front and reload.');
+      }
+    }, 4000);
+  }
+  const features = data.features || [];
+  if (!features.length) return fail('the file holds no features');
+
+  const of = kind => features.filter(f => f.properties.kind === kind);
+  const levels = [...new Set(features.map(f => f.properties.level))]
+    .filter(l => l >= 0).sort((a, b) => a - b);
+
+  document.getElementById('n-settled').textContent = of('settled').length.toLocaleString();
+  document.getElementById('n-cells').textContent = of('cell').length.toLocaleString();
+  document.getElementById('n-packed').textContent = of('packed').length.toLocaleString();
+  document.getElementById('n-levels').textContent = levels.length;
+
+  const bounds = new maplibregl.LngLatBounds();
+  for (const f of features) {
+    const walk = c => Array.isArray(c[0]) ? c.forEach(walk) : bounds.extend(c);
+    walk(f.geometry.coordinates);
+  }
+
+  const map = new maplibregl.Map({
+    container: 'map',
+    style: { version: 8, sources: {}, layers: [
+      { id: 'bg', type: 'background', paint: { 'background-color': '#0e0e10' } },
+    ]},
+    bounds, fitBoundsOptions: { padding: 90, pitch: 62, bearing: -22 },
+    maxPitch: 85,
+    antialias: true,
+  });
+  map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
+  window.map = map;
+
+  // maplibre reports plenty that is not fatal, so this says so rather than
+  // taking the screen away from whatever is already drawn
+  map.on('error', e => console.warn('maplibre:', (e.error && e.error.message) || e));
+
+  map.on('load', () => {
+    map.addSource('space', { type: 'geojson', data });
+
+    // the sheets a level's cells are drawn as
+    map.addLayer({
+      id: 'cells', type: 'fill-extrusion', source: 'space',
+      filter: ['==', ['get', 'kind'], 'cell'],
+      paint: {
+        'fill-extrusion-color': ['case',
+          ...levels.flatMap(l => [['==', ['get', 'level'], l], colourFor(l)]), '#666'],
+        'fill-extrusion-base': ['get', 'base'],
+        'fill-extrusion-height': ['get', 'height'],
+        'fill-extrusion-opacity': 0.30,
+      },
+    });
+
+    // what the search took off its queue, at the height it took it
+    map.addLayer({
+      id: 'settled', type: 'circle', source: 'space',
+      filter: ['==', ['get', 'kind'], 'settled'],
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 1.6, 10, 3.4],
+        'circle-color': ['case',
+          ['<', ['get', 'level'], 0], '#8d8d95',
+          ...levels.flatMap(l => [['==', ['get', 'level'], l], colourFor(l)]), '#888'],
+        'circle-opacity': 0.85,
+      },
+    });
+
+    // the way the search found, each step at its own level
+    map.addLayer({
+      id: 'packed', type: 'fill-extrusion', source: 'space',
+      filter: ['==', ['get', 'kind'], 'packed'],
+      paint: {
+        'fill-extrusion-color': '#e0a33c',
+        'fill-extrusion-base': ['get', 'base'],
+        'fill-extrusion-height': ['get', 'height'],
+        'fill-extrusion-opacity': 0.95,
+      },
+    });
+
+    // and the drop from each of its nodes to the ground
+    map.addLayer({
+      id: 'column', type: 'fill-extrusion', source: 'space',
+      filter: ['==', ['get', 'kind'], 'column'],
+      paint: {
+        'fill-extrusion-color': '#7c6ba8',
+        'fill-extrusion-base': ['get', 'base'],
+        'fill-extrusion-height': ['get', 'height'],
+        'fill-extrusion-opacity': 0.55,
+      },
+    });
+
+    // the way through the graph, on the ground, which is what all of it means
+    map.addLayer({
+      id: 'unpacked', type: 'line', source: 'space',
+      filter: ['==', ['get', 'kind'], 'unpacked'],
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: {
+        'line-color': '#e8503c',
+        'line-width': ['interpolate', ['linear'], ['zoom'], 4, 2.2, 12, 5],
+      },
+    });
+
+    for (const [box, layer] of [['settled','settled'], ['packed','packed'],
+                                ['column','column'], ['unpacked','unpacked']]) {
+      document.getElementById(box).addEventListener('change', event => {
+        map.setLayoutProperty(layer, 'visibility', event.target.checked ? 'visible' : 'none');
+      });
+    }
+
+    // The levels are drawn where the file said, and this scales that. Pulling
+    // them together is how the way is read against the ground; pushing them
+    // apart is how a level with a lot in it is read on its own.
+    const spread = document.getElementById('spread');
+    spread.addEventListener('input', () => {
+      const factor = spread.value / 100;
+      for (const layer of ['cells', 'packed', 'column']) {
+        map.setPaintProperty(layer, 'fill-extrusion-base',
+          layer === 'column' ? ['get', 'base'] : ['*', ['get', 'base'], factor]);
+        map.setPaintProperty(layer, 'fill-extrusion-height', ['*', ['get', 'height'], factor]);
+      }
+    });
+
+    // one row per level, so a level can be looked at on its own
+    const rows = document.getElementById('levels');
+    for (const level of [...levels].reverse()) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      const label = document.createElement('label');
+      const box = document.createElement('input');
+      box.type = 'checkbox'; box.checked = true;
+      const swatch = document.createElement('span');
+      swatch.className = 'sw'; swatch.style.background = colourFor(level);
+      const text = document.createElement('span');
+      text.textContent = `level ${level}`;
+      const count = document.createElement('span');
+      count.className = 'count';
+      count.textContent = features.filter(f => f.properties.level === level
+                                            && f.properties.kind === 'cell').length;
+      label.append(box, swatch, text);
+      row.append(label, count);
+      rows.append(row);
+      box.addEventListener('change', () => {
+        const shown = [...rows.querySelectorAll('input')]
+          .map((b, i) => b.checked ? [...levels].reverse()[i] : null)
+          .filter(l => l !== null);
+        const keep = ['in', ['get', 'level'], ['literal', shown]];
+        map.setFilter('cells', ['all', ['==', ['get', 'kind'], 'cell'], keep]);
+        map.setFilter('settled', ['all', ['==', ['get', 'kind'], 'settled'],
+          ['any', ['<', ['get', 'level'], 0], keep]]);
+      });
+    }
+  });
+}
+</script>
+</body>
+</html>
