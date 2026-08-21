@@ -131,16 +131,19 @@ fn main() {
     let mut writer = FeatureWriter::from_writer(file);
     let mut written = 0usize;
 
-    // how wide a drawn line is, taken from how much ground is on screen, so
-    // that a way across a town and a way across a continent both read
-    let mut west = f64::MAX;
-    let mut east = f64::MIN;
+    // how wide a drawn way is, taken from how much ground it covers, so that a
+    // way across a town and a way across a continent both read. Narrow enough
+    // that the shape of the way is what shows rather than the width of it.
+    let (mut west, mut east) = (f64::MAX, f64::MIN);
+    let (mut south, mut north) = (f64::MAX, f64::MIN);
     for &node in &way {
-        let (lon, _) = at(node);
+        let (lon, lat) = at(node);
         west = west.min(lon);
         east = east.max(lon);
+        south = south.min(lat);
+        north = north.max(lat);
     }
-    let width = ((east - west) * 0.004).max(0.000_02);
+    let width = (((east - west).max(north - south)) * 0.0025).max(0.000_02);
 
     // the cells the search stepped over, per level
     let mut stepped: BTreeSet<(usize, CellId)> = BTreeSet::new();
@@ -207,20 +210,56 @@ fn main() {
         written += 1;
     }
 
-    // the way the search found, each step at the height it was taken at, and a
-    // column under each of its ends running down to the ground
-    for pair in packed.windows(2) {
-        let (from, to) = (pair[0], pair[1]);
-        let (level, height) = height_of(from);
+    // The way the search found, each step drawn at the height it was taken at.
+    //
+    // A step is drawn as the way it stands for and not as the line between its
+    // ends. The two are nothing alike -- a step over a coarse cell is a
+    // straight line across a country, and the way beneath it runs where the
+    // roads run -- and the straight one says a road runs where none does. Told
+    // truthfully, a level shows the same way as the ground does, coarsened
+    // only in where it may leave a cell.
+    //
+    // Which arcs a step stands for is not asked again here. The way was put
+    // back by laying the steps end to end, so it comes apart at the nodes the
+    // search handed over, each of which it holds once.
+    let mut seam = Vec::with_capacity(packed.len());
+    seam.push(0usize);
+    for &node in &packed[1..] {
+        let from = seam.last().expect("a seam was pushed before the loop") + 1;
+        let found = way[from..]
+            .iter()
+            .position(|&held| held == node)
+            .map(|offset| from + offset)
+            .expect("the way does not hold a node the search stepped to");
+        seam.push(found);
+    }
+    assert_eq!(
+        seam.last().copied(),
+        Some(way.len() - 1),
+        "the way holds more than the steps it was laid out of"
+    );
+
+    for (step, pair) in packed.windows(2).enumerate() {
+        let (level, height) = height_of(pair[0]);
+        let along: Vec<(f64, f64)> = way[seam[step]..=seam[step + 1]]
+            .iter()
+            .map(|&node| at(node))
+            .collect();
+        let ring = ribbon_along(&along, width);
+        if ring.is_empty() {
+            continue;
+        }
         writer
             .write_feature(&feature(
                 GeometryValue::Polygon {
-                    coordinates: vec![ribbon(at(from), at(to), width)],
+                    coordinates: vec![ring],
                 },
                 "packed",
                 level,
-                height,
-                height + SHEET / 4.0,
+                // on top of the sheet its level is drawn as, not inside it:
+                // the sheet is the thicker of the two and would swallow it
+                height + SHEET,
+                height + SHEET * 1.35,
             ))
             .expect("the step cannot be written");
         written += 1;
@@ -238,7 +277,9 @@ fn main() {
                 "column",
                 level,
                 0.0,
-                height,
+                // up to the way rather than to the sheet below it, so that a
+                // drop meets the step it belongs to
+                height + SHEET,
             ))
             .expect("the column cannot be written");
         written += 1;
@@ -285,28 +326,68 @@ fn feature(geometry: GeometryValue, kind: &str, level: isize, base: f64, height:
     }
 }
 
-/// A step drawn as a quad, since a line cannot be lifted off the ground.
+/// A way drawn as a ribbon, since a line cannot be lifted off the ground.
 ///
-/// Nothing draws a line at a height: what a map draws at a height is a
-/// polygon pushed up between two of them. So a step is widened into a quad
-/// about its own direction and pushed up as a sheet, which reads as a line
-/// from anywhere but directly on.
-fn ribbon(from: (f64, f64), to: (f64, f64), width: f64) -> Vec<Position> {
-    let (dx, dy) = (to.0 - from.0, to.1 - from.1);
-    let length = dx.hypot(dy);
-    // a step from a node to itself has no direction to be widened about
-    let (nx, ny) = if length < f64::EPSILON {
-        (width, 0.0)
-    } else {
-        (-dy / length * width, dx / length * width)
+/// Nothing draws a line at a height: what a map draws at a height is a polygon
+/// pushed up between two of them. So the way is widened about itself, out along
+/// one side and back along the other, and pushed up as a sheet, which reads as
+/// a line from anywhere but directly on.
+///
+/// The widening is done with longitude scaled to the latitude it is at, so that
+/// a way running east is drawn as wide as one running north. Away from the
+/// equator a degree of longitude is the shorter of the two, and a ribbon that
+/// does not say so is fat one way and thin the other.
+fn ribbon_along(points: &[(f64, f64)], width: f64) -> Vec<Position> {
+    // a way that stands still has no direction to be widened about
+    let mut along: Vec<(f64, f64)> = Vec::with_capacity(points.len());
+    for &point in points {
+        if along.last() != Some(&point) {
+            along.push(point);
+        }
+    }
+    if along.len() < 2 {
+        return Vec::new();
+    }
+
+    let middle = along.iter().map(|&(_, lat)| lat).sum::<f64>() / along.len() as f64;
+    let stretch = middle.to_radians().cos().max(0.01);
+    let flat: Vec<(f64, f64)> = along.iter().map(|&(x, y)| (x * stretch, y)).collect();
+
+    // the way each step of it faces, turned a quarter
+    let sideways: Vec<(f64, f64)> = flat
+        .windows(2)
+        .map(|step| {
+            let (dx, dy) = (step[1].0 - step[0].0, step[1].1 - step[0].1);
+            let length = dx.hypot(dy);
+            (-dy / length, dx / length)
+        })
+        .collect();
+
+    // and at a node, the two steps meeting there, averaged. A corner comes out
+    // narrower than a straight, which is what a corner should look like.
+    let out_at = |index: usize| -> (f64, f64) {
+        let before = sideways[index.saturating_sub(1)];
+        let after = sideways[index.min(sideways.len() - 1)];
+        let (x, y) = (before.0 + after.0, before.1 + after.1);
+        let length = x.hypot(y);
+        if length < 1e-12 {
+            after
+        } else {
+            (x / length * width, y / length * width)
+        }
     };
-    vec![
-        Position::from(vec![from.0 + nx, from.1 + ny]),
-        Position::from(vec![to.0 + nx, to.1 + ny]),
-        Position::from(vec![to.0 - nx, to.1 - ny]),
-        Position::from(vec![from.0 - nx, from.1 - ny]),
-        Position::from(vec![from.0 + nx, from.1 + ny]),
-    ]
+
+    let mut ring: Vec<Position> = Vec::with_capacity(flat.len() * 2 + 1);
+    for (index, point) in flat.iter().enumerate() {
+        let (dx, dy) = out_at(index);
+        ring.push(Position::from(vec![(point.0 + dx) / stretch, point.1 + dy]));
+    }
+    for (index, point) in flat.iter().enumerate().rev() {
+        let (dx, dy) = out_at(index);
+        ring.push(Position::from(vec![(point.0 - dx) / stretch, point.1 - dy]));
+    }
+    ring.push(ring[0].clone());
+    ring
 }
 
 /// The footprint of the drop from a node to the ground.
