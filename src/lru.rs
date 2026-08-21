@@ -95,7 +95,10 @@ impl<Key: Copy + Debug + Eq + Hash, Value> LRU<Key, Value> {
     /// assert!(cache.contains(&2));
     /// assert!(cache.contains(&3));
     /// ```
-    pub fn push(&mut self, key: &Key, value: Value) {
+    /// Whatever had to be let go of to make room is handed back, so that a
+    /// caller keeping its own tally of what the cache holds -- bytes rather
+    /// than entries, say -- can take it off again.
+    pub fn push(&mut self, key: &Key, value: Value) -> Option<(Key, Value)> {
         debug_assert!(self.lru_list.len() <= self.capacity);
 
         if let Some(handle) = self.access_map.get(key) {
@@ -105,21 +108,33 @@ impl<Key: Copy + Debug + Eq + Hash, Value> LRU<Key, Value> {
             // Update the value using a mutable reference
             let front = self.lru_list.get_front_mut();
             *front = (*key, value);
-            return;
+            return None;
         }
 
         // Key doesn't exist - handle capacity and insert new entry
-        if self.access_map.len() == self.capacity {
-            // evict least recently used element
+        let evicted = if self.access_map.len() == self.capacity {
             debug_assert!(!self.access_map.is_empty());
-            if let Some((evicted_key, _)) = self.lru_list.pop_back() {
-                self.access_map.remove(&evicted_key);
-            }
-        }
+            self.pop_lru()
+        } else {
+            None
+        };
 
         // Insert new entry
         let handle = self.lru_list.push_front((*key, value));
         self.access_map.insert(*key, handle);
+        evicted
+    }
+
+    /// Lets go of whatever was used longest ago, and hands it back.
+    ///
+    /// A cache held to a number of entries lets go by itself as it is pushed
+    /// to. One held to anything else -- the room its values take, most
+    /// obviously, where the values are not all of a size -- has to be told
+    /// when, and this is how.
+    pub fn pop_lru(&mut self) -> Option<(Key, Value)> {
+        let (key, value) = self.lru_list.pop_back()?;
+        self.access_map.remove(&key);
+        Some((key, value))
     }
 
     /// Returns true if the cache contains the specified key.
