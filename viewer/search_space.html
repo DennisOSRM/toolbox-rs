@@ -10,12 +10,12 @@
   A search over the cells is a thing of levels, and drawn flat it all lands on
   top of itself. So each level is given a height: the arcs of the graph lie on
   the ground, the cells of the finest level float above them, and each level
-  above that floats higher again. Under each node of the way the search found,
-  a column runs down to the ground, so a coarse step can be followed to the
-  arcs it stands for.
+  above that floats higher again. The way the search found climbs from the
+  ground to each cell it steps over and comes back down, so it can be followed
+  end to end and every jump in it is a level the search changed at.
 
   Nothing draws a line at a height. What a map draws at a height is a polygon
-  pushed up between two of them, so the steps and the columns were written out
+  pushed up between two of them, so the steps and the risers were written out
   as polygons already, each carrying the two heights it is drawn between.
 
   There is no basemap. The tiles would say nothing this is about, and asking
@@ -60,8 +60,8 @@
     <span class="sw" style="background:#6f8fd8"></span>settled nodes</label></div>
   <div class="row"><label><input type="checkbox" id="packed" checked>
     <span class="sw" style="background:#e0a33c"></span>the way, by level</label></div>
-  <div class="row"><label><input type="checkbox" id="column" checked>
-    <span class="sw" style="background:#7c6ba8"></span>drops to the ground</label></div>
+  <div class="row"><label><input type="checkbox" id="riser" checked>
+    <span class="sw" style="background:#7c6ba8"></span>jumps between levels</label></div>
   <div class="row"><label><input type="checkbox" id="unpacked" checked>
     <span class="sw" style="background:#e8503c"></span>the way through the graph</label></div>
   <hr>
@@ -191,10 +191,10 @@ function draw(data) {
       },
     });
 
-    // and the drop from each of its nodes to the ground
+    // and the jump where it changes level, joining the two heights
     map.addLayer({
-      id: 'column', type: 'fill-extrusion', source: 'space',
-      filter: ['==', ['get', 'kind'], 'column'],
+      id: 'riser', type: 'fill-extrusion', source: 'space',
+      filter: ['==', ['get', 'kind'], 'riser'],
       paint: {
         'fill-extrusion-color': '#7c6ba8',
         'fill-extrusion-base': ['get', 'base'],
@@ -222,7 +222,7 @@ function draw(data) {
     map.panBy([0, -RAISE], { duration: 0 });
 
     for (const [box, layer] of [['settled','settled'], ['packed','packed'],
-                                ['column','column'], ['unpacked','unpacked']]) {
+                                ['riser','riser'], ['unpacked','unpacked']]) {
       document.getElementById(box).addEventListener('change', event => {
         map.setLayoutProperty(layer, 'visibility', event.target.checked ? 'visible' : 'none');
       });
@@ -234,9 +234,9 @@ function draw(data) {
     const spread = document.getElementById('spread');
     spread.addEventListener('input', () => {
       const factor = spread.value / 100;
-      for (const layer of ['cells', 'packed', 'column']) {
+      for (const layer of ['cells', 'packed', 'riser']) {
         map.setPaintProperty(layer, 'fill-extrusion-base',
-          layer === 'column' ? ['get', 'base'] : ['*', ['get', 'base'], factor]);
+          ['*', ['get', 'base'], factor]);
         map.setPaintProperty(layer, 'fill-extrusion-height', ['*', ['get', 'height'], factor]);
       }
     });

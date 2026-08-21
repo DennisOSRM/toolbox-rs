@@ -15,9 +15,10 @@
 //! So each level is given a height. The arcs of the graph lie on the ground,
 //! the cells of the finest level float above them, and each level above that
 //! floats higher again. A step across a cell is drawn at the height of the
-//! level it was taken at, and under each of its ends a column runs down to the
-//! ground, so the way the search took can be followed from the coarse step it
-//! made down to the arcs that step really stands for.
+//! level it was taken at, and where it changes level a riser joins the two
+//! heights, so that the way climbs from the ground to each cell it steps over
+//! and comes back down. Followed end to end it never breaks, and every jump in
+//! it is a level the search changed at.
 //!
 //! # What goes in the file
 //!
@@ -31,7 +32,7 @@
 //! | `settled`  | a node the search took off its queue              |
 //! | `packed`   | a step of the way the search found                |
 //! | `unpacked` | the way through the graph that step stands for    |
-//! | `column`   | the drop from a packed node to the ground         |
+//! | `riser`    | where the way changes level, drawn upright        |
 
 use std::{collections::BTreeSet, env::args, fs::File, io::BufWriter};
 
@@ -264,24 +265,39 @@ fn main() {
             .expect("the step cannot be written");
         written += 1;
     }
-    for &node in &packed {
-        let (level, height) = height_of(node);
-        if height <= 0.0 {
+    // Where the way changes level, a riser at the node the two steps share.
+    //
+    // This is what makes the way one thing rather than a handful of pieces
+    // floating at heights that have to be matched up by eye: it starts on the
+    // ground, climbs to each cell it steps over, and comes back down to the
+    // ground at the far end. Both ends of every riser are the ends of steps
+    // already drawn, so the whole of it can be followed without a break.
+    //
+    // A riser is upright because a map has no way to draw anything else. What
+    // is drawn at a height is a polygon pushed up between two of them, and a
+    // polygon has one footprint, so a way from one height to another can only
+    // go straight up. It reads well enough: the way runs level over a cell and
+    // jumps where it changes level, which is what it does.
+    for index in 1..packed.len().saturating_sub(1) {
+        let node = packed[index];
+        let (was, leaving) = height_of(packed[index - 1]);
+        let (level, arriving) = height_of(node);
+        // two steps at the same level are already laid end to end
+        if was == level {
             continue;
         }
+        let (low, high) = (leaving.min(arriving), leaving.max(arriving));
         writer
             .write_feature(&feature(
                 GeometryValue::Polygon {
-                    coordinates: vec![column(at(node), width * 0.6)],
+                    coordinates: vec![footprint(at(node), width * 0.75)],
                 },
-                "column",
+                "riser",
                 level,
-                0.0,
-                // up to the way rather than to the sheet below it, so that a
-                // drop meets the step it belongs to
-                height + SHEET,
+                low + SHEET,
+                high + SHEET * 1.35,
             ))
-            .expect("the column cannot be written");
+            .expect("the riser cannot be written");
         written += 1;
     }
 
@@ -390,8 +406,8 @@ fn ribbon_along(points: &[(f64, f64)], width: f64) -> Vec<Position> {
     ring
 }
 
-/// The footprint of the drop from a node to the ground.
-fn column(at: (f64, f64), width: f64) -> Vec<Position> {
+/// The footprint a riser is pushed up from.
+fn footprint(at: (f64, f64), width: f64) -> Vec<Position> {
     vec![
         Position::from(vec![at.0 - width, at.1 - width]),
         Position::from(vec![at.0 + width, at.1 - width]),
