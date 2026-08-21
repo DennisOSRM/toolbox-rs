@@ -115,6 +115,34 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
         self.queue.weight(node)
     }
 
+    /// The nodes of the way to a target, as the search found them.
+    ///
+    /// These are not all the nodes of the way. A step over a cell is one entry
+    /// here and a path through that cell in the graph, and turning the one
+    /// into the other is what
+    /// [`unpack`](crate::path_unpacking::unpack) is for.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the queue holds a node whose parent it does not.
+    #[must_use]
+    pub fn retrieve_packed_path(&self, target: NodeID) -> Option<Vec<NodeID>> {
+        if !self.queue.inserted(target) {
+            return None;
+        }
+        let mut path = vec![target];
+        let mut node = target;
+        loop {
+            let parent = self.queue.data(node);
+            if parent == node {
+                path.reverse();
+                return Some(path);
+            }
+            path.push(parent);
+            node = parent;
+        }
+    }
+
     /// Clears the search space, keeping what was allocated for it.
     pub fn clear(&mut self) {
         self.queue.clear();
