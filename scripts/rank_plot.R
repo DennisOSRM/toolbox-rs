@@ -18,10 +18,15 @@
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 1) {
-  stop("usage: rank_plot.R <timings.csv> [out.png]")
+  stop("usage: rank_plot.R <timings.csv> [out.png] [engine-to-divide-by]")
 }
 input <- args[1]
 output <- if (length(args) >= 2) args[2] else "ranks.png"
+# What the lower panel divides by. The engine over the cells by default, that
+# being the thing a plain search is usually held against here, but a file may
+# hold anything worth comparing -- two ways of unpacking a path, say -- and
+# then the one to divide by is whichever the others are being judged against.
+denominator <- if (length(args) >= 3) args[3] else "mld"
 
 timings <- read.csv(input, stringsAsFactors = FALSE)
 for (column in c("engine", "rank", "nanos")) {
@@ -113,19 +118,19 @@ medians <- sapply(engines, function(engine) {
 })
 medians <- matrix(medians, nrow = length(exponents), dimnames = list(NULL, engines))
 
-if ("mld" %in% engines && length(engines) > 1) {
-  # every plain search in the file, against the one over the cells. The plain
-  # unidirectional search is the one a rank axis is defined by, but it is not
-  # the yardstick an overlay has to beat: two searches from two ends cost
-  # nothing but a second queue, so what the cells are worth is what they beat
-  # that by.
-  against <- setdiff(engines, "mld")
-  ratios <- sapply(against, function(engine) medians[, engine] / medians[, "mld"])
+if (denominator %in% engines && length(engines) > 1) {
+  # everything else in the file against the one being judged against. Where
+  # that is the search over the cells, the plain unidirectional search is the
+  # one a rank axis is defined by but not the yardstick an overlay has to
+  # beat: two searches from two ends cost nothing but a second queue, so what
+  # the cells are worth is what they beat that by.
+  against <- setdiff(engines, denominator)
+  ratios <- sapply(against, function(engine) medians[, engine] / medians[, denominator])
   ratios <- matrix(ratios, nrow = length(exponents), dimnames = list(NULL, against))
   ylim <- range(c(ratios, 1), na.rm = TRUE)
   plot(NA,
     xlim = range(exponents), ylim = ylim, log = "y", xaxt = "n", yaxt = "n",
-    xlab = "Dijkstra rank", ylab = "plain search / mld"
+    xlab = "Dijkstra rank", ylab = sprintf("other / %s", name_of(denominator))
   )
   for (engine in against) {
     lines(exponents, ratios[, engine], type = "b", pch = 19, col = colour_of[engine])
@@ -145,15 +150,15 @@ if ("mld" %in% engines && length(engines) > 1) {
   # bottom right has the line at one running through it.
   best_of <- sapply(against, function(engine) {
     best <- which.max(ratios[, engine])
-    sprintf("%s / mld (best %.0fx at 2^%d)", name_of(engine), ratios[best, engine],
-            exponents[best])
+    sprintf("%s / %s (best %.0fx at 2^%d)", name_of(engine), name_of(denominator),
+            ratios[best, engine], exponents[best])
   })
   legend("topleft", legend = best_of, col = colour_of[against],
          lty = 1, pch = 19, bty = "n")
 
 } else {
   plot.new()
-  mtext("a speedup wants the cells and a plain search in the same file",
+  mtext(sprintf("nothing named %s in the file to divide by", denominator),
         side = 3, line = -3, cex = 0.8, col = "#808080")
 }
 
