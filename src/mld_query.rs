@@ -115,6 +115,17 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
         self.queue.weight(node)
     }
 
+    /// The node a reached node was reached from.
+    ///
+    /// `None` if the search never reached it, and the node itself if it is the
+    /// source, there being nowhere it was reached from. Every node the search
+    /// reached has one, so this is the tree of the arcs it relaxed and kept:
+    /// one arc per node, the last one to improve it.
+    #[must_use]
+    pub fn parent(&self, node: NodeID) -> Option<NodeID> {
+        self.queue.inserted(node).then(|| self.queue.data(node))
+    }
+
     /// The nodes of the way to a target, as the search found them.
     ///
     /// These are not all the nodes of the way. A step over a cell is one entry
