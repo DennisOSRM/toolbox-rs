@@ -87,6 +87,10 @@ const fail = message => {
 
 // One hue per level, coarse levels warmer, so a glance says how high something
 // is without reading the panel.
+// How far the camera is lifted off the ground fit, in pixels, so that the
+// levels standing over it are on screen.
+const RAISE = 230;
+
 const LEVEL_COLOURS = ['#3f7fbf', '#3f9f9f', '#5fae5f', '#c9a83c', '#d1783c', '#c9503c', '#b03c8f'];
 const colourFor = level => LEVEL_COLOURS[Math.max(0, level) % LEVEL_COLOURS.length];
 
@@ -131,7 +135,11 @@ function draw(data) {
     style: { version: 8, sources: {}, layers: [
       { id: 'bg', type: 'background', paint: { 'background-color': '#0e0e10' } },
     ]},
-    bounds, fitBoundsOptions: { padding: 90, pitch: 62, bearing: -22 },
+    bounds,
+    fitBoundsOptions: {
+      padding: { top: 90, bottom: 90, left: 330, right: 80 },
+      pitch: 62, bearing: -22,
+    },
     maxPitch: 85,
     antialias: true,
   });
@@ -205,6 +213,13 @@ function draw(data) {
         'line-width': ['interpolate', ['linear'], ['zoom'], 4, 2.2, 12, 5],
       },
     });
+
+    // Fitting the bounds frames the ground, and everything else stands
+    // hundreds of kilometres over it, which on a tilted map is straight up the
+    // screen. Padding the fit would only zoom out again -- it shrinks the
+    // viewport it fits into -- so the ground is fitted at the size it wants
+    // and the camera is then lifted to put the levels in the picture.
+    map.panBy([0, -RAISE], { duration: 0 });
 
     for (const [box, layer] of [['settled','settled'], ['packed','packed'],
                                 ['column','column'], ['unpacked','unpacked']]) {
