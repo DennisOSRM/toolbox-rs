@@ -79,13 +79,13 @@ const RAISE = 230;
 // two heights, and every one of them carries the colour it is drawn in, so
 // there is one paint block here and the file decides the rest.
 const LIFTED = [
-  { id: 'cells',   kind: 'cell',    opacity: 0.32, label: null },
-  { id: 'links',   kind: 'link',    opacity: 0.85, label: 'cells it crossed between' },
-  { id: 'relaxed', kind: 'relaxed', opacity: 0.7,  label: 'arcs it relaxed' },
-  { id: 'reached', kind: 'reached', opacity: 0.8,  label: 'reached, not settled' },
+  { id: 'cells',   kind: 'cell',    opacity: 0.58, label: null },
+  { id: 'links',   kind: 'link',    opacity: 0.9,  label: 'cells it crossed between' },
+  { id: 'relaxed', kind: 'relaxed', opacity: 0.8,  label: 'arcs it relaxed' },
+  { id: 'reached', kind: 'reached', opacity: 0.85, label: 'reached, not settled' },
   { id: 'settled', kind: 'settled', opacity: 0.95, label: 'settled' },
   { id: 'packed',  kind: 'packed',  opacity: 1,    label: 'the way, by level' },
-  { id: 'riser',   kind: 'riser',   opacity: 0.9,  label: 'jumps between levels' },
+  { id: 'riser',   kind: 'riser',   opacity: 0.95, label: 'jumps between levels' },
 ];
 // what a level's checkbox hides, being everything that happened at a level
 const BY_LEVEL = ['cells', 'links', 'relaxed', 'reached', 'settled'];
@@ -205,7 +205,7 @@ function draw(data) {
       kinds.append(toggle(layer.label, mean(of(layer.kind).map(f => f.properties.colour)),
         on => map.setLayoutProperty(layer.id, 'visibility', on ? 'visible' : 'none')));
     }
-    kinds.append(toggle('the way through the graph', '#f2f2f0',
+    kinds.append(toggle('the way through the graph', '#ece9e2',
       on => map.setLayoutProperty('unpacked', 'visibility', on ? 'visible' : 'none')));
 
     // The levels are drawn where the file said, and this scales that. Pulling
