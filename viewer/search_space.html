@@ -30,7 +30,7 @@
 
     python3 -m http.server 8000
     open http://localhost:8000/viewer/search_space.html?data=search_space.geojson
-    open http://localhost:8000/viewer/search_space.html?basemap=positron
+    open http://localhost:8000/viewer/search_space.html?basemap=dark
     open http://localhost:8000/viewer/search_space.html?basemap=off
 -->
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
@@ -86,12 +86,10 @@
 const asked = new URLSearchParams(location.search);
 const source = asked.get('data') || 'search_space.geojson';
 
-// Keyless OSM vector tiles. The dark one, because what is drawn over it is
-// pale and pale over pale is nothing: under the veil, positron comes out a
-// mid grey the marks have to fight, and this comes out a ground they sit on.
-// positron, liberty and bright are there to be asked for, and off is no
-// basemap at all.
-const BASEMAP = asked.get('basemap') || 'dark';
+// Keyless OSM vector tiles. positron is the grey one, meant to be built on.
+// dark, liberty and bright are there to be asked for with ?basemap=, and off
+// is no basemap at all.
+const BASEMAP = asked.get('basemap') || 'positron';
 const GROUND = '#0e0e10';
 const BARE = { version: 8, sources: {}, layers: [
   { id: 'bg', type: 'background', paint: { 'background-color': GROUND } },
@@ -317,7 +315,7 @@ function draw(data, ground) {
     kinds.append(toggle('the way through the graph', '#ece9e2',
       on => map.setLayoutProperty('unpacked', 'visibility', on ? 'visible' : 'none')));
     if (ground.base.length) {
-      kinds.append(toggle('the ground under it', '#4a4a52', on => {
+      kinds.append(toggle('the ground under it', '#b6b6bc', on => {
         for (const layer of [...ground.base, 'veil']) {
           map.setLayoutProperty(layer, 'visibility', on ? 'visible' : 'none');
         }
