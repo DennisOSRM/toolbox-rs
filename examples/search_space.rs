@@ -27,8 +27,15 @@
 //! cells reads as a family however deep it is cut, and the level reads by how
 //! light the shade is. Everything the search did inside a cell takes that
 //! cell's hue: the arcs it relaxed, the nodes it reached, the nodes it settled
-//! and the step of the way it came away with, each at its own brightness. So
-//! the colour says where, and the height says how coarse.
+//! and the step of the way it came away with, each at its own strength. So the
+//! colour says where, and the height says how coarse.
+//!
+//! The shades are pale and weak -- high lightness, low saturation. There are
+//! thousands of marks on one screen and a hue at full strength beside another
+//! at full strength fights it, which is fine for six colours and unreadable
+//! for six hundred. Weak colours also leave somewhere to go: what matters most
+//! is drawn stronger rather than drawn in a different colour altogether, so
+//! the family holds all the way up.
 //!
 //! # What goes in the file
 //!
@@ -239,12 +246,12 @@ fn main() {
             hull.iter().map(|c| f64::from(c.lon) / 1e6).sum::<f64>() / hull.len() as f64,
             hull.iter().map(|c| f64::from(c.lat) / 1e6).sum::<f64>() / hull.len() as f64,
         );
-        // a sheet is the dark end of its family, so that everything the search
-        // did on it is the same colour only brighter
+        // a sheet is the palest and least of its family, everything the search
+        // did on it being the same hue carried further
         let colour = hsl(
             hue_of(partition, nodes[0], *level, levels),
-            0.45,
-            0.20 + 0.075 * (levels - 1 - *level) as f64,
+            0.42,
+            0.58 + 0.05 * (levels - 1 - *level) as f64,
         );
         writer
             .write_feature(&feature(
@@ -316,7 +323,7 @@ fn main() {
                 level,
                 height + SHEET,
                 height + SHEET * ARC_TOP,
-                &shade(parent, 0.5, 0.38),
+                &shade(parent, 0.5, 0.7),
             ))
             .expect("the arc cannot be written");
         written += 1;
@@ -385,9 +392,9 @@ fn main() {
         let (level, height) = height_of(node);
         let settled_here = settled.contains(&node);
         let (top, size, colour) = if settled_here {
-            (SETTLED_TOP, 0.55, shade(node, 0.85, 0.62))
+            (SETTLED_TOP, 0.55, shade(node, 0.68, 0.78))
         } else {
-            (REACHED_TOP, 0.4, shade(node, 0.4, 0.42))
+            (REACHED_TOP, 0.4, shade(node, 0.34, 0.56))
         };
         writer
             .write_feature(&feature(
@@ -454,9 +461,9 @@ fn main() {
                 // everything standing on it, rather than inside any of it
                 height + SHEET * WAY_BASE,
                 height + SHEET * WAY_TOP,
-                // the brightest the cell's family goes, so the way is the
-                // first thing read at a level and still plainly of that level
-                &shade(pair[0], 1.0, 0.66),
+                // the fullest the cell's family goes, so the way is the first
+                // thing read at a level and still plainly of that level
+                &shade(pair[0], 0.82, 0.76),
             ))
             .expect("the step cannot be written");
         written += 1;
@@ -499,7 +506,7 @@ fn main() {
                 level,
                 low + SHEET * WAY_BASE,
                 high + SHEET * WAY_TOP,
-                &shade(arrived, 1.0, 0.66),
+                &shade(arrived, 0.82, 0.76),
             ))
             .expect("the riser cannot be written");
         written += 1;
@@ -524,7 +531,7 @@ fn main() {
             0.0,
             // the one thing on screen that is not of a cell, being the answer
             // rather than a part of the working
-            "#f2f2f0",
+            "#ece9e2",
         ))
         .expect("the way cannot be written");
     written += 1;
@@ -574,7 +581,7 @@ fn hue_of(partition: &PackedPartition, node: NodeID, level: usize, levels: usize
     let mut span = 360.0;
     for above in (level..levels).rev() {
         hue += span * (scatter(partition.cell_of(node, above)) - 0.5);
-        span *= 0.42;
+        span *= 0.48;
     }
     hue
 }
