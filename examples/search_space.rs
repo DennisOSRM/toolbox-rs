@@ -40,6 +40,7 @@
 //! | `kind`     | what it is                                          |
 //! |------------|-----------------------------------------------------|
 //! | `cell`     | the outline of a cell the search stepped over       |
+//! | `link`     | two cells of a level the search crossed between     |
 //! | `relaxed`  | an arc the search relaxed and kept                  |
 //! | `reached`  | a node it put on its queue and never took off       |
 //! | `settled`  | a node it took off its queue                        |
@@ -92,6 +93,8 @@ const HULL_SAMPLE: usize = 200_000;
 /// a node it only reached is a stub, a node it settled stands up, and the way
 /// it came away with floats clear over all of it.
 const ARC_TOP: f64 = 1.15;
+const LINK_BASE: f64 = 1.15;
+const LINK_TOP: f64 = 1.28;
 const REACHED_TOP: f64 = 1.3;
 const SETTLED_TOP: f64 = 1.9;
 const WAY_BASE: f64 = 2.2;
@@ -163,7 +166,11 @@ fn main() {
         let level = partition
             .query_level(source_word, target_word, node)
             .unwrap_or(0);
-        hsl(hue_of(partition, node, level, levels), saturation, lightness)
+        hsl(
+            hue_of(partition, node, level, levels),
+            saturation,
+            lightness,
+        )
     };
 
     let at = |node: NodeID| -> (f64, f64) {
@@ -198,6 +205,9 @@ fn main() {
     }
     println!("{} cells were stepped over", stepped.len());
 
+    // where each drawn cell sits and what it came out, for the links between
+    // them to be drawn from and coloured by
+    let mut centre_of: FxHashMap<(usize, CellId), ((f64, f64), String)> = FxHashMap::default();
     let mut nodes_of: FxHashMap<usize, std::sync::Arc<toolbox_rs::customization::Level>> =
         FxHashMap::default();
     for (level, cell) in &stepped {
@@ -222,6 +232,13 @@ fn main() {
             .map(|c| Position::from(vec![f64::from(c.lon) / 1e6, f64::from(c.lat) / 1e6]))
             .collect();
         let base = (*level + 1) as f64 * LEVEL_HEIGHT;
+        // the middle of the outline rather than of the nodes: a link is drawn
+        // between two shapes on screen, so it should leave from the middle of
+        // the shape and not from wherever the nodes happen to crowd
+        let middle = (
+            hull.iter().map(|c| f64::from(c.lon) / 1e6).sum::<f64>() / hull.len() as f64,
+            hull.iter().map(|c| f64::from(c.lat) / 1e6).sum::<f64>() / hull.len() as f64,
+        );
         // a sheet is the dark end of its family, so that everything the search
         // did on it is the same colour only brighter
         let colour = hsl(
@@ -241,6 +258,7 @@ fn main() {
                 &colour,
             ))
             .expect("the cell cannot be written");
+        centre_of.insert((*level, *cell), (middle, colour));
         written += 1;
     }
 
@@ -257,6 +275,7 @@ fn main() {
     // a table between two border nodes of a cell, and a straight line is what
     // an entry in a table looks like.
     let mut relaxed = 0usize;
+    let mut crossings: BTreeSet<(usize, CellId, CellId)> = BTreeSet::new();
     for &node in query.stats().reached() {
         let Some(parent) = query.parent(node) else {
             continue;
@@ -264,6 +283,24 @@ fn main() {
         // the source was reached from nowhere
         if parent == node {
             continue;
+        }
+        // An arc whose ends are at one level in two cells is the search
+        // leaving the one and entering the other, which is the whole of what
+        // it means for two cells to be next to each other here. Nothing else
+        // has to be asked of the partition: the arcs the search relaxed
+        // already say which cells it found its way between.
+        if let (Some(from), Some(to)) = (
+            partition.query_level(source_word, target_word, parent),
+            partition.query_level(source_word, target_word, node),
+        ) && from == to
+        {
+            let (here, there) = (
+                partition.cell_of(parent, from),
+                partition.cell_of(node, from),
+            );
+            if here != there {
+                crossings.insert((from, here.min(there), here.max(there)));
+            }
         }
         let (level, height) = height_of(parent);
         let ring = ribbon_along(&[at(parent), at(node)], width * 0.3);
@@ -286,6 +323,59 @@ fn main() {
         relaxed += 1;
     }
     println!("{relaxed} arcs were relaxed and kept");
+
+    // The cells of a level, joined where the search crossed between them.
+    //
+    // Drawn on their own the cells of a level are a scattering of islands and
+    // nothing says which one leads to which, though that is what the search
+    // spent its time on: it steps across a cell, leaves by an arc into the
+    // next, and steps across that one. A link says the two are next to each
+    // other and the search went that way.
+    //
+    // Dashed, because it is not a thing on the ground. A step of the way is a
+    // path through a cell and an arc is an entry in a table, but a link is
+    // neither -- it is two shapes on screen having something to do with each
+    // other -- and a dashed line is how a drawing says so. The gaps are cut
+    // here: what a map draws at a height is a polygon, a polygon is solid, so
+    // every dash has to be one of its own.
+    let mut linked = 0usize;
+    for (level, here, there) in &crossings {
+        let (Some((from, tint)), Some((to, other))) = (
+            centre_of.get(&(*level, *here)),
+            centre_of.get(&(*level, *there)),
+        ) else {
+            // a cell the search crossed into and never settled in was never
+            // drawn, and a link to a shape that is not there is a line to
+            // nowhere
+            continue;
+        };
+        let cut = dashes(*from, *to, width * 0.45, width * 4.0);
+        if cut.is_empty() {
+            continue;
+        }
+        let base = (*level + 1) as f64 * LEVEL_HEIGHT;
+        // one feature for the link and its dashes as the parts of it, rather
+        // than one feature per dash: a link is one thing about the partition,
+        // and cut into pieces it would be counted and hidden as many
+        writer
+            .write_feature(&feature(
+                GeometryValue::MultiPolygon {
+                    coordinates: cut.into_iter().map(|ring| vec![ring]).collect(),
+                },
+                "link",
+                *level as isize,
+                base + SHEET * LINK_BASE,
+                base + SHEET * LINK_TOP,
+                &blend(tint, other),
+            ))
+            .expect("the link cannot be written");
+        written += 1;
+        linked += 1;
+    }
+    println!(
+        "{linked} pairs of cells were crossed between, of {} the search found",
+        crossings.len()
+    );
 
     // What the search reached and never got round to, and what it settled. A
     // stub for the one and something standing up for the other: the search
@@ -588,6 +678,56 @@ fn ribbon_along(points: &[(f64, f64)], width: f64) -> Vec<Position> {
     }
     ring.push(ring[0].clone());
     ring
+}
+
+/// A line from one place to another, cut into dashes.
+///
+/// `dash` is how long a dash is meant to be, and it is met as nearly as a
+/// whole number of them fits the distance, so that dashes come out the same
+/// length whether a link is short or long. Half of each is drawn and half is
+/// left, which is what makes it read as dashed rather than as dotted.
+fn dashes(from: (f64, f64), to: (f64, f64), width: f64, dash: f64) -> Vec<Vec<Position>> {
+    let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+    let length = dx.hypot(dy);
+    // two cells whose outlines have the same middle are not two shapes to
+    // draw a line between
+    if length < f64::EPSILON {
+        return Vec::new();
+    }
+    // and one too short to break up is drawn whole rather than dropped: it is
+    // as much a crossing as a long one, and a link that is not drawn reads as
+    // two cells the search never went between
+    if length < dash * 2.0 {
+        let whole = ribbon_along(&[from, to], width);
+        return if whole.is_empty() {
+            Vec::new()
+        } else {
+            vec![whole]
+        };
+    }
+    let count = (length / (dash * 2.0)).round().max(1.0);
+    let at = |along: f64| (from.0 + dx * along, from.1 + dy * along);
+    (0..count as usize)
+        .map(|step| {
+            let start = step as f64 / count;
+            ribbon_along(&[at(start), at(start + 0.5 / count)], width)
+        })
+        .filter(|ring| !ring.is_empty())
+        .collect()
+}
+
+/// The colour halfway between two, for something belonging to both.
+fn blend(one: &str, other: &str) -> String {
+    let band = |colour: &str, at: usize| {
+        u16::from_str_radix(&colour[at..at + 2], 16).expect("a colour is six hex digits")
+    };
+    let mixed: Vec<String> = (0..3)
+        .map(|index| {
+            let at = 1 + index * 2;
+            format!("{:02x}", (band(one, at) + band(other, at)) / 2)
+        })
+        .collect();
+    format!("#{}", mixed.concat())
 }
 
 /// The footprint a riser or a node is pushed up from.

@@ -80,6 +80,7 @@ const RAISE = 230;
 // there is one paint block here and the file decides the rest.
 const LIFTED = [
   { id: 'cells',   kind: 'cell',    opacity: 0.32, label: null },
+  { id: 'links',   kind: 'link',    opacity: 0.85, label: 'cells it crossed between' },
   { id: 'relaxed', kind: 'relaxed', opacity: 0.7,  label: 'arcs it relaxed' },
   { id: 'reached', kind: 'reached', opacity: 0.8,  label: 'reached, not settled' },
   { id: 'settled', kind: 'settled', opacity: 0.95, label: 'settled' },
@@ -87,7 +88,7 @@ const LIFTED = [
   { id: 'riser',   kind: 'riser',   opacity: 0.9,  label: 'jumps between levels' },
 ];
 // what a level's checkbox hides, being everything that happened at a level
-const BY_LEVEL = ['cells', 'relaxed', 'reached', 'settled'];
+const BY_LEVEL = ['cells', 'links', 'relaxed', 'reached', 'settled'];
 
 const fail = message => {
   const box = document.getElementById('err');
@@ -124,6 +125,7 @@ function draw(data) {
   for (const [name, count] of [['settled', of('settled').length],
                                ['reached, not settled', of('reached').length],
                                ['arcs relaxed', of('relaxed').length],
+                               ['cells crossed between', of('link').length],
                                ['cells stepped over', of('cell').length],
                                ['steps', of('packed').length],
                                ['levels', levels.length]]) {
