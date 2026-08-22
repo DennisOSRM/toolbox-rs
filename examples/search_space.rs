@@ -102,6 +102,9 @@ const HULL_SAMPLE: usize = 200_000;
 /// it came away with floats clear over all of it.
 const ARC_TOP: f64 = 1.15;
 const LINK_BASE: f64 = 1.15;
+
+/// What a link between two cells is drawn in.
+const CROSSING: &str = "#ffffff";
 const LINK_TOP: f64 = 1.28;
 const REACHED_TOP: f64 = 1.3;
 const SETTLED_TOP: f64 = 1.9;
@@ -371,7 +374,7 @@ fn main() {
     // every dash has to be one of its own.
     let mut linked = 0usize;
     for ((level, here, there), first) in &crossings {
-        let (Some((from, tint)), Some((to, other))) = (
+        let (Some((from, _)), Some((to, _))) = (
             centre_of.get(&(*level, *here)),
             centre_of.get(&(*level, *there)),
         ) else {
@@ -398,7 +401,13 @@ fn main() {
                     level: *level as isize,
                     base: base + SHEET * LINK_BASE,
                     height: base + SHEET * LINK_TOP,
-                    colour: &blend(tint, other),
+                    // white, alone of everything here. A link is not of
+                    // either cell it joins and colouring it of both said
+                    // neither: two blends of pale neighbours come out the
+                    // same pale nothing, and the one mark that is about the
+                    // partition rather than about a cell was the hardest to
+                    // see. Off the family altogether, it reads at a glance.
+                    colour: CROSSING,
                     step: *first,
                 },
             ))
@@ -789,20 +798,6 @@ fn dashes(from: (f64, f64), to: (f64, f64), width: f64, dash: f64) -> Vec<Vec<Po
         })
         .filter(|ring| !ring.is_empty())
         .collect()
-}
-
-/// The colour halfway between two, for something belonging to both.
-fn blend(one: &str, other: &str) -> String {
-    let band = |colour: &str, at: usize| {
-        u16::from_str_radix(&colour[at..at + 2], 16).expect("a colour is six hex digits")
-    };
-    let mixed: Vec<String> = (0..3)
-        .map(|index| {
-            let at = 1 + index * 2;
-            format!("{:02x}", (band(one, at) + band(other, at)) / 2)
-        })
-        .collect();
-    format!("#{}", mixed.concat())
 }
 
 /// The footprint a riser or a node is pushed up from.
