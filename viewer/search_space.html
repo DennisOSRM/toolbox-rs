@@ -47,6 +47,9 @@
   .stat { display: flex; justify-content: space-between; font-size: 11.5px; color: #a9a9b2; }
   .stat b { color: #e8e8e6; font-weight: 600; font-variant-numeric: tabular-nums; }
   input[type=range] { width: 100%; }
+  button { background: #24242a; color: #e8e8e6; border: 1px solid #34343c;
+           border-radius: 5px; padding: 3px 12px; font: inherit; cursor: pointer; }
+  button:hover { background: #2e2e36; }
   #err { position: absolute; inset: 0; display: none; place-items: center; z-index: 3;
          background: #0e0e10; color: #e0605a; padding: 40px; text-align: center; }
 </style>
@@ -59,6 +62,11 @@
   <div id="levels"></div>
   <hr>
   <div id="kinds"></div>
+  <hr>
+  <div class="row"><label for="progress">search progress</label>
+    <span class="count" id="at"></span></div>
+  <input type="range" id="progress" min="0" max="0" value="0">
+  <div class="row"><button id="play">play</button></div>
   <hr>
   <div class="row"><label for="spread">level spacing</label></div>
   <input type="range" id="spread" min="0" max="200" value="100">
@@ -172,6 +180,7 @@ function draw(data) {
       map.addLayer({
         id: layer.id, type: 'fill-extrusion', source: 'space',
         filter: ['==', ['get', 'kind'], layer.kind],
+        // replaced by refilter below, which is the one place that decides
         paint: {
           'fill-extrusion-color': ['get', 'colour'],
           'fill-extrusion-base': ['get', 'base'],
@@ -190,6 +199,67 @@ function draw(data) {
         'line-color': ['get', 'colour'],
         'line-width': ['interpolate', ['linear'], ['zoom'], 4, 2.2, 12, 5],
       },
+    });
+
+    // What is drawn is decided in one place, from which levels are wanted and
+    // how far into the search the cursor is. Two things composing a filter
+    // from opposite ends of the file is how one of them ends up quietly
+    // dropping what the other asked for.
+    const ALL = [...LIFTED, { id: 'unpacked', kind: 'unpacked' }];
+    const shown = new Set(levels);
+    const last = Math.max(...features.map(f => f.properties.step));
+    let cursor = last;
+
+    const refilter = () => {
+      for (const layer of ALL) {
+        const terms = [['==', ['get', 'kind'], layer.kind],
+                       ['<=', ['get', 'step'], cursor]];
+        if (BY_LEVEL.includes(layer.id)) {
+          const keep = ['in', ['get', 'level'], ['literal', [...shown]]];
+          // what happened below the levels happened on the ground, and no
+          // level's checkbox owns it
+          terms.push(layer.id === 'cells' ? keep
+                                          : ['any', ['<', ['get', 'level'], 0], keep]);
+        }
+        map.setFilter(layer.id, ['all', ...terms]);
+      }
+    };
+
+    // The search, as it stood when it had settled so many nodes. Every mark
+    // carries the step it happened at, so running the cursor is running the
+    // search: nothing is recomputed and nothing is animated but the filter.
+    const progress = document.getElementById('progress');
+    const reading = document.getElementById('at');
+    progress.max = last;
+    progress.value = last;
+    const cut = step => {
+      cursor = Math.round(step);
+      progress.value = cursor;
+      reading.textContent = `${cursor.toLocaleString()} / ${last.toLocaleString()} settled`;
+      refilter();
+    };
+    progress.addEventListener('input', () => cut(Number(progress.value)));
+    // the animation is driven from outside as well, a frame at a time
+    window.cut = cut;
+    cut(last);
+
+    let running = null;
+    document.getElementById('play').addEventListener('click', event => {
+      if (running) {
+        cancelAnimationFrame(running);
+        running = null;
+        event.target.textContent = 'play';
+        return;
+      }
+      event.target.textContent = 'stop';
+      let step = 0;
+      const tick = () => {
+        step += Math.max(1, last / 300);
+        cut(Math.min(step, last));
+        running = step < last ? requestAnimationFrame(tick) : null;
+        if (!running) event.target.textContent = 'play';
+      };
+      tick();
     });
 
     // Fitting the bounds frames the ground, and everything else stands
@@ -224,20 +294,12 @@ function draw(data) {
     // the middle of what that level's cells came out, there being no one
     // colour for a level any more.
     const rows = document.getElementById('levels');
-    const shown = new Set(levels);
     for (const level of [...levels].reverse()) {
       const cells = features.filter(f => f.properties.level === level
                                       && f.properties.kind === 'cell');
       const row = toggle(`level ${level}`, mean(cells.map(f => f.properties.colour)), on => {
         if (on) { shown.add(level); } else { shown.delete(level); }
-        const keep = ['in', ['get', 'level'], ['literal', [...shown]]];
-        for (const id of BY_LEVEL) {
-          const kind = LIFTED.find(l => l.id === id).kind;
-          // what happened below the levels happened on the ground, and no
-          // level's checkbox owns it
-          map.setFilter(id, ['all', ['==', ['get', 'kind'], kind],
-            id === 'cells' ? keep : ['any', ['<', ['get', 'level'], 0], keep]]);
-        }
+        refilter();
       });
       const count = document.createElement('span');
       count.className = 'count';
