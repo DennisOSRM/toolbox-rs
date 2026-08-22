@@ -20,12 +20,18 @@
   the colour it is drawn in. Which is why there is so little in this file: the
   thinking is upstream, and this only hands it to maplibre.
 
-  There is no basemap. The tiles would say nothing this is about, and asking
-  for them means asking somebody else's server for permission to look at your
-  own data.
+  Under it all is an OpenStreetMap basemap, at half transparency so that it
+  says where without arguing with what is drawn over it. It comes from
+  openfreemap.org, which serves vector tiles of OSM without an account or a
+  key, and asking for it means asking somebody else's server for the ground
+  under whatever is on screen. `?basemap=off` does without, and the page draws
+  the same as it did before there was one; so does having no network, which is
+  the same case and is fallen back to rather than failed on.
 
     python3 -m http.server 8000
     open http://localhost:8000/viewer/search_space.html?data=search_space.geojson
+    open http://localhost:8000/viewer/search_space.html?basemap=positron
+    open http://localhost:8000/viewer/search_space.html?basemap=off
 -->
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <style>
@@ -77,7 +83,40 @@
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script>
-const source = new URLSearchParams(location.search).get('data') || 'search_space.geojson';
+const asked = new URLSearchParams(location.search);
+const source = asked.get('data') || 'search_space.geojson';
+
+// Keyless OSM vector tiles. The dark one, because what is drawn over it is
+// pale and pale over pale is nothing: under the veil, positron comes out a
+// mid grey the marks have to fight, and this comes out a ground they sit on.
+// positron, liberty and bright are there to be asked for, and off is no
+// basemap at all.
+const BASEMAP = asked.get('basemap') || 'dark';
+const GROUND = '#0e0e10';
+const BARE = { version: 8, sources: {}, layers: [
+  { id: 'bg', type: 'background', paint: { 'background-color': GROUND } },
+]};
+
+// Half transparent is a veil of the page's own colour over the whole basemap
+// rather than every one of its fifty-five layers turned down by half. Turned
+// down one by one they show through one another -- a road at half over a
+// landuse at half is not half of the two -- and the result is uneven in a way
+// that reads as a rendering fault. One veil is even everywhere.
+async function groundFor() {
+  if (BASEMAP === 'off') return { style: BARE, base: [] };
+  try {
+    const style = await (await fetch(`https://tiles.openfreemap.org/styles/${BASEMAP}`)).json();
+    const base = style.layers.map(layer => layer.id);
+    style.layers.push({
+      id: 'veil', type: 'background',
+      paint: { 'background-color': GROUND, 'background-opacity': 0.5 },
+    });
+    return { style, base };
+  } catch (e) {
+    console.warn(`no basemap (${e.message}), carrying on without one`);
+    return { style: BARE, base: [] };
+  }
+}
 
 // How far the camera is lifted off the ground fit, in pixels, so that the
 // levels standing over it are on screen.
@@ -104,12 +143,14 @@ const fail = message => {
   box.textContent = message;
 };
 
-fetch(source)
-  .then(r => r.ok ? r.json() : Promise.reject(new Error(`${source}: ${r.status}`)))
-  .then(draw)
+Promise.all([
+  fetch(source).then(r => r.ok ? r.json() : Promise.reject(new Error(`${source}: ${r.status}`))),
+  groundFor(),
+])
+  .then(([data, ground]) => draw(data, ground))
   .catch(e => fail(`${e.message}\n\nRun the search_space example to write it, and serve this directory over http.`));
 
-function draw(data) {
+function draw(data, ground) {
   window.onerror = (m, _f, l) => fail(`${m} (line ${l})`);
   // A map loads on an animation frame, and a tab that is hidden never runs
   // one, so it would sit here for ever saying nothing about why.
@@ -155,9 +196,7 @@ function draw(data) {
 
   const map = new maplibregl.Map({
     container: 'map',
-    style: { version: 8, sources: {}, layers: [
-      { id: 'bg', type: 'background', paint: { 'background-color': '#0e0e10' } },
-    ]},
+    style: ground.style,
     bounds,
     fitBoundsOptions: {
       padding: { top: 90, bottom: 90, left: 330, right: 80 },
@@ -277,6 +316,13 @@ function draw(data) {
     }
     kinds.append(toggle('the way through the graph', '#ece9e2',
       on => map.setLayoutProperty('unpacked', 'visibility', on ? 'visible' : 'none')));
+    if (ground.base.length) {
+      kinds.append(toggle('the ground under it', '#4a4a52', on => {
+        for (const layer of [...ground.base, 'veil']) {
+          map.setLayoutProperty(layer, 'visibility', on ? 'visible' : 'none');
+        }
+      }));
+    }
 
     // The levels are drawn where the file said, and this scales that. Pulling
     // them together is how the way is read against the ground; pushing them
