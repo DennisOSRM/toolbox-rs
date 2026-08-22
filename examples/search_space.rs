@@ -40,7 +40,8 @@
 //! # What goes in the file
 //!
 //! One feature collection, every feature carrying `kind`, `level`, a `colour`,
-//! and the two heights it is to be drawn between. The heights and the colours
+//! the `step` of the search it happened at, and the two heights it is to be
+//! drawn between. The heights and the colours
 //! are worked out here rather than in the viewer, so that the viewer only has
 //! to draw what it is given.
 //!
@@ -59,10 +60,10 @@
 //! point at a height: what a map draws at a height is a polygon pushed up
 //! between two of them.
 
-use std::{collections::BTreeSet, env::args, fs::File, io::BufWriter};
+use std::{collections::BTreeMap, env::args, fs::File, io::BufWriter};
 
 use geojson::{Feature, FeatureWriter, Geometry, GeometryValue, JsonObject, JsonValue, Position};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use toolbox_rs::{
     convex_hull::monotone_chain,
@@ -137,10 +138,17 @@ fn main() {
         .retrieve_packed_path(target)
         .expect("the target was not reached");
     let way = unpack(&customization, &packed).expect("the cells offer what they said");
-    let settled: FxHashSet<NodeID> = query.stats().settled().iter().copied().collect();
+    // the clock everything is stamped by: where a node came off the queue
+    let settled_at: FxHashMap<NodeID, usize> = query
+        .stats()
+        .settled()
+        .iter()
+        .enumerate()
+        .map(|(index, &node)| (node, index + 1))
+        .collect();
     println!(
         "{} settled of {} reached, {} steps, {} nodes once put back, costing {}",
-        settled.len(),
+        settled_at.len(),
         query.stats().reached().len(),
         packed.len(),
         way.len(),
@@ -204,10 +212,14 @@ fn main() {
     let width = (((east - west).max(north - south)) * 0.0025).max(0.000_02);
 
     // the cells the search stepped over, per level
-    let mut stepped: BTreeSet<(usize, CellId)> = BTreeSet::new();
-    for &node in query.stats().settled() {
+    // the settled come in the order they were settled, so the first mention of
+    // a cell is the step the search first stepped over it
+    let mut stepped: BTreeMap<(usize, CellId), usize> = BTreeMap::new();
+    for (index, &node) in query.stats().settled().iter().enumerate() {
         if let Some(level) = partition.query_level(source_word, target_word, node) {
-            stepped.insert((level, partition.cell_of(node, level)));
+            stepped
+                .entry((level, partition.cell_of(node, level)))
+                .or_insert(index + 1);
         }
     }
     println!("{} cells were stepped over", stepped.len());
@@ -217,7 +229,7 @@ fn main() {
     let mut centre_of: FxHashMap<(usize, CellId), ((f64, f64), String)> = FxHashMap::default();
     let mut nodes_of: FxHashMap<usize, std::sync::Arc<toolbox_rs::customization::Level>> =
         FxHashMap::default();
-    for (level, cell) in &stepped {
+    for ((level, cell), first) in &stepped {
         let holding = nodes_of
             .entry(*level)
             .or_insert_with(|| customization.level(*level))
@@ -258,11 +270,14 @@ fn main() {
                 GeometryValue::Polygon {
                     coordinates: vec![ring],
                 },
-                "cell",
-                *level as isize,
-                base,
-                base + SHEET,
-                &colour,
+                Mark {
+                    kind: "cell",
+                    level: *level as isize,
+                    base,
+                    height: base + SHEET,
+                    colour: &colour,
+                    step: *first,
+                },
             ))
             .expect("the cell cannot be written");
         centre_of.insert((*level, *cell), (middle, colour));
@@ -282,7 +297,7 @@ fn main() {
     // a table between two border nodes of a cell, and a straight line is what
     // an entry in a table looks like.
     let mut relaxed = 0usize;
-    let mut crossings: BTreeSet<(usize, CellId, CellId)> = BTreeSet::new();
+    let mut crossings: BTreeMap<(usize, CellId, CellId), usize> = BTreeMap::new();
     for &node in query.stats().reached() {
         let Some(parent) = query.parent(node) else {
             continue;
@@ -306,7 +321,11 @@ fn main() {
                 partition.cell_of(node, from),
             );
             if here != there {
-                crossings.insert((from, here.min(there), here.max(there)));
+                let at = settled_at.get(&parent).copied().unwrap_or(0);
+                crossings
+                    .entry((from, here.min(there), here.max(there)))
+                    .and_modify(|first| *first = (*first).min(at))
+                    .or_insert(at);
             }
         }
         let (level, height) = height_of(parent);
@@ -319,11 +338,16 @@ fn main() {
                 GeometryValue::Polygon {
                     coordinates: vec![ring],
                 },
-                "relaxed",
-                level,
-                height + SHEET,
-                height + SHEET * ARC_TOP,
-                &shade(parent, 0.5, 0.7),
+                Mark {
+                    kind: "relaxed",
+                    level,
+                    base: height + SHEET,
+                    height: height + SHEET * ARC_TOP,
+                    colour: &shade(parent, 0.5, 0.7),
+                    // an arc is drawn the moment the node it leaves comes off
+                    // the queue, that being when the search walked it
+                    step: settled_at.get(&parent).copied().unwrap_or(0),
+                },
             ))
             .expect("the arc cannot be written");
         written += 1;
@@ -346,7 +370,7 @@ fn main() {
     // here: what a map draws at a height is a polygon, a polygon is solid, so
     // every dash has to be one of its own.
     let mut linked = 0usize;
-    for (level, here, there) in &crossings {
+    for ((level, here, there), first) in &crossings {
         let (Some((from, tint)), Some((to, other))) = (
             centre_of.get(&(*level, *here)),
             centre_of.get(&(*level, *there)),
@@ -369,11 +393,14 @@ fn main() {
                 GeometryValue::MultiPolygon {
                     coordinates: cut.into_iter().map(|ring| vec![ring]).collect(),
                 },
-                "link",
-                *level as isize,
-                base + SHEET * LINK_BASE,
-                base + SHEET * LINK_TOP,
-                &blend(tint, other),
+                Mark {
+                    kind: "link",
+                    level: *level as isize,
+                    base: base + SHEET * LINK_BASE,
+                    height: base + SHEET * LINK_TOP,
+                    colour: &blend(tint, other),
+                    step: *first,
+                },
             ))
             .expect("the link cannot be written");
         written += 1;
@@ -390,7 +417,18 @@ fn main() {
     // reached, and the difference is most of what a search does.
     for &node in query.stats().reached() {
         let (level, height) = height_of(node);
-        let settled_here = settled.contains(&node);
+        // a node it settled is stamped where it came off, and one it only
+        // reached is stamped where the node that reached it came off, that
+        // being when it appeared
+        let settled_here = settled_at.contains_key(&node);
+        let stamp = if settled_here {
+            settled_at[&node]
+        } else {
+            query
+                .parent(node)
+                .and_then(|parent| settled_at.get(&parent).copied())
+                .unwrap_or(0)
+        };
         let (top, size, colour) = if settled_here {
             (SETTLED_TOP, 0.55, shade(node, 0.68, 0.78))
         } else {
@@ -401,11 +439,14 @@ fn main() {
                 GeometryValue::Polygon {
                     coordinates: vec![footprint(at(node), width * size)],
                 },
-                if settled_here { "settled" } else { "reached" },
-                level,
-                height + SHEET,
-                height + SHEET * top,
-                &colour,
+                Mark {
+                    kind: if settled_here { "settled" } else { "reached" },
+                    level,
+                    base: height + SHEET,
+                    height: height + SHEET * top,
+                    colour: &colour,
+                    step: stamp,
+                },
             ))
             .expect("the node cannot be written");
         written += 1;
@@ -423,6 +464,10 @@ fn main() {
     // Which arcs a step stands for is not asked again here. The way was put
     // back by laying the steps end to end, so it comes apart at the nodes the
     // search handed over, each of which it holds once.
+    // the way is not known until the target comes off the queue, so that is
+    // the step every piece of it appears at
+    let found_at = settled_at.get(&target).copied().unwrap_or(0);
+
     let mut seam = Vec::with_capacity(packed.len());
     seam.push(0usize);
     for &node in &packed[1..] {
@@ -455,15 +500,18 @@ fn main() {
                 GeometryValue::Polygon {
                     coordinates: vec![ring],
                 },
-                "packed",
-                level,
-                // clear over the sheet its level is drawn as and over
-                // everything standing on it, rather than inside any of it
-                height + SHEET * WAY_BASE,
-                height + SHEET * WAY_TOP,
-                // the fullest the cell's family goes, so the way is the first
-                // thing read at a level and still plainly of that level
-                &shade(pair[0], 0.82, 0.76),
+                Mark {
+                    kind: "packed",
+                    level,
+                    // clear over the sheet its level is drawn as and over
+                    // everything standing on it, rather than inside any of it
+                    base: height + SHEET * WAY_BASE,
+                    height: height + SHEET * WAY_TOP,
+                    // the fullest the cell's family goes, so the way is the
+                    // first thing read at a level and still of that level
+                    colour: &shade(pair[0], 0.82, 0.76),
+                    step: found_at,
+                },
             ))
             .expect("the step cannot be written");
         written += 1;
@@ -502,11 +550,14 @@ fn main() {
                 GeometryValue::Polygon {
                     coordinates: vec![footprint(at(node), width * 0.75)],
                 },
-                "riser",
-                level,
-                low + SHEET * WAY_BASE,
-                high + SHEET * WAY_TOP,
-                &shade(arrived, 0.82, 0.76),
+                Mark {
+                    kind: "riser",
+                    level,
+                    base: low + SHEET * WAY_BASE,
+                    height: high + SHEET * WAY_TOP,
+                    colour: &shade(arrived, 0.82, 0.76),
+                    step: found_at,
+                },
             ))
             .expect("the riser cannot be written");
         written += 1;
@@ -525,13 +576,16 @@ fn main() {
             GeometryValue::LineString {
                 coordinates: ground,
             },
-            "unpacked",
-            -1,
-            0.0,
-            0.0,
-            // the one thing on screen that is not of a cell, being the answer
-            // rather than a part of the working
-            "#ece9e2",
+            Mark {
+                kind: "unpacked",
+                level: -1,
+                base: 0.0,
+                height: 0.0,
+                // the one thing on screen that is not of a cell, being the
+                // answer rather than a part of the working
+                colour: "#ece9e2",
+                step: found_at,
+            },
         ))
         .expect("the way cannot be written");
     written += 1;
@@ -540,21 +594,35 @@ fn main() {
     println!("wrote {written} features to {out_path}");
 }
 
-/// A feature carrying what the viewer draws it by.
-fn feature(
-    geometry: GeometryValue,
-    kind: &str,
+/// What the viewer draws a feature by.
+///
+/// Passed as one thing rather than as six arguments in a row, which is how a
+/// base and a height end up the wrong way round.
+struct Mark<'a> {
+    kind: &'a str,
     level: isize,
     base: f64,
     height: f64,
-    colour: &str,
-) -> Feature {
+    colour: &'a str,
+    /// How far into the search this happened, counted in nodes settled.
+    ///
+    /// One clock for all of it. A node is stamped with where it came off the
+    /// queue, and everything a node caused -- the arcs relaxed from it, the
+    /// nodes those reached, the first crossing into a cell -- is stamped with
+    /// the same, so a picture cut off at a step is the search as it stood when
+    /// it had settled that many.
+    step: usize,
+}
+
+/// A feature carrying what the viewer draws it by.
+fn feature(geometry: GeometryValue, mark: Mark) -> Feature {
     let mut properties = JsonObject::new();
-    properties.insert("kind".to_string(), JsonValue::from(kind));
-    properties.insert("level".to_string(), JsonValue::from(level));
-    properties.insert("base".to_string(), JsonValue::from(base));
-    properties.insert("height".to_string(), JsonValue::from(height));
-    properties.insert("colour".to_string(), JsonValue::from(colour));
+    properties.insert("kind".to_string(), JsonValue::from(mark.kind));
+    properties.insert("level".to_string(), JsonValue::from(mark.level));
+    properties.insert("base".to_string(), JsonValue::from(mark.base));
+    properties.insert("height".to_string(), JsonValue::from(mark.height));
+    properties.insert("colour".to_string(), JsonValue::from(mark.colour));
+    properties.insert("step".to_string(), JsonValue::from(mark.step));
     Feature {
         bbox: None,
         geometry: Some(Geometry::new(geometry)),
