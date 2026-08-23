@@ -26,6 +26,7 @@ use crate::{
 use log::debug;
 use rustc_hash::FxHashMap;
 use std::{
+    cell::RefCell,
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -236,11 +237,39 @@ pub struct CellReport<'a> {
     /// how many nodes the search ran over, which on a level above the finest
     /// is the border nodes of the cells below rather than all of their nodes
     pub searched: usize,
+    /// how many arcs it ran over, a clique of the cells below among them
+    pub arcs: usize,
     pub elapsed: Duration,
+    /// What went on building the graph the searches then ran over.
+    ///
+    /// Split from the searches because the two answer to different things. The
+    /// searches are the work the algorithm asks for and shrink only by asking
+    /// for less of it; the building is a cost of how this happens to be
+    /// arranged, and a level that spends its time there is a level with
+    /// something to take away rather than something to make cleverer.
+    pub building: Duration,
+    /// and what went on the searches themselves
+    pub searching: Duration,
     /// how many cells have been worked out so far, this one included
     pub customized_cells: usize,
     /// what all of them together have cost
     pub total: Duration,
+}
+
+thread_local! {
+    /// Searches kept for the next cell rather than made for each one.
+    ///
+    /// A cell is a small graph and a search over it a small object, so what it
+    /// costs to make one is a real part of what a cell costs: on a continent
+    /// there are six hundred thousand cells and six hundred thousand searches
+    /// made and thrown away, and the queue inside one holds several vectors of
+    /// its own. Kept per thread, the customization of a level running a cell
+    /// to a thread and the threads sharing nothing else.
+    ///
+    /// A pool rather than one, so that a cell asking for the cells below it
+    /// while it holds a search cannot find the place empty and the borrow
+    /// already taken.
+    static SEARCHES: RefCell<Vec<OneToManyDijkstra>> = const { RefCell::new(Vec::new()) };
 }
 
 /// The cells of a partition, worked out level by level as they are asked for.
@@ -495,6 +524,7 @@ impl Customization {
     fn tabulate(&self, level: usize, cell: CellId) -> Option<CellDistances> {
         let started = Instant::now();
         let cells = self.level(level);
+        let building = Instant::now();
         let nodes = cells.nodes_of_cell.get(cell as usize)?;
 
         // the border nodes lead the numbering, so that they are the leading
@@ -524,22 +554,31 @@ impl Customization {
             (graph, Some(of_node), searched)
         };
 
+        let building = building.elapsed();
+        let arcs = cell_graph.number_of_edges();
+
         // whichever graph it is, the border nodes lead its numbering
-        let border = (0..border_nodes.len() as NodeID).collect::<Vec<_>>();
-        let mut matrix = vec![u32::MAX; border_nodes.len() * border_nodes.len()];
-        let mut dijkstra = OneToManyDijkstra::new();
-        for &source in &border {
-            dijkstra.run(&cell_graph, source, &border);
-            for &target in &border {
-                let across = dijkstra.distance(target);
+        let searching = Instant::now();
+        let wide = border_nodes.len();
+        let mut matrix = vec![u32::MAX; wide * wide];
+        // the cells below are all tabulated by now, so nothing this search
+        // does can ask for another one, and the pool is only ever one deep
+        let mut dijkstra = SEARCHES
+            .with_borrow_mut(Vec::pop)
+            .unwrap_or_default();
+        for source in 0..wide {
+            dijkstra.run_to_leading(&cell_graph, source, wide);
+            let row = &mut matrix[source * wide..(source + 1) * wide];
+            for (target, across) in row.iter_mut().enumerate() {
                 // what cannot be reached keeps the largest four byte number,
                 // and a cell that really did cost that much would be a graph
                 // nobody has
-                matrix[source * border_nodes.len() + target] =
-                    u32::try_from(across).unwrap_or(u32::MAX);
+                *across = u32::try_from(dijkstra.distance(target)).unwrap_or(u32::MAX);
             }
         }
+        SEARCHES.with_borrow_mut(|pool| pool.push(dijkstra));
         drop(of_node);
+        let searching = searching.elapsed();
 
         // the searches are what the customization of a cell costs, so the
         // clock is read once they are done
@@ -557,7 +596,10 @@ impl Customization {
                 nodes,
                 border_nodes: border_nodes.len(),
                 searched,
+                arcs,
                 elapsed,
+                building,
+                searching,
                 customized_cells,
                 total,
             });
