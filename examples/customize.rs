@@ -101,10 +101,20 @@ fn main() {
         let add =
             |a: (usize, usize, usize), b: (usize, usize, usize)| (a.0 + b.0, a.1 + b.1, a.2 + b.2);
         let (tabulated, border, entries) = if parallel {
-            (0..cells)
-                .into_par_iter()
-                .map(of_cell)
-                .reduce(|| (0, 0, 0), add)
+            // Widest cell first.
+            //
+            // A level is handed out a cell to a thread, and the coarsest level
+            // of a continent has twenty-six of them of very different sizes.
+            // Taken in the order they are numbered a big one can come up last
+            // and every thread waits on it; taken widest first it starts at
+            // once and the small ones fill in around it. Longest job first,
+            // which is the oldest trick there is for this and costs a sort of
+            // as many numbers as the level has cells.
+            let holding = customization.level(level);
+            let mut order: Vec<usize> = (0..cells).collect();
+            order
+                .sort_unstable_by_key(|&cell| std::cmp::Reverse(holding.nodes_of_cell[cell].len()));
+            order.into_par_iter().map(of_cell).reduce(|| (0, 0, 0), add)
         } else {
             (0..cells).map(of_cell).fold((0, 0, 0), add)
         };
