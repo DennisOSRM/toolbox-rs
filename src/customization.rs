@@ -256,8 +256,139 @@ pub struct CellReport<'a> {
     pub total: Duration,
 }
 
+/// How wide a cell may be and still be worth a Floyd-Warshall.
+///
+/// Two things decide whether a cell is better tabulated by working out every
+/// pair at once than by a search from each of its border nodes, and the
+/// measurements on a continent say both matter.
+///
+/// The finest level is searched over the arcs of the road network, where a
+/// node has two or three of them. A search there touches almost nothing, and
+/// working out every pair does the same work whatever the arcs are, so it
+/// loses however narrow the cell is. Every level above is searched over the
+/// cliques of the cells below, where the arcs go as the square of the nodes
+/// and a search touches all of them. That is the case this is for.
+///
+/// And it is cubic in the nodes of the cell, so it wants a narrow one. Level
+/// by level on Europe, one thread, against the searches it replaces:
+///
+/// ```text
+///   level 0     36 nodes    4.15s against  3.74s
+///   level 1     30 nodes    0.77s against  2.07s
+///   level 2     45 nodes    0.49s against  1.69s
+///   level 3    197 nodes    2.20s against  2.65s
+///   level 4    505 nodes    3.88s against  3.07s
+///   level 5   1169 nodes   11.69s against  3.40s
+/// ```
+///
+/// The turn is between two hundred nodes and five hundred. The gains on either
+/// side of it are slight and the losses past it are not, so the line is drawn
+/// nearer the near side.
+const WIDEST_FOR_FLOYD_WARSHALL: usize = 300;
+
+/// The levels to work out every pair on, when `TOOLBOX_FLOYD_WARSHALL` says.
+///
+/// For measuring one way against the other, and nothing else: with nothing
+/// asked for, each cell is judged on its own by the rule above.
+fn floyd_warshall_levels() -> Option<&'static [bool]> {
+    static LEVELS: OnceLock<Option<Vec<bool>>> = OnceLock::new();
+    LEVELS
+        .get_or_init(|| {
+            let asked = std::env::var("TOOLBOX_FLOYD_WARSHALL").ok()?;
+            let mut wanted = vec![false; 32];
+            for level in asked
+                .split(',')
+                .filter_map(|word| word.trim().parse::<usize>().ok())
+            {
+                if let Some(slot) = wanted.get_mut(level) {
+                    *slot = true;
+                }
+            }
+            Some(wanted)
+        })
+        .as_deref()
+}
+
+/// Every distance within a cell, by Floyd-Warshall, of which the leading
+/// `wide` rows and columns are the answer.
+///
+/// The table is the whole cell rather than its border, which is the trade: it
+/// works out distances between nodes nobody asked about, and in exchange the
+/// inner loop is a row read against a row written with nothing in it but a
+/// compare and a move. No queue, no addressing, nothing to settle, and a
+/// compiler is free to do several at once.
+///
+/// Row `k` is copied out before the sweep that uses it so that the two rows in
+/// hand are not the same one, which lets the inner loop be a plain walk of two
+/// slices rather than an indexed one the bounds checks stay in.
+fn floyd_warshall(graph: &StaticGraph<u32>, nodes: usize, wide: usize) -> Vec<u32> {
+    let mut table = vec![u32::MAX; nodes * nodes];
+    for node in 0..nodes {
+        table[node * nodes + node] = 0;
+    }
+    for source in 0..nodes {
+        for edge in graph.edge_range(source) {
+            let target = graph.target(edge);
+            let weight = *graph.data(edge);
+            let held = &mut table[source * nodes + target];
+            *held = (*held).min(weight);
+        }
+    }
+
+    let mut through = vec![u32::MAX; nodes];
+    for step in 0..nodes {
+        through.copy_from_slice(&table[step * nodes..(step + 1) * nodes]);
+        for source in 0..nodes {
+            let reach = table[source * nodes + step];
+            // nothing goes through a node this one does not reach
+            if reach == u32::MAX {
+                continue;
+            }
+            let row = &mut table[source * nodes..(source + 1) * nodes];
+            for (held, &onward) in row.iter_mut().zip(through.iter()) {
+                // the unreachable is the largest there is, and saturating
+                // keeps it there rather than wrapping it round to nothing
+                let offered = reach.saturating_add(onward);
+                *held = (*held).min(offered);
+            }
+        }
+    }
+
+    // the border nodes lead the numbering, so the answer is the corner of it
+    let mut matrix = vec![u32::MAX; wide * wide];
+    for source in 0..wide {
+        matrix[source * wide..(source + 1) * wide]
+            .copy_from_slice(&table[source * nodes..source * nodes + wide]);
+    }
+    matrix
+}
+
+/// What building and searching one cell needs, kept to be used for the next.
+///
+/// A cell is a small thing and there are six hundred thousand of them, so what
+/// it costs to ask for the room is a real part of what a cell costs. Every one
+/// of them was making a map, a list of arcs, an adjacency array and a search,
+/// using them for a few microseconds and giving them all back. Under one
+/// thread that is the allocator's fast path several million times; under eight
+/// it is the allocator's slow path, and the customization of a continent spent
+/// thirteen seconds of system time on it.
+///
+/// Held rather than pooled by size: what a cell wants grows to what the widest
+/// cell of a level wanted and stays there, which for the finest level is a few
+/// hundred arcs and for the coarsest a few hundred thousand.
+#[derive(Default)]
+struct Scratch {
+    dijkstra: OneToManyDijkstra,
+    /// where a node of the graph sits in the numbering of the cell
+    of_node: FxHashMap<NodeID, usize>,
+    /// the arcs of the cell, sorted in place and read into the graph
+    edges: Vec<InputEdge<u32>>,
+    /// the nodes of the cell that sit on its border, in order
+    border_nodes: Vec<NodeID>,
+}
+
 thread_local! {
-    /// Searches kept for the next cell rather than made for each one.
+    /// Room kept for the next cell rather than asked for by each one.
     ///
     /// A cell is a small graph and a search over it a small object, so what it
     /// costs to make one is a real part of what a cell costs: on a continent
@@ -267,9 +398,9 @@ thread_local! {
     /// to a thread and the threads sharing nothing else.
     ///
     /// A pool rather than one, so that a cell asking for the cells below it
-    /// while it holds a search cannot find the place empty and the borrow
-    /// already taken.
-    static SEARCHES: RefCell<Vec<OneToManyDijkstra>> = const { RefCell::new(Vec::new()) };
+    /// while it holds this cannot find the place empty and the borrow already
+    /// taken. Bottom up nothing nests and the pool is one deep.
+    static SCRATCH: RefCell<Vec<Scratch>> = const { RefCell::new(Vec::new()) };
 }
 
 /// The cells of a partition, worked out level by level as they are asked for.
@@ -524,25 +655,27 @@ impl Customization {
     fn tabulate(&self, level: usize, cell: CellId) -> Option<CellDistances> {
         let started = Instant::now();
         let cells = self.level(level);
+        // taken before the cell is built rather than before it is searched,
+        // the building being the part that asks for the room
+        let mut scratch = SCRATCH.with_borrow_mut(Vec::pop).unwrap_or_default();
         let building = Instant::now();
         let nodes = cells.nodes_of_cell.get(cell as usize)?;
 
         // the border nodes lead the numbering, so that they are the leading
         // rows and columns of the matrix
-        let border_nodes = nodes
-            .iter()
-            .copied()
-            .filter(|&node| cells.on_border[node])
-            .collect::<Vec<_>>();
-        if border_nodes.is_empty() {
+        scratch.border_nodes.clear();
+        scratch
+            .border_nodes
+            .extend(nodes.iter().copied().filter(|&node| cells.on_border[node]));
+        if scratch.border_nodes.is_empty() {
             debug!("cell {cell} of level {level} has no border nodes");
+            SCRATCH.with_borrow_mut(|pool| pool.push(scratch));
             return None;
         }
 
-        let (cell_graph, of_node, searched) = if level == 0 {
+        let (cell_graph, searched) = if level == 0 {
             (
-                self.subgraph_of(&cells, cell, nodes, &border_nodes),
-                None,
+                self.subgraph_of(&cells, cell, nodes, &mut scratch),
                 nodes.len(),
             )
         } else {
@@ -550,8 +683,7 @@ impl Customization {
             // inside one of them is already tabulated, and what it does between
             // them is an arc of the graph. Searching that instead of the nodes
             // of the cell is what keeps a coarse level affordable.
-            let (graph, of_node, searched) = self.overlay_of(level, cell, &cells);
-            (graph, Some(of_node), searched)
+            self.overlay_of(level, cell, &cells, &mut scratch)
         };
 
         let building = building.elapsed();
@@ -559,25 +691,26 @@ impl Customization {
 
         // whichever graph it is, the border nodes lead its numbering
         let searching = Instant::now();
-        let wide = border_nodes.len();
-        let mut matrix = vec![u32::MAX; wide * wide];
-        // the cells below are all tabulated by now, so nothing this search
-        // does can ask for another one, and the pool is only ever one deep
-        let mut dijkstra = SEARCHES
-            .with_borrow_mut(Vec::pop)
-            .unwrap_or_default();
-        for source in 0..wide {
-            dijkstra.run_to_leading(&cell_graph, source, wide);
-            let row = &mut matrix[source * wide..(source + 1) * wide];
-            for (target, across) in row.iter_mut().enumerate() {
-                // what cannot be reached keeps the largest four byte number,
-                // and a cell that really did cost that much would be a graph
-                // nobody has
-                *across = u32::try_from(dijkstra.distance(target)).unwrap_or(u32::MAX);
+        let wide = scratch.border_nodes.len();
+        // a cell of the finest level is searched over road arcs, which is the
+        // one case where working out every pair is not worth it
+        let every_pair = level > 0 && searched <= WIDEST_FOR_FLOYD_WARSHALL;
+        let matrix = if floyd_warshall_levels().map_or(every_pair, |asked| asked[level.min(31)]) {
+            floyd_warshall(&cell_graph, searched.max(wide), wide)
+        } else {
+            let mut matrix = vec![u32::MAX; wide * wide];
+            for source in 0..wide {
+                scratch.dijkstra.run_to_leading(&cell_graph, source, wide);
+                let row = &mut matrix[source * wide..(source + 1) * wide];
+                for (target, across) in row.iter_mut().enumerate() {
+                    // what cannot be reached keeps the largest four byte
+                    // number, and a cell that really did cost that much would
+                    // be a graph nobody has
+                    *across = u32::try_from(scratch.dijkstra.distance(target)).unwrap_or(u32::MAX);
+                }
             }
-        }
-        SEARCHES.with_borrow_mut(|pool| pool.push(dijkstra));
-        drop(of_node);
+            matrix
+        };
         let searching = searching.elapsed();
 
         // the searches are what the customization of a cell costs, so the
@@ -594,7 +727,7 @@ impl Customization {
                 level,
                 cell,
                 nodes,
-                border_nodes: border_nodes.len(),
+                border_nodes: wide,
                 searched,
                 arcs,
                 elapsed,
@@ -607,23 +740,23 @@ impl Customization {
             debug!(
                 "cell {cell} of level {level}: {} nodes, {} of them on the border, searched over {searched}",
                 nodes.len(),
-                border_nodes.len()
+                wide
             );
         }
 
-        let place_of = border_nodes
+        let place_of = scratch
+            .border_nodes
             .iter()
             .enumerate()
             .map(|(place, &node)| (node, place))
             .collect();
-        Some(CellDistances::holding(
-            border_nodes
-                .into_iter()
-                .map(|node| u32::try_from(node).expect("the graph is too large to hold"))
-                .collect(),
-            matrix,
-            place_of,
-        ))
+        let border_nodes = scratch
+            .border_nodes
+            .iter()
+            .map(|&node| u32::try_from(node).expect("the graph is too large to hold"))
+            .collect();
+        SCRATCH.with_borrow_mut(|pool| pool.push(scratch));
+        Some(CellDistances::holding(border_nodes, matrix, place_of))
     }
 
     /// The arcs of the graph that stay inside a cell, with its border nodes
@@ -634,14 +767,20 @@ impl Customization {
         cells: &Level,
         cell: CellId,
         nodes: &[NodeID],
-        border_nodes: &[NodeID],
+        scratch: &mut Scratch,
     ) -> StaticGraph<u32> {
         // TODO: faster hashmap implementation using tabhash or fibonacci hash
-        let mut of_node = FxHashMap::default();
-        for &node in border_nodes {
+        let Scratch {
+            of_node,
+            edges,
+            border_nodes,
+            ..
+        } = scratch;
+        of_node.clear();
+        edges.clear();
+        for &node in border_nodes.iter() {
             of_node.insert(node, of_node.len());
         }
-        let mut edges = Vec::new();
         for &node in nodes {
             for edge in self.graph.edge_range(node) {
                 let target = self.graph.target(edge);
@@ -659,8 +798,9 @@ impl Customization {
         // appears in no arc here. The graph is asked for the nodes the cell
         // has all the same, or a search started from that node would read past
         // the end of it.
-        // TODO: find a way to avoid relocations
-        StaticGraph::new_with_nodes(of_node.len().max(border_nodes.len()), edges)
+        let nodes = of_node.len().max(border_nodes.len());
+        edges.sort_unstable();
+        StaticGraph::from_sorted_slice(nodes, edges)
     }
 
     /// The graph a cell of a level above the finest is searched over: one arc
@@ -676,12 +816,15 @@ impl Customization {
         level: usize,
         cell: CellId,
         cells: &Level,
-    ) -> (StaticGraph<u32>, FxHashMap<NodeID, usize>, usize) {
+        scratch: &mut Scratch,
+    ) -> (StaticGraph<u32>, usize) {
         let below = self.level(level - 1);
+        let Scratch { of_node, edges, .. } = scratch;
+        of_node.clear();
+        edges.clear();
 
         // the border nodes of this cell lead the numbering, the border nodes of
         // the cells below follow
-        let mut of_node = FxHashMap::default();
         for &node in cells.nodes_of_cell[cell as usize]
             .iter()
             .filter(|&&node| cells.on_border[node])
@@ -689,7 +832,6 @@ impl Customization {
             of_node.insert(node, of_node.len());
         }
 
-        let mut edges = Vec::new();
         for &child in &cells.built_from[cell as usize] {
             let Some(distances) = self.distances_of(level - 1, child) else {
                 // a cell below with no border cannot be entered or left, so no
@@ -743,8 +885,8 @@ impl Customization {
         // that no arc of it touches would otherwise be missing from it and a
         // search started there would read past its end.
         let searched = of_node.len();
-        let graph = StaticGraph::new_with_nodes(searched, edges);
-        (graph, of_node, searched)
+        edges.sort_unstable();
+        (StaticGraph::from_sorted_slice(searched, edges), searched)
     }
 }
 
@@ -1103,7 +1245,11 @@ mod tests {
                 .copied()
                 .filter(|&node| cells.on_border[node])
                 .collect::<Vec<_>>();
-            let graph = customization.subgraph_of(&cells, cell, nodes, &border);
+            let mut scratch = Scratch {
+                border_nodes: border.clone(),
+                ..Scratch::default()
+            };
+            let graph = customization.subgraph_of(&cells, cell, nodes, &mut scratch);
             let indices = (0..border.len() as NodeID).collect::<Vec<_>>();
             let mut dijkstra = OneToManyDijkstra::new();
 
@@ -1141,7 +1287,11 @@ mod tests {
                 .copied()
                 .filter(|&node| cells.on_border[node])
                 .collect::<Vec<_>>();
-            let graph = customization.subgraph_of(&cells, cell, nodes, &border);
+            let mut scratch = Scratch {
+                border_nodes: border.clone(),
+                ..Scratch::default()
+            };
+            let graph = customization.subgraph_of(&cells, cell, nodes, &mut scratch);
             let indices = (0..border.len() as NodeID).collect::<Vec<_>>();
             let mut dijkstra = OneToManyDijkstra::new();
 
