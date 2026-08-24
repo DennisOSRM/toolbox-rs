@@ -110,7 +110,6 @@ fn main() {
 
     let graph = StaticGraph::new(io::read_edges_from_file(&graph_path));
     let mut at = report("the graph", start);
-    let after_graph = at;
 
     // The directory is what the partition and the border levels are built out
     // of, and neither keeps it, so an offline instance drops it here. It is
@@ -124,7 +123,6 @@ fn main() {
     at = report("the partition, directory dropped", at);
     let border_levels = BorderLevels::of(&graph, &partition);
     at = report("the border levels", at);
-    let after_instance = at;
 
     // The pairs are translated here rather than later, and what translates them
     // is dropped again: a NodeOrdering is one entry a node each way and comes
@@ -166,7 +164,6 @@ fn main() {
     let paged = PagedOverlay::within(store, graph, partition, border_levels, budget);
     let open = opening.elapsed();
     at = report("the held levels, read and unpacked", at);
-    let after_open = at;
 
     // the arrays a search wants, which go with the nodes of the graph and not
     // with the budget: one query is run to make it allocate them
