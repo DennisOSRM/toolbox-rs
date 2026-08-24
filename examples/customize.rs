@@ -112,8 +112,9 @@ fn main() {
             // as many numbers as the level has cells.
             let holding = customization.level(level);
             let mut order: Vec<usize> = (0..cells).collect();
-            order
-                .sort_unstable_by_key(|&cell| std::cmp::Reverse(holding.nodes_of_cell[cell].len()));
+            order.sort_unstable_by_key(|&cell| {
+                std::cmp::Reverse(holding.nodes_of(cell as u32).len())
+            });
             order.into_par_iter().map(of_cell).reduce(|| (0, 0, 0), add)
         } else {
             (0..cells).map(of_cell).fold((0, 0, 0), add)

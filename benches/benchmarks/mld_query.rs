@@ -113,7 +113,7 @@ pub fn customization_benchmark(c: &mut Criterion) {
                 },
                 |customization| {
                     for level in 0..levels {
-                        let cells = customization.level(level).nodes_of_cell.len();
+                        let cells = customization.level(level).cells();
                         for cell in 0..cells {
                             black_box(customization.distances_of(level, cell as u32));
                         }

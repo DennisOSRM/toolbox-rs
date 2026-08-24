@@ -24,12 +24,13 @@ use crate::{
     static_graph::StaticGraph,
 };
 use log::debug;
+use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use std::{
     cell::RefCell,
     sync::{
         Arc, Mutex, OnceLock,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -212,15 +213,49 @@ pub(crate) fn distances_within_cell(
 /// them holds, and which of those nodes sit on a border.
 pub struct Level {
     pub of_node: Vec<CellId>,
-    pub nodes_of_cell: Vec<Vec<NodeID>>,
-    /// A node is on the border of its cell while an arc leaves it or reaches it
-    /// from outside. Both count: a road network is directed, and a node that
-    /// can only be entered from another cell is a way in that a path through
-    /// the cell above may take.
-    pub on_border: Vec<bool>,
+    /// The nodes of every cell laid end to end, and where each cell starts in
+    /// them.
+    ///
+    /// A vector per cell was a vector per cell: the finest level of a
+    /// continent has half a million of them holding some thirty numbers each,
+    /// and asking for half a million small pieces of room was the greater part
+    /// of what working the level out cost. One run of numbers and one of
+    /// offsets is the same answer, read the same way, in two allocations.
+    starts: Vec<u32>,
+    nodes: Vec<NodeID>,
+    /// The highest level at which each node sits on a border, plus one, shared
+    /// with every other level of the partition.
+    border: Arc<Vec<u8>>,
+    /// which level this is, to read `border` against
+    level: usize,
     /// the cells of the level below that each cell of this one is built out of,
     /// and empty on the finest level, which is built from the graph itself
     pub built_from: Vec<Vec<CellId>>,
+}
+
+impl Level {
+    /// How many cells the level holds.
+    #[must_use]
+    pub fn cells(&self) -> usize {
+        self.starts.len() - 1
+    }
+
+    /// The nodes of a cell, in increasing order.
+    #[must_use]
+    pub fn nodes_of(&self, cell: CellId) -> &[NodeID] {
+        let from = self.starts[cell as usize] as usize;
+        let to = self.starts[cell as usize + 1] as usize;
+        &self.nodes[from..to]
+    }
+
+    /// Whether a node sits on the border of its cell, an arc leaving it or
+    /// reaching it from outside. Both count: a road network is directed, and a
+    /// node that can only be entered from another cell is a way in that a path
+    /// through the cell above may take.
+    #[must_use]
+    pub fn on_border(&self, node: NodeID) -> bool {
+        self.border[node] as usize > self.level
+    }
 }
 
 /// What is called with each cell as it is worked out.
@@ -438,6 +473,16 @@ pub struct Customization {
     /// This is what a query asks per settled node, and the reason it is here
     /// rather than built per run is that it costs a walk of the whole graph.
     partition: OnceLock<PackedPartition>,
+    /// The highest level at which each node sits on a border, plus one, and
+    /// zero for a node no arc ever leaves.
+    ///
+    /// One walk of the arcs answers it for every level at once. Which level
+    /// two nodes part at is a question the packed partition answers from their
+    /// two words, and they part at every level below the coarsest one they
+    /// part at, so one number a node says the whole of it. It was a walk of
+    /// all forty-two million arcs per level, six times over, filling six
+    /// tables of eighteen million bytes.
+    border_of_node: OnceLock<Arc<Vec<u8>>>,
     /// The level each arc of the graph leaves a cell at, worked out on the
     /// first request for it. This is what a query reads instead of asking the
     /// partition about the far end of every arc it looks at.
@@ -474,6 +519,7 @@ impl Customization {
             report: None,
             tabulated,
             partition: OnceLock::new(),
+            border_of_node: OnceLock::new(),
             border_levels: OnceLock::new(),
             customized_cells: AtomicUsize::new(0),
             customization_nanos: AtomicU64::new(0),
@@ -561,6 +607,45 @@ impl Customization {
     }
 
     /// The cells of a level, worked out on the first request for it and kept.
+    /// The highest level at which each node sits on a border, plus one.
+    ///
+    /// Walked once, whichever level asks for it first, and read by all of
+    /// them. Two nodes an arc joins part at some coarsest level and at every
+    /// level below it, so the coarsest is the whole answer for that arc, and
+    /// the largest over the arcs of a node is the whole answer for the node.
+    fn border_of_node(&self) -> &Arc<Vec<u8>> {
+        self.border_of_node.get_or_init(|| {
+            let partition = self.partition();
+            // An arc puts both of its ends on a border, so a node is written
+            // by whichever thread holds the arc rather than by the one holding
+            // the node, and the two collide. A byte a node taken to the
+            // largest offered settles it without a lock: what comes out does
+            // not depend on the order the offers arrive in, so relaxed is
+            // enough.
+            let highest: Vec<AtomicU8> = (0..self.directory.number_of_nodes())
+                .map(|_| AtomicU8::new(0))
+                .collect();
+            self.graph.node_range().into_par_iter().for_each(|source| {
+                let word = partition.word(source);
+                for edge in self.graph.edge_range(source) {
+                    let target = self.graph.target(edge);
+                    // an arc that stays inside every cell it is in puts
+                    // neither of its ends on a border
+                    let Some(parting) =
+                        partition.highest_different_level(word, partition.word(target))
+                    else {
+                        continue;
+                    };
+                    // plus one, so that nought means no arc ever left
+                    let reached = u8::try_from(parting + 1).expect("more levels than a byte holds");
+                    highest[source].fetch_max(reached, Ordering::Relaxed);
+                    highest[target].fetch_max(reached, Ordering::Relaxed);
+                }
+            });
+            Arc::new(highest.into_iter().map(AtomicU8::into_inner).collect())
+        })
+    }
+
     pub fn level(&self, level: usize) -> Arc<Level> {
         if let Some(cells) = self
             .levels
@@ -571,32 +656,41 @@ impl Customization {
             return cells.clone();
         }
 
+        // Read off the packed partition rather than the directory. The
+        // directory holds a cell per node and a parent per cell per level, so
+        // it answers by walking up as many parent tables as the level is high,
+        // which is six random reads a node on the coarsest level of six. The
+        // partition holds the whole ancestry of a node in one word, where the
+        // cell at a level is a shift and a mask.
+        let partition = self.partition();
         let of_node = (0..self.directory.number_of_nodes())
-            .map(|node| self.directory.cell_of(node, level))
+            .into_par_iter()
+            .map(|node| partition.cell_in(partition.word(node), level))
             .collect::<Vec<_>>();
-        let mut nodes_of_cell: Vec<Vec<NodeID>> =
-            vec![Vec::new(); self.directory.cells_on_level(level)];
-        for (node, &cell) in of_node.iter().enumerate() {
-            nodes_of_cell[cell as usize].push(node as NodeID);
-        }
 
-        // one walk of the arcs marks both ends of every arc that leaves a cell,
-        // which saves holding the arcs of the graph the other way round
-        let mut on_border = vec![false; of_node.len()];
-        for source in self.graph.node_range() {
-            for edge in self.graph.edge_range(source) {
-                let target = self.graph.target(edge);
-                if of_node[source] != of_node[target] {
-                    on_border[source] = true;
-                    on_border[target] = true;
-                }
-            }
+        // The nodes of each cell, counted and then placed, which leaves them
+        // in increasing order within a cell. That order is relied on: the
+        // border nodes of a cell lead its numbering in the order they are met
+        // here, and a table is addressed by that numbering.
+        let count = self.directory.cells_on_level(level);
+        let mut starts = vec![0u32; count + 1];
+        for &cell in &of_node {
+            starts[cell as usize + 1] += 1;
+        }
+        for cell in 0..count {
+            starts[cell + 1] += starts[cell];
+        }
+        let mut filled = starts.clone();
+        let mut nodes = vec![0 as NodeID; of_node.len()];
+        for (node, &cell) in of_node.iter().enumerate() {
+            nodes[filled[cell as usize] as usize] = node as NodeID;
+            filled[cell as usize] += 1;
         }
 
         let built_from = if level == 0 {
             Vec::new()
         } else {
-            let mut children = vec![Vec::new(); self.directory.cells_on_level(level)];
+            let mut children = vec![Vec::new(); count];
             for (below, &above) in self
                 .directory
                 .parents_on_level(level - 1)
@@ -610,8 +704,10 @@ impl Customization {
 
         let cells = Arc::new(Level {
             of_node,
-            nodes_of_cell,
-            on_border,
+            starts,
+            nodes,
+            border: self.border_of_node().clone(),
+            level,
             built_from,
         });
         // another thread may have worked the same level out while this one
@@ -659,14 +755,17 @@ impl Customization {
         // the building being the part that asks for the room
         let mut scratch = SCRATCH.with_borrow_mut(Vec::pop).unwrap_or_default();
         let building = Instant::now();
-        let nodes = cells.nodes_of_cell.get(cell as usize)?;
+        if cell as usize >= cells.cells() {
+            return None;
+        }
+        let nodes = cells.nodes_of(cell);
 
         // the border nodes lead the numbering, so that they are the leading
         // rows and columns of the matrix
         scratch.border_nodes.clear();
         scratch
             .border_nodes
-            .extend(nodes.iter().copied().filter(|&node| cells.on_border[node]));
+            .extend(nodes.iter().copied().filter(|&node| cells.on_border(node)));
         if scratch.border_nodes.is_empty() {
             debug!("cell {cell} of level {level} has no border nodes");
             SCRATCH.with_borrow_mut(|pool| pool.push(scratch));
@@ -825,9 +924,10 @@ impl Customization {
 
         // the border nodes of this cell lead the numbering, the border nodes of
         // the cells below follow
-        for &node in cells.nodes_of_cell[cell as usize]
+        for &node in cells
+            .nodes_of(cell)
             .iter()
-            .filter(|&&node| cells.on_border[node])
+            .filter(|&&node| cells.on_border(node))
         {
             of_node.insert(node, of_node.len());
         }
@@ -858,8 +958,8 @@ impl Customization {
 
         // the arcs that cross from one cell below into another one of this cell
         for &child in &cells.built_from[cell as usize] {
-            for &node in &below.nodes_of_cell[child as usize] {
-                if !below.on_border[node] {
+            for &node in below.nodes_of(child) {
+                if !below.on_border(node) {
                     continue;
                 }
                 for edge in self.graph.edge_range(node) {
@@ -1089,8 +1189,8 @@ mod tests {
         let customization = Customization::new(StaticGraph::new(edges), directory);
 
         let cells = customization.level(0);
-        assert!(cells.on_border[0], "the node the arc leaves");
-        assert!(cells.on_border[1], "the node the arc reaches");
+        assert!(cells.on_border(0), "the node the arc leaves");
+        assert!(cells.on_border(1), "the node the arc reaches");
     }
 
     #[test]
@@ -1233,17 +1333,17 @@ mod tests {
         let customization = grid(8);
         let cells = customization.level(1);
 
-        for cell in 0..cells.nodes_of_cell.len() as CellId {
+        for cell in 0..cells.cells() as CellId {
             let Some(built_up) = customization.distances_of(1, cell) else {
                 continue;
             };
 
             // the same cell, searched over its own nodes instead
-            let nodes = &cells.nodes_of_cell[cell as usize];
+            let nodes = &cells.nodes_of(cell);
             let border = nodes
                 .iter()
                 .copied()
-                .filter(|&node| cells.on_border[node])
+                .filter(|&node| cells.on_border(node))
                 .collect::<Vec<_>>();
             let mut scratch = Scratch {
                 border_nodes: border.clone(),
@@ -1277,15 +1377,15 @@ mod tests {
         let cells = customization.level(1);
 
         let mut asymmetric = 0;
-        for cell in 0..cells.nodes_of_cell.len() as CellId {
+        for cell in 0..cells.cells() as CellId {
             let Some(built_up) = customization.distances_of(1, cell) else {
                 continue;
             };
-            let nodes = &cells.nodes_of_cell[cell as usize];
+            let nodes = &cells.nodes_of(cell);
             let border = nodes
                 .iter()
                 .copied()
-                .filter(|&node| cells.on_border[node])
+                .filter(|&node| cells.on_border(node))
                 .collect::<Vec<_>>();
             let mut scratch = Scratch {
                 border_nodes: border.clone(),
@@ -1394,8 +1494,9 @@ mod tests {
     fn a_cell_holds_the_nodes_the_directory_puts_in_it() {
         let customization = grid(8);
         let cells = customization.level(0);
-        assert_eq!(cells.nodes_of_cell.len(), 16, "squares of two by two");
-        for (cell, nodes) in cells.nodes_of_cell.iter().enumerate() {
+        assert_eq!(cells.cells(), 16, "squares of two by two");
+        for cell in 0..cells.cells() {
+            let nodes = cells.nodes_of(cell as CellId);
             assert_eq!(nodes.len(), 4);
             for &node in nodes {
                 assert_eq!(cells.of_node[node] as usize, cell);

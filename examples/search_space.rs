@@ -237,7 +237,7 @@ fn main() {
             .entry(*level)
             .or_insert_with(|| customization.level(*level))
             .clone();
-        let nodes = &holding.nodes_of_cell[*cell as usize];
+        let nodes = holding.nodes_of(*cell);
         let step = (nodes.len() / HULL_SAMPLE).max(1);
         let points: Vec<FPCoordinate> = nodes
             .iter()
