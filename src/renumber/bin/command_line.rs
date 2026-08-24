@@ -39,6 +39,17 @@ pub struct Arguments {
     /// read back.
     #[clap(long, action)]
     pub out_ordering: String,
+
+    /// Which order to number in.
+    ///
+    /// `border-first` puts the border nodes of the coarsest cells at the front
+    /// of the whole graph, which is what a search in memory wants.
+    /// `cell-path` keeps every cell, and so every subtree, in one run of
+    /// numbers, which is what a store that hands out a subtree at a time
+    /// wants. Measured over europe.ptv the second costs a fifth of the median
+    /// query, all of it on the long routes.
+    #[clap(long, value_enum, default_value_t = Order::BorderFirst)]
+    pub numbering: Order,
 }
 
 impl Display for Arguments {
@@ -51,5 +62,20 @@ impl Display for Arguments {
         writeln!(f, "out directory: {}", self.out_directory)?;
         writeln!(f, "out coordinates: {}", self.out_coordinates)?;
         writeln!(f, "out ordering: {}", self.out_ordering)
+    }
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Order {
+    BorderFirst,
+    CellPath,
+}
+
+impl From<Order> for toolbox_rs::node_ordering::Numbering {
+    fn from(order: Order) -> Self {
+        match order {
+            Order::BorderFirst => Self::BorderFirst,
+            Order::CellPath => Self::CellPath,
+        }
     }
 }
