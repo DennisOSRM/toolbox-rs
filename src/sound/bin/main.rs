@@ -58,10 +58,13 @@ struct LevelCheck {
 
 fn check_level(customization: &mut Customization, level: usize, keep: usize) -> LevelCheck {
     let cells = customization.level(level);
-    let count = cells.nodes_of_cell.len();
+    let count = cells.cells();
     info!(
         "checking {count} cells of level {level}, the largest holding {} nodes",
-        cells.nodes_of_cell.iter().map(Vec::len).max().unwrap_or(0)
+        (0..cells.cells())
+            .map(|cell| cells.nodes_of(cell as u32).len())
+            .max()
+            .unwrap_or(0)
     );
 
     let bar = ProgressBar::new(count as u64);
@@ -152,7 +155,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         info!(
             "level {level}: checked {} pairs over {} cells, leaving out {} that hold no border node",
             found.pairs,
-            customization.level(level).nodes_of_cell.len() as u64 - found.without_border,
+            customization.level(level).cells() as u64 - found.without_border,
             found.without_border
         );
         if found.wrong == 0 {

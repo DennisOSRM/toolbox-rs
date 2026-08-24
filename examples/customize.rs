@@ -81,26 +81,28 @@ fn main() {
         ARCS[level].fetch_add(report.arcs as u64, Ordering::Relaxed);
     });
     println!(
-        "{:>5} {:>8} {:>9} {:>12} {:>8} {:>9} {:>9} {:>8} {:>8} {:>6}",
-        "level", "cells", "entries", "arcs", "V", "wall", "search", "build", "b/V", "build%"
+        "{:>5} {:>8} {:>9} {:>6} {:>7} {:>7} {:>7} {:>10} {:>10} {:>9}",
+        "level", "cells", "entries", "V", "wall", "search", "build", "tables", "levelled", "a cell"
     );
 
     let mut whole = std::time::Duration::ZERO;
     let mut all_entries = 0usize;
+    let mut all_bytes = 0usize;
     for level in 0..levels {
         let cells = customization.cells_on_level(level);
         let started = Instant::now();
         let of_cell = |cell: usize| {
             customization
                 .distances_of(level, cell as u32)
-                .map_or((0, 0, 0), |distances| {
+                .map_or((0, 0, 0, 0), |distances| {
                     let wide = distances.border_nodes.len();
-                    (1, wide, wide * wide)
+                    (1, wide, wide * wide, distances.bytes())
                 })
         };
-        let add =
-            |a: (usize, usize, usize), b: (usize, usize, usize)| (a.0 + b.0, a.1 + b.1, a.2 + b.2);
-        let (tabulated, border, entries) = if parallel {
+        let add = |a: (usize, usize, usize, usize), b: (usize, usize, usize, usize)| {
+            (a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3 + b.3)
+        };
+        let (tabulated, border, entries, bytes) = if parallel {
             // Widest cell first.
             //
             // A level is handed out a cell to a thread, and the coarsest level
@@ -112,11 +114,15 @@ fn main() {
             // as many numbers as the level has cells.
             let holding = customization.level(level);
             let mut order: Vec<usize> = (0..cells).collect();
+            order.sort_unstable_by_key(|&cell| {
+                std::cmp::Reverse(holding.nodes_of(cell as u32).len())
+            });
             order
-                .sort_unstable_by_key(|&cell| std::cmp::Reverse(holding.nodes_of_cell[cell].len()));
-            order.into_par_iter().map(of_cell).reduce(|| (0, 0, 0), add)
+                .into_par_iter()
+                .map(of_cell)
+                .reduce(|| (0, 0, 0, 0), add)
         } else {
-            (0..cells).map(of_cell).fold((0, 0, 0), add)
+            (0..cells).map(of_cell).fold((0, 0, 0, 0), add)
         };
         let elapsed = started.elapsed();
         whole += elapsed;
@@ -125,15 +131,20 @@ fn main() {
         let searching = SEARCHING[level].load(Ordering::Relaxed) as f64 / 1e9;
         let searched = NODES[level].load(Ordering::Relaxed);
         let arcs = ARCS[level].load(Ordering::Relaxed);
+        let holding = customization.level(level).bytes();
+        all_bytes += bytes + holding;
         println!(
-            "{level:>5} {cells:>8} {entries:>9} {arcs:>12} {:>8} {:>9} {:>9} {:>8} {:>8} {:>5.0}%",
+            "{level:>5} {cells:>8} {entries:>9} {:>6} {:>7} {:>7} {:>7} {:>10} {:>10} {:>9}",
             searched / tabulated.max(1) as u64,
             format!("{:.2}s", elapsed.as_secs_f64()),
             format!("{searching:.2}s"),
             format!("{building:.2}s"),
-            format!("{:.2}", border as f64 / searched.max(1) as f64),
-            100.0 * building / (building + searching).max(1e-9),
+            in_bytes(bytes),
+            in_bytes(holding),
+            in_bytes(bytes / tabulated.max(1)),
         );
+        // the arcs and the border nodes are counted for whoever wants them
+        debug_assert!(arcs >= border as u64 || border == 0);
         // a level is built out of the one below, so the ones below a level
         // asked for are worked out and reported on the way up to it
         if only.is_some_and(|wanted| wanted == level) {
@@ -141,10 +152,34 @@ fn main() {
         }
     }
 
+    // one table of borders for the whole partition rather than one a level
+    let shared = customization.directory().number_of_nodes();
     println!(
         "customized {} cells in {:.2?}, {all_entries} entries, {:.0} entries a second",
         customization.customized_cells(),
         whole,
         all_entries as f64 / whole.as_secs_f64()
     );
+    println!(
+        "holding {} in all: {} of tables and levels, {} of borders shared by every level",
+        in_bytes(all_bytes + shared),
+        in_bytes(all_bytes),
+        in_bytes(shared)
+    );
+}
+
+/// A count of bytes, in whichever unit says it in fewest digits.
+fn in_bytes(count: usize) -> String {
+    const STEPS: [(f64, &str); 4] = [
+        (1024.0 * 1024.0 * 1024.0, "GiB"),
+        (1024.0 * 1024.0, "MiB"),
+        (1024.0, "KiB"),
+        (1.0, "B"),
+    ];
+    for (size, name) in STEPS {
+        if count as f64 >= size {
+            return format!("{:.1} {name}", count as f64 / size);
+        }
+    }
+    format!("{count} B")
 }
