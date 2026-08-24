@@ -334,8 +334,11 @@ impl Unpacker {
         self.misses += 1;
         let partition = overlay.partition();
         let cell = partition.cell_of(from, level);
-        let found = within_cell(overlay, from, to, level, cell)
-            .ok_or(Unpacking::NoWayAcross { from, to, level })?;
+        let found = within_cell(overlay, from, to, level, cell).ok_or(Unpacking::NoWayAcross {
+            from,
+            to,
+            level,
+        })?;
 
         // The way found is over the cells of the level below, so its own steps
         // across those cells are put back the same way. At the finest level there

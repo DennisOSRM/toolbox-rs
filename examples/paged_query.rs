@@ -437,7 +437,11 @@ fn main() {
                 offline / in_memory,
                 reads as f64 / pairs.len() as f64,
                 (faults.hits - before.hits) as f64 / asked.max(1) as f64,
-                if by_memory > 0.0 { by_file / by_memory } else { 0.0 },
+                if by_memory > 0.0 {
+                    by_file / by_memory
+                } else {
+                    0.0
+                },
                 unpack_reads as f64 / unpack_took.len().max(1) as f64,
             );
         }
@@ -465,13 +469,32 @@ fn main() {
         if unpacking {
             println!(
                 "{:>7} {:>6} {:>10} {:>10} {:>9} {:>8} {:>9} {:>9} {:>9}{}",
-                "", "unpack", "", "", "",
+                "",
+                "unpack",
+                "",
+                "",
+                "",
                 format!("{by_file:.0}us"),
-                format!("{:.0}us", if unpack_took.is_empty() { 0.0 } else {
-                    unpack_took[unpack_took.len() * 95 / 100] as f64 / 1000.0
-                }),
-                format!("{:.1}", unpack_reads as f64 / unpack_took.len().max(1) as f64),
-                format!("{:.1}× memory", if by_memory > 0.0 { by_file / by_memory } else { 0.0 }),
+                format!(
+                    "{:.0}us",
+                    if unpack_took.is_empty() {
+                        0.0
+                    } else {
+                        unpack_took[unpack_took.len() * 95 / 100] as f64 / 1000.0
+                    }
+                ),
+                format!(
+                    "{:.1}",
+                    unpack_reads as f64 / unpack_took.len().max(1) as f64
+                ),
+                format!(
+                    "{:.1}× memory",
+                    if by_memory > 0.0 {
+                        by_file / by_memory
+                    } else {
+                        0.0
+                    }
+                ),
                 if wrong_way == 0 {
                     String::new()
                 } else {
