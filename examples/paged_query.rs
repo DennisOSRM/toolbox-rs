@@ -203,6 +203,15 @@ fn main() {
             pairs.len()
         ),
     }
+    // Every so many, rather than the first so many: the pairs come in runs of
+    // one rank, so taking a prefix would take a few ranks and none of the rest.
+    // A small budget thrashes, and thrashing over five thousand pairs takes
+    // longer than anybody waits.
+    if let Ok(stride) = std::env::var("TOOLBOX_PAIR_STRIDE") {
+        let stride: usize = stride.parse().expect("a stride");
+        pairs = pairs.into_iter().step_by(stride.max(1)).collect();
+        println!("every {stride} pairs kept, leaving {}", pairs.len());
+    }
     println!("{} pairs, {} levels", pairs.len(), tree.levels());
 
     let in_memory = Customization::new(StaticGraph::new(edges.clone()), directory.clone());
@@ -252,8 +261,22 @@ fn main() {
         "\n{:>7} {:>6} {:>10} {:>10} {:>9} {:>8} {:>9} {:>9} {:>9}",
         "budget", "held", "of which", "for cache", "open", "median", "p95", "reads/q", "hit rate"
     );
+    // what share of a budget may be held outright, so a run can be made with
+    // the levels held and again with none of them, which is what says whether
+    // holding is worth the room it takes
+    let share = std::env::var("TOOLBOX_PIN_SHARE")
+        .ok()
+        .and_then(|share| share.parse::<f64>().ok())
+        .unwrap_or(0.5);
+    let mut summary = String::from(
+        "budget,share,pinned_from,pinned,cache,mld_median,offline_median,p95,slowdown,reads,hits\n",
+    );
+
     for &bytes in &budgets {
-        let budget = Budget::of(bytes);
+        let budget = Budget {
+            bytes,
+            pinned_share: share,
+        };
         let store = BlockStore::open(path, map.clone(), held_tree.clone()).expect("a store");
         let opening = Instant::now();
         let paged = PagedOverlay::within(
@@ -281,6 +304,7 @@ fn main() {
         }
 
         let mut took = Vec::with_capacity(pairs.len());
+        let mut memory_took = Vec::with_capacity(pairs.len());
         let mut wrong = 0_u64;
         let before = paged.faults();
         // both engines timed over the same pairs, in the shape rank_plot wants
@@ -296,6 +320,7 @@ fn main() {
             let started = Instant::now();
             over_memory.run(&in_memory, source, &[target]);
             let memory_nanos = started.elapsed().as_nanos();
+            memory_took.push(memory_nanos as u64);
 
             let (from_file, from_memory) =
                 (over_file.distance(target), over_memory.distance(target));
@@ -323,9 +348,29 @@ fn main() {
             println!("  wrote {name}");
         }
         took.sort_unstable();
+        memory_took.sort_unstable();
         let faults = paged.faults();
         let reads = faults.reads - before.reads;
         let asked = faults.hits + faults.misses - before.hits - before.misses;
+
+        // one row a budget, for whatever draws the picture
+        {
+            use std::fmt::Write;
+            let offline = took[took.len() / 2] as f64 / 1000.0;
+            let in_memory = memory_took[memory_took.len() / 2] as f64 / 1000.0;
+            // the tail too, since a median that looks survivable can sit over
+            // one that is not
+            let tail = took[took.len() * 95 / 100] as f64 / 1000.0;
+            let _ = writeln!(
+                summary,
+                "{},{share},{},{pinned},{cache},{in_memory:.1},{offline:.1},{tail:.1},{:.3},{:.2},{:.4}",
+                bytes / MIB,
+                paged.pinned_from(),
+                offline / in_memory,
+                reads as f64 / pairs.len() as f64,
+                (faults.hits - before.hits) as f64 / asked.max(1) as f64,
+            );
+        }
 
         println!(
             "{:>7} {:>6} {:>10} {:>10} {:>9} {:>8} {:>9} {:>9} {:>9}{}",
@@ -347,5 +392,10 @@ fn main() {
                 format!("  {wrong} WRONG")
             },
         );
+    }
+
+    if let Ok(path) = std::env::var("TOOLBOX_SUMMARY") {
+        std::fs::write(&path, summary).expect("somewhere to write the summary");
+        println!("wrote {path}");
     }
 }

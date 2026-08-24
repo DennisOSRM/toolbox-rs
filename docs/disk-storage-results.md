@@ -166,6 +166,58 @@ two coarsest levels were the ones worth holding before and after. The numbers
 did not: the paged store was reported at five to seven times the in-memory
 query and is under two.
 
+## How much memory to give it
+
+`paged_query` was run over 600 pairs (every eighth of the 4,800, so the rank
+spread is kept) at budgets from 1 to 256 MiB, 64 KiB blocks, `pinned_share`
+0.5. `scripts/budget_plot.R` draws it from the summary `TOOLBOX_SUMMARY`
+writes; the data is `docs/plots/budgets.csv` and the picture
+`docs/plots/budgets.png`.
+
+| budget | held | for cache | median | 95th | reads/query | hit rate |
+|--------|------|-----------|--------|------|-------------|----------|
+| 1 MiB | — | 1.0 MiB | 6.03× | 16,300× | 43.9 | 46.7% |
+| 2 MiB | — | 2.0 MiB | 4.58× | 16,700× | 42.0 | 56.6% |
+| 4 MiB | — | 4.0 MiB | 4.25× | 11,100× | 35.8 | 73.5% |
+| 8 MiB | — | 8.0 MiB | 4.41× | 2,200× | 20.0 | 89.6% |
+| 16 MiB | — | 16.0 MiB | 3.85× | 225× | 10.0 | 94.5% |
+| 32 MiB | — | 32.0 MiB | 3.57× | 125× | 8.3 | 95.0% |
+| 64 MiB | L5+ | 45.7 MiB | 2.99× | 92.8× | 5.9 | 93.8% |
+| 80 MiB | L5+ | 61.7 MiB | 2.77× | 88.1× | 4.9 | 94.7% |
+| 96 MiB | L5+ | 77.7 MiB | 2.42× | 85.7× | 3.8 | 95.9% |
+| **112 MiB** | L5+ | 93.7 MiB | **1.27×** | 83.8× | **0.50** | 99.5% |
+| 128 MiB | L4+ | 69.8 MiB | 1.32× | 81.3× | 0.48 | 99.1% |
+| 192 MiB | L4+ | 133.8 MiB | 1.48× | 80.5× | 0.48 | 99.1% |
+| 256 MiB | L3+ | 136.8 MiB | 1.27× | 81.7× | 0.41 | 98.1% |
+
+The curve is a cliff, not a slope. From 1 to 96 MiB the median only walks from
+6.0× to 2.4×, because a query's cells are scattered across the levels and a
+cache that cannot hold the working set evicts what the next query wants. At
+112 MiB the working set fits: reads fall from 3.8 a query to 0.5 and the
+median lands at 1.27×. Above that nothing more is bought — 256 MiB is 1.27×,
+the same, and the spread between 112, 128, 192 and 256 is run-to-run noise.
+
+**112 MiB is the size to pick**, and 128 MiB if a round number is wanted. Below
+the cliff the choice hardly matters: 32 MiB and 4 MiB are both about 4× and
+neither is close to the knee.
+
+Two things the medians hide:
+
+- **The tail is where a small budget hurts.** At 1 MiB the 95th is 1.22
+  *seconds* against 75µs in memory. It is under 10ms from 32 MiB up, and the
+  95th flattens at ~85× well before the median does — the 95th is the block
+  reads a long query cannot avoid, and 16 MiB already removes most of them.
+- **Holding levels is not what wins.** 112 MiB holds only level 5 (18.3 MiB)
+  and is as fast as 128 MiB, which holds levels 4 and 5 (58.2 MiB) and has
+  *less* cache for it. Cache size is the parameter; the held levels ride along.
+  A second sweep with `pinned_share` 0 confirmed it: at every budget where a
+  level was actually held, the cache-only run was within noise.
+
+The saturation point depends on how many distinct queries share the cache. The
+same sweep over 120 pairs put the cliff at 128 MiB and reported 1.04× there,
+because a fifth of the queries have a fifth of the working set. A server
+answering a wider spread than 600 pairs should expect the cliff further right.
+
 ## What has not been measured
 
 - **Cold page cache.** Every one of these runs read a file the operating
