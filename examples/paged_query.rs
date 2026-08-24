@@ -310,7 +310,7 @@ fn main() {
                 );
                 let _ = writeln!(
                     timings,
-                    "paged,{source},{target},{rank},{paged_nanos},{from_file}"
+                    "offline,{source},{target},{rank},{paged_nanos},{from_file}"
                 );
             }
         }
