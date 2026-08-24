@@ -24,7 +24,7 @@ use toolbox_rs::{
     node_ordering::NodeOrdering,
     overlay::Overlay,
     packed_partition::PackedPartition,
-    paged_overlay::{Budget, PagedOverlay},
+    paged_overlay::{Budget, Footing, PagedOverlay},
     path_unpacking::Unpacker,
     static_graph::StaticGraph,
 };
@@ -158,7 +158,49 @@ fn main() {
         bytes,
         pinned_share: 0.5,
     };
-    let (pinned, cache) = budget.split(&tree);
+    let footing = Footing::of(&graph, &tree, map.len(), 1);
+    let (pinned, cache) = budget.split(&tree, &footing);
+    match budget.for_tables(&footing) {
+        Ok(left) => println!(
+            "\nbudget {:.0} MiB: {:.1} MiB is the footing, {:.1} MiB left for tables",
+            bytes as f64 / MIB,
+            footing.total() as f64 / MIB,
+            left as f64 / MIB,
+        ),
+        Err(short) => {
+            println!("\n{short}");
+            println!(
+                "  the graph                          {:>8.1} MiB",
+                footing.graph as f64 / MIB
+            );
+            println!(
+                "  the partition                      {:>8.1} MiB",
+                footing.partition as f64 / MIB
+            );
+            println!(
+                "  the border levels                  {:>8.1} MiB",
+                footing.border_levels as f64 / MIB
+            );
+            println!(
+                "  the block map and the cell tree    {:>8.1} MiB",
+                (footing.block_map + footing.cell_tree) as f64 / MIB
+            );
+            println!(
+                "  what a search wants                {:>8.1} MiB",
+                footing.searches as f64 / MIB
+            );
+            println!(
+                "  {:-<34} {:->13}\n  the footing                        {:>8.1} MiB",
+                "",
+                "",
+                footing.total() as f64 / MIB
+            );
+            println!(
+                "\nNothing is asked, since a budget that leaves no room for a table\n                 spends the whole run reading one and letting it go again."
+            );
+            return;
+        }
+    }
     let store = BlockStore::open(Path::new(&blocks_path), map, tree).expect("a store");
     let opening = Instant::now();
     let paged = PagedOverlay::within(store, graph, partition, border_levels, budget);

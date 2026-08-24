@@ -36,7 +36,7 @@ use toolbox_rs::{
     mld_query::MldQuery,
     node_ordering::NodeOrdering,
     packed_partition::PackedPartition,
-    paged_overlay::{Budget, PagedOverlay},
+    paged_overlay::{Budget, Footing, PagedOverlay},
     path_unpacking::{Unpacker, cost_of_way},
     static_graph::StaticGraph,
 };
@@ -277,6 +277,16 @@ fn main() {
          mld_unpack,offline_unpack,unpack_slowdown,unpack_reads\n",
     );
 
+    // What an instance costs before a single cell table, which the budget is
+    // for as much as the tables are.
+    let footing = Footing::of(&graph, &held_tree, map.len(), 2);
+    println!(
+        "before any table: {:.1} MiB for the graph, {:.1} for the partition, {:.1} for the rest",
+        footing.graph as f64 / MIB as f64,
+        footing.partition as f64 / MIB as f64,
+        (footing.total() - footing.graph - footing.partition) as f64 / MIB as f64,
+    );
+
     for &bytes in &budgets {
         let budget = Budget {
             bytes,
@@ -292,7 +302,15 @@ fn main() {
             budget,
         );
         let open = opening.elapsed();
-        let (pinned, cache) = budget.split(&held_tree);
+        let (pinned, cache) = budget.split(&held_tree, &footing);
+        if budget.for_tables(&footing).is_err() {
+            println!(
+                "{:>7}   a budget of this size does not cover the {:.1} MiB the instance costs before any table",
+                format!("{} MiB", bytes / MIB),
+                footing.total() as f64 / MIB as f64,
+            );
+            continue;
+        }
 
         let mut over_file = MldQuery::new();
         let mut over_memory = MldQuery::new();
