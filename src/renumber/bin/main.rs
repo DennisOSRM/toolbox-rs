@@ -34,6 +34,7 @@ use env_logger::{Builder, Env};
 use log::info;
 
 use toolbox_rs::{
+    cell_ordering::CellOrdering,
     edge::InputEdge,
     geometry::FPCoordinate,
     graph::{Graph, NodeID},
@@ -67,6 +68,24 @@ fn main() -> Result<(), Box<dyn Error>> {
     if directory.number_of_nodes() != graph.number_of_nodes() {
         return Err("the directory was built over another graph".into());
     }
+
+    // The cells first, if asked. A node's number comes from the order of the
+    // packed words and a word is built out of cell numbers, so this rewrites
+    // every word; it does not reorder them, the new numbers running the way
+    // the keys do and the keys being what the words were already sorted by.
+    let directory = if args.cells_in_key_order {
+        let started = Instant::now();
+        let cells = CellOrdering::of(&directory, &PackedPartition::of(&directory));
+        let moved = cells.renumber(&directory);
+        info!(
+            "numbered the cells of {} levels in the order their keys run, in {:.1} s",
+            moved.levels(),
+            started.elapsed().as_secs_f64()
+        );
+        moved
+    } else {
+        directory
+    };
 
     let started = Instant::now();
     let ordering = NodeOrdering::in_order(
