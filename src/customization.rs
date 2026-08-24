@@ -76,6 +76,21 @@ pub struct CellDistances {
 }
 
 impl CellDistances {
+    /// What the table takes up, near enough to count with.
+    ///
+    /// The three runs of numbers are exact. The map of places is not: it is
+    /// asked how much room it took rather than how much it uses, and a hash
+    /// map keeps room for more than it holds, so what is counted for it is
+    /// that room at a key, a value and a byte of tag apiece.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        size_of::<Self>()
+            + self.border_nodes.capacity() * size_of::<u32>()
+            + self.matrix.capacity() * size_of::<u32>()
+            + self.transposed.capacity() * size_of::<u32>()
+            + self.place_of.capacity() * (size_of::<NodeID>() + size_of::<usize>() + 1)
+    }
+
     /// Holds a table and the same table with rows and columns swapped.
     ///
     /// `matrix` is by row: entry `source * width + target` is what it costs to
@@ -246,6 +261,25 @@ impl Level {
         let from = self.starts[cell as usize] as usize;
         let to = self.starts[cell as usize + 1] as usize;
         &self.nodes[from..to]
+    }
+
+    /// What the level takes up, apart from the tables of its cells.
+    ///
+    /// The table of borders is left out, being one table for the whole
+    /// partition rather than one a level, and counted by whoever asks about
+    /// the partition instead.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        size_of::<Self>()
+            + self.of_node.capacity() * size_of::<CellId>()
+            + self.starts.capacity() * size_of::<u32>()
+            + self.nodes.capacity() * size_of::<NodeID>()
+            + self.built_from.capacity() * size_of::<Vec<CellId>>()
+            + self
+                .built_from
+                .iter()
+                .map(|children| children.capacity() * size_of::<CellId>())
+                .sum::<usize>()
     }
 
     /// Whether a node sits on the border of its cell, an arc leaving it or
