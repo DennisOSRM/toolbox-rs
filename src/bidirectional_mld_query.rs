@@ -31,10 +31,10 @@ use log::debug;
 
 use crate::{
     border_levels::BorderLevels,
-    customization::Customization,
     dense_heap::DenseHeap,
     graph::{Graph, INVALID_NODE_ID, NodeID},
     heap_stats::{Counters, HeapStats, Untracked},
+    overlay::{CellTable, Overlay},
     packed_partition::PackedPartition,
 };
 
@@ -179,9 +179,9 @@ impl<S: HeapStats<NodeID>> BidirectionalMldSearch<S> {
     /// # Panics
     ///
     /// Panics if a level of the partition has no cells worked out for it.
-    pub fn run<G: Graph<u32>>(
+    pub fn run<O: Overlay, G: Graph<u32>>(
         &mut self,
-        customization: &Customization,
+        customization: &O,
         reverse: &G,
         reverse_borders: &BorderLevels,
         source: NodeID,
@@ -282,9 +282,9 @@ impl<S: HeapStats<NodeID>> BidirectionalMldSearch<S> {
     /// here to each of the others. The backward side reads its column, what it
     /// costs to get to here from each of the others.
     #[inline(never)]
-    fn relax_across_cell(
+    fn relax_across_cell<O: Overlay>(
         &mut self,
-        customization: &Customization,
+        customization: &O,
         partition: &PackedPartition,
         side: Side,
         node: NodeID,
@@ -305,7 +305,7 @@ impl<S: HeapStats<NodeID>> BidirectionalMldSearch<S> {
         let here = u32::try_from(node).unwrap_or(u32::MAX);
         match side {
             Side::Forward => {
-                for (&other, &across) in distances.border_nodes.iter().zip(distances.row(place)) {
+                for (&other, &across) in distances.border_nodes().iter().zip(distances.row(place)) {
                     if across == u32::MAX || other == here {
                         continue;
                     }
@@ -313,7 +313,8 @@ impl<S: HeapStats<NodeID>> BidirectionalMldSearch<S> {
                 }
             }
             Side::Backward => {
-                for (&other, &across) in distances.border_nodes.iter().zip(distances.column(place))
+                for (&other, &across) in
+                    distances.border_nodes().iter().zip(distances.column(place))
                 {
                     if across == u32::MAX || other == here {
                         continue;
