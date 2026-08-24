@@ -60,6 +60,7 @@ pub mod node_ordering;
 pub mod one_iterator;
 pub mod one_to_many_dijkstra;
 pub mod overlay;
+pub mod packed_distances;
 pub mod packed_partition;
 pub mod partition_id;
 pub mod path_based_scc;
