@@ -61,7 +61,7 @@ pub struct PackedDistances {
 }
 
 /// How many bits it takes to hold every number up to and including `largest`.
-fn bits_for(largest: u32) -> u32 {
+pub(crate) fn bits_for(largest: u32) -> u32 {
     if largest == 0 {
         1
     } else {
@@ -174,7 +174,7 @@ fn mask_of(bits: u32) -> u32 {
 /// An entry straddles at most five bytes at any width up to thirty-two, so the
 /// bytes it touches are read into a wide accumulator, the value laid into it,
 /// and the accumulator written back.
-fn write_at(packed: &mut [u8], at: usize, bits: u32, value: u32) {
+pub(crate) fn write_at(packed: &mut [u8], at: usize, bits: u32, value: u32) {
     let byte = at / 8;
     let shift = (at % 8) as u32;
     let mut held = 0_u64;
@@ -189,7 +189,7 @@ fn write_at(packed: &mut [u8], at: usize, bits: u32, value: u32) {
 }
 
 /// Reads `bits` from a bit offset.
-fn read_at(packed: &[u8], at: usize, bits: u32) -> u32 {
+pub(crate) fn read_at(packed: &[u8], at: usize, bits: u32) -> u32 {
     let byte = at / 8;
     let shift = (at % 8) as u32;
     let mut held = 0_u64;

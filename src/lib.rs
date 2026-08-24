@@ -12,6 +12,7 @@ pub mod bloom_filter;
 pub mod border_levels;
 pub mod bounding_box;
 pub mod cell;
+pub mod cell_block;
 pub mod cell_tree;
 pub mod complete_graph;
 pub mod convex_hull;
