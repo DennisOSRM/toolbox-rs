@@ -8,6 +8,7 @@ pub mod bidirectional_mld_query;
 pub mod bin_pack;
 pub mod bit_weight_iterator;
 pub mod bitset_subset_iterator;
+pub mod block_codec;
 pub mod bloom_filter;
 pub mod border_levels;
 pub mod bounding_box;

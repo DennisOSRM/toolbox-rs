@@ -18,6 +18,7 @@
 use std::{env::args, time::Instant};
 
 use toolbox_rs::{
+    block_codec::Codec,
     cell_block::{CellBlock, CellEntry},
     cell_tree::CellTree,
     customization::Customization,
@@ -60,6 +61,17 @@ fn main() {
         "{:>5} {:>9} {:>7} {:>10} {:>10} {:>9} {:>7} {:>7}",
         "level", "cells", "blocks", "raw", "blocks", "framing", "share", "wrong"
     );
+    // what each codec makes of the blocks, and what it costs to read one back
+    let tried: [(Codec, i32); 5] = [
+        (Codec::Stored, 0),
+        (Codec::Lz4, 0),
+        (Codec::Deflate, 6),
+        (Codec::Zstd, 3),
+        (Codec::Zstd, 19),
+    ];
+    let mut squeezed = [0_u64; 5];
+    let mut decoding = [std::time::Duration::ZERO; 5];
+
     let started = Instant::now();
     let (mut all_raw, mut all_block, mut all_framing, mut all_wrong, mut all_blocks) =
         (0_u64, 0_u64, 0_u64, 0_u64, 0_u64);
@@ -91,16 +103,16 @@ fn main() {
         let mut first_of_run = 0_u32;
         let mut carrying = 0_f64;
 
-        let flush = |held: &mut Vec<Vec<u32>>,
-                     widths: &mut Vec<usize>,
-                     places: &mut Vec<Vec<u32>>,
-                     holds: &mut Vec<usize>,
-                     first: u32,
-                     raw: &mut u64,
-                     packed: &mut u64,
-                     framing: &mut u64,
-                     wrong: &mut u64,
-                     blocks: &mut u64| {
+        let mut flush = |held: &mut Vec<Vec<u32>>,
+                         widths: &mut Vec<usize>,
+                         places: &mut Vec<Vec<u32>>,
+                         holds: &mut Vec<usize>,
+                         first: u32,
+                         raw: &mut u64,
+                         packed: &mut u64,
+                         framing: &mut u64,
+                         wrong: &mut u64,
+                         blocks: &mut u64| {
             if held.is_empty() {
                 return;
             }
@@ -117,6 +129,18 @@ fn main() {
                 })
                 .collect::<Vec<_>>();
             let block = CellBlock::of(level, first, &entries, border_leads);
+            // what it comes to on disk, each way of writing it down
+            let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&block).expect("a block serializes");
+            for (which, &(codec, effort)) in tried.iter().enumerate() {
+                let stored = codec.encode(&bytes, effort);
+                let began = Instant::now();
+                let read = codec
+                    .decode(&stored, bytes.len())
+                    .expect("a block reads back");
+                decoding[which] += began.elapsed();
+                assert_eq!(read.len(), bytes.len(), "{} lost bytes", codec.name());
+                squeezed[which] += stored.len() as u64;
+            }
             *packed += block.bytes() as u64;
             *framing += block.framing_bytes() as u64;
             *blocks += 1;
@@ -229,7 +253,27 @@ fn main() {
         );
     }
     println!(
-        "  cells numbered as their keys run: {}",
+        "\n  {:<16} {:>10} {:>8} {:>12}",
+        "codec", "on disk", "share", "to read all"
+    );
+    for (which, &(codec, effort)) in tried.iter().enumerate() {
+        let name = if effort > 0 {
+            format!("{} {effort}", codec.name())
+        } else {
+            codec.name().to_owned()
+        };
+        println!(
+            "  {name:<16} {:>10} {:>8} {:>12}",
+            megabytes(squeezed[which]),
+            format!(
+                "{:.1}%",
+                100.0 * squeezed[which] as f64 / all_raw.max(1) as f64
+            ),
+            format!("{:.2?}", decoding[which]),
+        );
+    }
+    println!(
+        "\n  cells numbered as their keys run: {}",
         if keys_in_order { "yes" } else { "NO" }
     );
     if all_wrong == 0 {
