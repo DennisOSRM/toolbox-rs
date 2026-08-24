@@ -31,7 +31,7 @@
 //! near its own end ever reaches, and goes to the back. The sort being stable,
 //! the cells stay laid out side by side within each group.
 
-use std::cmp::Reverse;
+use std::{cmp::Reverse, sync::OnceLock};
 
 use rkyv::{Archive, Deserialize, Serialize};
 
@@ -56,6 +56,18 @@ pub struct NodeOrdering {
     /// how many nodes lie on the border of a cell of some level, which is how
     /// much of the front of the numbering a search over the overlay reads
     on_a_border: usize,
+}
+
+/// Whether to number by cell path first and border level second, rather than
+/// the other way round.
+///
+/// Here to measure one against the other, and read once. The orders want
+/// opposite things -- one lays every subtree out in a single run of numbers,
+/// the other puts every coarse border node of the graph at the front of every
+/// array -- and which of them a run wants is not a thing this module can know.
+fn cell_major() -> bool {
+    static ASKED: OnceLock<bool> = OnceLock::new();
+    *ASKED.get_or_init(|| std::env::var("TOOLBOX_CELL_MAJOR").is_ok())
 }
 
 impl NodeOrdering {
@@ -94,12 +106,27 @@ impl NodeOrdering {
 
         let mut to_old =
             (0..u32::try_from(nodes).expect("the graph is too large to hold")).collect::<Vec<_>>();
-        // the word packs the coarse levels high, so its own order is the order
-        // wanted: by coarsest cell, then by the cells inside it
-        to_old.sort_unstable_by_key(|&node| partition.word(node as usize));
-        // and then the borders to the front, the coarsest first. Stable, so
-        // the cells stay side by side inside each group.
-        to_old.sort_by_key(|&node| Reverse(border_level[node as usize]));
+        if cell_major() {
+            // The same two keys the other way round: by cell path first and by
+            // border level only within a cell. This keeps the nodes of a cell,
+            // and so of every subtree above it, in one run of numbers, which
+            // is what a store that hands out a subtree at a time wants. What
+            // it gives up is having every coarse border node in the graph at
+            // the front of every array, which is what the other order is for.
+            to_old.sort_unstable_by_key(|&node| {
+                (
+                    partition.word(node as usize),
+                    Reverse(border_level[node as usize]),
+                )
+            });
+        } else {
+            // the word packs the coarse levels high, so its own order is the
+            // order wanted: by coarsest cell, then by the cells inside it
+            to_old.sort_unstable_by_key(|&node| partition.word(node as usize));
+            // and then the borders to the front, the coarsest first. Stable,
+            // so the cells stay side by side inside each group.
+            to_old.sort_by_key(|&node| Reverse(border_level[node as usize]));
+        }
 
         let mut to_new = vec![0_u32; nodes];
         for (place, &node) in to_old.iter().enumerate() {
