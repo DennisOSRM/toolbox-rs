@@ -166,6 +166,56 @@ two coarsest levels were the ones worth holding before and after. The numbers
 did not: the paged store was reported at five to seven times the in-memory
 query and is under two.
 
+## What a budget is for
+
+`Budget::bytes` is for the whole of an instance: the graph, the partition, the
+border levels, the store's map and cell tree, the arrays every search that may
+run at once wants, and only then the cell tables. `Footing::of` says what the
+first five come to and `Budget::for_tables` returns what is left, or `TooSmall`
+where there is nothing left.
+
+**The sections below this one were measured before that was true**, and their
+budgets are budgets for the cell tables alone. They are correct for what they
+measured -- the shape of the curve, where the cache saturates, that the codecs
+are worth 9% -- and the number to add to any of them is the footing.
+
+On europe.ptv, 18,010,173 nodes and 42,188,664 arcs:
+
+| | | |
+|---|---|---|
+| the graph | 390.6 MiB | 8 bytes an arc, 4 a node |
+| the partition | 274.8 MiB | one `u128` a node |
+| the border levels | 17.2 MiB | one byte a node |
+| the block map and the cell tree | 5.0 MiB | one entry a block, one a cell |
+| one search | 68.7 MiB | four bytes a node |
+| **the footing, one search** | **756.3 MiB** | |
+| the footing, two searches | 825.0 MiB | |
+
+So a budget under about 760 MiB cannot be met on this instance whatever is done
+with the tables, and the cell tables -- the only part that pages -- are the
+smallest thing in the list.
+
+### What a whole budget buys
+
+600 pairs, 64 KiB blocks, `pinned_share` 0.5, two searches:
+
+| total | for tables | held | query | unpacking | reads/query |
+|-------|-----------|------|-------|-----------|-------------|
+| 700 MiB | — | — | refused | refused | — |
+| 800 MiB | — | — | refused | refused | — |
+| 850 MiB | 25 MiB | none | 2.89× | 1.83× | 5.3 + 13.3 |
+| 900 MiB | 75 MiB | L4+ | 2.19× | 1.76× | 3.3 + 10.9 |
+| **1000 MiB** | **175 MiB** | **L3+** | **1.15×** | **1.23×** | **0.3 + 0.8** |
+| 1100 MiB | 275 MiB | L3+ | 1.15× | 1.27× | 0.3 + 0.8 |
+
+**1000 MiB is the pick.** The query is 85.1µs against 73.9µs in memory and
+unpacking 61.1µs against 49.5µs, at a third of a block read a query. Above it
+nothing more is bought: 1100 MiB is the same to within noise.
+
+The step from 900 to 1000 MiB is the whole of the difference, and it is where
+level 3 becomes cheaper to hold outright than to cache. Below it the store is
+paging the levels a query actually walks; above it, it is not.
+
 ## How much memory to give it
 
 `paged_query` was run over 600 pairs (every eighth of the 4,800, so the rank
