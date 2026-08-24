@@ -50,7 +50,12 @@ exponents <- sort(unique(timings$exponent))
 # the engine column says which search wrote the row; a legend wants to say
 # which search it was, and "dijkstra" does not distinguish the plain search
 # from the one that runs from both ends
-display <- c(dijkstra = "unidirectional", bidirectional = "bidirectional", mld = "mld")
+display <- c(
+  dijkstra = "unidirectional", bidirectional = "bidirectional", mld = "mld",
+  offline = "offline",
+  # the same two again for putting the way back rather than costing it
+  "mld-unpack" = "mld, unpacked", "offline-unpack" = "offline, unpacked"
+)
 name_of <- function(engine) ifelse(engine %in% names(display), display[engine], engine)
 
 # every power of ten the numbers reach, written out rather than as 1e+03: a

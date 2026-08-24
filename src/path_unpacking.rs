@@ -44,10 +44,10 @@ use std::{cmp::Reverse, collections::BinaryHeap};
 use rustc_hash::FxHashMap;
 
 use crate::{
-    customization::Customization,
     graph::{Graph, NodeID},
     level_directory::CellId,
     lru::LRU,
+    overlay::{CellTable, Overlay},
 };
 
 /// What a held way costs beyond its nodes: the key it is filed under, the
@@ -84,11 +84,11 @@ const PER_WAY: usize = size_of::<(NodeID, NodeID, usize)>() + size_of::<Vec<Node
 /// known to be neither should say so with
 /// [`Unpacker::with_budget`](Unpacker::with_budget).
 #[must_use]
-pub fn budget_for(customization: &Customization) -> usize {
-    let directory = customization.directory();
-    directory
+pub fn budget_for<O: Overlay>(overlay: &O) -> usize {
+    overlay
+        .graph()
         .number_of_nodes()
-        .saturating_mul(directory.levels())
+        .saturating_mul(overlay.levels())
         / 16
         * 5
 }
@@ -122,8 +122,8 @@ pub enum Unpacking {
 /// # Panics
 ///
 /// Panics if the packed path holds a node the partition does not.
-pub fn unpack(customization: &Customization, packed: &[NodeID]) -> Result<Vec<NodeID>, Unpacking> {
-    Unpacker::default().unpack(customization, packed)
+pub fn unpack<O: Overlay>(overlay: &O, packed: &[NodeID]) -> Result<Vec<NodeID>, Unpacking> {
+    Unpacker::default().unpack(overlay, packed)
 }
 
 /// An unpacker that remembers the ways it has already put back.
@@ -166,8 +166,8 @@ impl Unpacker {
     /// An unpacker holding what the instance warrants, by
     /// [`budget_for`](budget_for).
     #[must_use]
-    pub fn for_instance(customization: &Customization) -> Self {
-        Self::with_budget(budget_for(customization))
+    pub fn for_instance<O: Overlay>(overlay: &O) -> Self {
+        Self::with_budget(budget_for(overlay))
     }
 
     /// An unpacker holding no more than the given number of bytes of ways.
@@ -276,23 +276,23 @@ impl Unpacker {
     /// # Panics
     ///
     /// Panics if the packed path holds a node the partition does not.
-    pub fn unpack(
+    pub fn unpack<O: Overlay>(
         &mut self,
-        customization: &Customization,
+        overlay: &O,
         packed: &[NodeID],
     ) -> Result<Vec<NodeID>, Unpacking> {
-        self.unpack_inner(customization, packed)
+        self.unpack_inner(overlay, packed)
     }
 
-    fn unpack_inner(
+    fn unpack_inner<O: Overlay>(
         &mut self,
-        customization: &Customization,
+        overlay: &O,
         packed: &[NodeID],
     ) -> Result<Vec<NodeID>, Unpacking> {
         let Some((&source, rest)) = packed.split_first() else {
             return Ok(Vec::new());
         };
-        let partition = customization.partition();
+        let partition = overlay.partition();
         let source_word = partition.word(source);
         let target_word = partition.word(*packed.last().expect("the path has a first node"));
 
@@ -306,7 +306,7 @@ impl Unpacker {
                 Some(level)
                     if partition.same_cell_at(partition.word(from), partition.word(to), level) =>
                 {
-                    let across = self.across_cell(customization, from, to, level)?;
+                    let across = self.across_cell(overlay, from, to, level)?;
                     way.extend_from_slice(&across[1..]);
                 }
                 _ => way.push(to),
@@ -320,9 +320,9 @@ impl Unpacker {
     ///
     /// Every node of it, so the caller may lay it end to end with what it already
     /// has. The first node is `from` and the last is `to`.
-    fn across_cell(
+    fn across_cell<O: Overlay>(
         &mut self,
-        customization: &Customization,
+        overlay: &O,
         from: NodeID,
         to: NodeID,
         level: usize,
@@ -332,9 +332,9 @@ impl Unpacker {
             return Ok(held.clone());
         }
         self.misses += 1;
-        let partition = customization.partition();
+        let partition = overlay.partition();
         let cell = partition.cell_of(from, level);
-        let found = within_cell(customization, from, to, level, cell)
+        let found = within_cell(overlay, from, to, level, cell)
             .ok_or(Unpacking::NoWayAcross { from, to, level })?;
 
         // The way found is over the cells of the level below, so its own steps
@@ -349,7 +349,7 @@ impl Unpacker {
         for pair in found.windows(2) {
             let (step_from, step_to) = (pair[0], pair[1]);
             if partition.same_cell_at(partition.word(step_from), partition.word(step_to), below) {
-                let across = self.across_cell(customization, step_from, step_to, below)?;
+                let across = self.across_cell(overlay, step_from, step_to, below)?;
                 way.extend_from_slice(&across[1..]);
             } else {
                 way.push(step_to);
@@ -368,8 +368,8 @@ impl Unpacker {
 /// The nodes it walks are the border nodes of the cells below plus whatever
 /// arcs of the graph run between them, which on a coarse cell is a small part
 /// of what it holds.
-fn within_cell(
-    customization: &Customization,
+fn within_cell<O: Overlay>(
+    overlay: &O,
     from: NodeID,
     to: NodeID,
     level: usize,
@@ -378,8 +378,8 @@ fn within_cell(
     if from == to {
         return Some(vec![from]);
     }
-    let partition = customization.partition();
-    let graph = customization.graph();
+    let partition = overlay.partition();
+    let graph = overlay.graph();
 
     let mut parent: FxHashMap<NodeID, NodeID> = FxHashMap::default();
     let mut best: FxHashMap<NodeID, usize> = FxHashMap::default();
@@ -427,10 +427,10 @@ fn within_cell(
             // this cell was built out of
             let below = level - 1;
             let inner = partition.cell_of(node, below);
-            if let Some(distances) = customization.distances_of(below, inner)
+            if let Some(distances) = overlay.distances_of(below, inner)
                 && let Some(place) = distances.place_of(node)
             {
-                for (&other, &across) in distances.border_nodes.iter().zip(distances.row(place)) {
+                for (&other, &across) in distances.border_nodes().iter().zip(distances.row(place)) {
                     if across == u32::MAX || other as NodeID == node {
                         continue;
                     }
