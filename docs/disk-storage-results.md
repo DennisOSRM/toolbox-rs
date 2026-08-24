@@ -218,6 +218,56 @@ same sweep over 120 pairs put the cliff at 128 MiB and reported 1.04× there,
 because a fifth of the queries have a fifth of the working set. A server
 answering a wider spread than 600 pairs should expect the cliff further right.
 
+## Putting the way back
+
+`path_unpacking` runs over the `Overlay` trait, so the same code puts a way
+back out of the customization in memory and out of the store on disk. Measured
+over the same 4,800 pairs of europe.ptv, 64 KiB blocks, a 128 MiB budget:
+
+| | median | 95th | mean |
+|---|--------|------|------|
+| query, in memory | 73.3µs | 5.85ms | 853µs |
+| query, offline | 165.6µs | 5.93ms | 957µs |
+| unpacking, in memory | 28.2µs | 1.67ms | 334µs |
+| unpacking, offline | 45.8µs | 2.56ms | 509µs |
+
+Query and unpacking together come to 118.5µs in memory and 241.9µs off the
+file, which is **2.04×**. Every one of the 4,800 ways came out the same on both
+engines and cost what the query said it would.
+
+Unpacking is the cheaper half. It costs about a third of the query at the
+median, because it is confined: a step across a cell is put back by a search
+inside that one cell, over the cells one level down, and never leaves it.
+
+### The cache does nothing for it
+
+Swept from 64 to 128 MiB over 1,200 pairs, the query improves steadily and
+unpacking does not move at all:
+
+| budget | query | unpacking | query reads | unpack reads |
+|--------|-------|-----------|-------------|--------------|
+| 64 MiB | 3.05× | 1.62× | 6.6 | 11.2 |
+| 72 MiB | 2.89× | 1.61× | 6.2 | 11.0 |
+| 80 MiB | 2.83× | 1.58× | 5.8 | 10.7 |
+| 96 MiB | 2.60× | 1.61× | 5.0 | 10.3 |
+| 112 MiB | 2.43× | 1.65× | 4.4 | 9.7 |
+| 128 MiB | 2.09× | 1.63× | 3.6 | 9.1 |
+
+Unpacking sits at 1.6× however much room it is given, and reads roughly twice
+as many blocks a call as the query does. The reason is what it reaches for: the
+query walks the coarse levels, whose tables are few and are hit again by the
+next query, while unpacking descends into the fine cells along one particular
+way, which the next query has no reason to want. There is no cache size within
+reach that holds the fine levels of a continent, so there is nothing to be
+bought by growing one. What does the reusing for unpacking is its own cache of
+ways, sized by `budget_for`, and that is a separate structure.
+
+So the budget is chosen on the query alone. **128 MiB is the pick**: within
+64–128 the biggest step is the last one, 112 to 128, where the query goes from
+2.43× to 2.09× — that is where level 4 becomes cheaper to hold outright than to
+cache, and 128 MiB is the first budget that can. Stopping at 112 MiB stops
+immediately before the one step worth taking.
+
 ## What has not been measured
 
 - **Cold page cache.** Every one of these runs read a file the operating
