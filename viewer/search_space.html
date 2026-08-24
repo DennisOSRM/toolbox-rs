@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Search space over the cells</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  Draws what `cargo run --example search_space` wrote.
+
+  A search over the cells is a thing of levels, and drawn flat it all lands on
+  top of itself. So each level is given a height: the arcs of the graph lie on
+  the ground, the cells of the finest level float above them, and each level
+  above that floats higher again. The way the search found climbs from the
+  ground to each cell it steps over and comes back down, so it can be followed
+  end to end and every jump in it is a level the search changed at.
+
+  Nothing draws a line or a point at a height. What a map draws at a height is
+  a polygon pushed up between two of them, so every mark here was written out
+  as a polygon already, each carrying the two heights it is drawn between and
+  the colour it is drawn in. Which is why there is so little in this file: the
+  thinking is upstream, and this only hands it to maplibre.
+
+  Under it all is an OpenStreetMap basemap, at half transparency so that it
+  says where without arguing with what is drawn over it. It comes from
+  openfreemap.org, which serves vector tiles of OSM without an account or a
+  key, and asking for it means asking somebody else's server for the ground
+  under whatever is on screen. `?basemap=off` does without, and the page draws
+  the same as it did before there was one; so does having no network, which is
+  the same case and is fallen back to rather than failed on.
+
+    python3 -m http.server 8000
+    open http://localhost:8000/viewer/search_space.html?data=search_space.geojson
+    open http://localhost:8000/viewer/search_space.html?basemap=dark
+    open http://localhost:8000/viewer/search_space.html?basemap=off
+-->
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<style>
+  html, body { margin: 0; height: 100%; background: #0e0e10; color: #e8e8e6;
+               font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #map { position: absolute; inset: 0; }
+  .panel {
+    position: absolute; top: 12px; left: 12px; z-index: 2; width: 252px;
+    background: #17171a; border: 1px solid #2b2b30; border-radius: 8px;
+    padding: 12px 14px; box-shadow: 0 6px 24px rgba(0,0,0,.45);
+  }
+  .panel h1 { font-size: 13px; margin: 0 0 2px; font-weight: 600; }
+  .panel .sub { color: #8d8d95; font-size: 11.5px; margin: 0 0 10px; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+  .row label { flex: 1; display: flex; align-items: center; gap: 7px; cursor: pointer; }
+  .sw { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+  .count { color: #75757d; font-variant-numeric: tabular-nums; font-size: 11px; }
+  hr { border: 0; border-top: 1px solid #2b2b30; margin: 10px 0; }
+  .stat { display: flex; justify-content: space-between; font-size: 11.5px; color: #a9a9b2; }
+  .stat b { color: #e8e8e6; font-weight: 600; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; }
+  button { background: #24242a; color: #e8e8e6; border: 1px solid #34343c;
+           border-radius: 5px; padding: 3px 12px; font: inherit; cursor: pointer; }
+  button:hover { background: #2e2e36; }
+  #err { position: absolute; inset: 0; display: none; place-items: center; z-index: 3;
+         background: #0e0e10; color: #e0605a; padding: 40px; text-align: center; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="panel">
+  <h1>Search space over the cells</h1>
+  <p class="sub">A cell is a shade of the cell holding it. Drag with the right button to tilt.</p>
+  <div id="levels"></div>
+  <hr>
+  <div id="kinds"></div>
+  <hr>
+  <div class="row"><label for="progress">search progress</label>
+    <span class="count" id="at"></span></div>
+  <input type="range" id="progress" min="0" max="0" value="0">
+  <div class="row"><button id="play">play</button></div>
+  <hr>
+  <div class="row"><label for="spread">level spacing</label></div>
+  <input type="range" id="spread" min="0" max="200" value="100">
+  <hr>
+  <div id="stats"></div>
+</div>
+<div id="err"></div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+const asked = new URLSearchParams(location.search);
+const source = asked.get('data') || 'search_space.geojson';
+
+// Keyless OSM vector tiles. positron is the grey one, meant to be built on.
+// dark, liberty and bright are there to be asked for with ?basemap=, and off
+// is no basemap at all.
+const BASEMAP = asked.get('basemap') || 'positron';
+const GROUND = '#0e0e10';
+const BARE = { version: 8, sources: {}, layers: [
+  { id: 'bg', type: 'background', paint: { 'background-color': GROUND } },
+]};
+
+// Half transparent is a veil of the page's own colour over the whole basemap
+// rather than every one of its fifty-five layers turned down by half. Turned
+// down one by one they show through one another -- a road at half over a
+// landuse at half is not half of the two -- and the result is uneven in a way
+// that reads as a rendering fault. One veil is even everywhere.
+async function groundFor() {
+  if (BASEMAP === 'off') return { style: BARE, base: [] };
+  try {
+    const style = await (await fetch(`https://tiles.openfreemap.org/styles/${BASEMAP}`)).json();
+    const base = style.layers.map(layer => layer.id);
+    style.layers.push({
+      id: 'veil', type: 'background',
+      paint: { 'background-color': GROUND, 'background-opacity': 0.5 },
+    });
+    return { style, base };
+  } catch (e) {
+    console.warn(`no basemap (${e.message}), carrying on without one`);
+    return { style: BARE, base: [] };
+  }
+}
+
+// How far the camera is lifted off the ground fit, in pixels, so that the
+// levels standing over it are on screen.
+const RAISE = 230;
+
+// Everything drawn but the way on the ground is a polygon pushed up between
+// two heights, and every one of them carries the colour it is drawn in, so
+// there is one paint block here and the file decides the rest.
+const LIFTED = [
+  { id: 'cells',   kind: 'cell',    opacity: 0.58, label: null },
+  { id: 'links',   kind: 'link',    opacity: 0.9,  label: 'cells it crossed between' },
+  { id: 'relaxed', kind: 'relaxed', opacity: 0.8,  label: 'arcs it relaxed' },
+  { id: 'reached', kind: 'reached', opacity: 0.85, label: 'reached, not settled' },
+  { id: 'settled', kind: 'settled', opacity: 0.95, label: 'settled' },
+  { id: 'packed',  kind: 'packed',  opacity: 1,    label: 'the way, by level' },
+  { id: 'riser',   kind: 'riser',   opacity: 0.95, label: 'jumps between levels' },
+];
+// what a level's checkbox hides, being everything that happened at a level
+const BY_LEVEL = ['cells', 'links', 'relaxed', 'reached', 'settled'];
+
+const fail = message => {
+  const box = document.getElementById('err');
+  box.style.display = 'grid';
+  box.textContent = message;
+};
+
+Promise.all([
+  fetch(source).then(r => r.ok ? r.json() : Promise.reject(new Error(`${source}: ${r.status}`))),
+  groundFor(),
+])
+  .then(([data, ground]) => draw(data, ground))
+  .catch(e => fail(`${e.message}\n\nRun the search_space example to write it, and serve this directory over http.`));
+
+function draw(data, ground) {
+  window.onerror = (m, _f, l) => fail(`${m} (line ${l})`);
+  // A map loads on an animation frame, and a tab that is hidden never runs
+  // one, so it would sit here for ever saying nothing about why.
+  if (document.hidden) {
+    setTimeout(() => {
+      if (!window.map || !window.map.isStyleLoaded()) {
+        fail('this tab is not visible, so the browser is not running animation '
+           + 'frames and the map cannot finish loading. Bring the window to the '
+           + 'front and reload.');
+      }
+    }, 4000);
+  }
+  const features = data.features || [];
+  if (!features.length) return fail('the file holds no features');
+
+  const of = kind => features.filter(f => f.properties.kind === kind);
+  const levels = [...new Set(features.map(f => f.properties.level))]
+    .filter(l => l >= 0).sort((a, b) => a - b);
+
+  const stats = document.getElementById('stats');
+  for (const [name, count] of [['settled', of('settled').length],
+                               ['reached, not settled', of('reached').length],
+                               ['arcs relaxed', of('relaxed').length],
+                               ['cells crossed between', of('link').length],
+                               ['cells stepped over', of('cell').length],
+                               ['steps', of('packed').length],
+                               ['levels', levels.length]]) {
+    const row = document.createElement('div');
+    row.className = 'stat';
+    const what = document.createElement('span');
+    what.textContent = name;
+    const many = document.createElement('b');
+    many.textContent = count.toLocaleString();
+    row.append(what, many);
+    stats.append(row);
+  }
+
+  const bounds = new maplibregl.LngLatBounds();
+  for (const f of features) {
+    const walk = c => Array.isArray(c[0]) ? c.forEach(walk) : bounds.extend(c);
+    walk(f.geometry.coordinates);
+  }
+
+  const map = new maplibregl.Map({
+    container: 'map',
+    style: ground.style,
+    bounds,
+    fitBoundsOptions: {
+      padding: { top: 90, bottom: 90, left: 330, right: 80 },
+      pitch: 62, bearing: -22,
+    },
+    maxPitch: 85,
+    antialias: true,
+  });
+  map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
+  window.map = map;
+
+  // maplibre reports plenty that is not fatal, so this says so rather than
+  // taking the screen away from whatever is already drawn
+  map.on('error', e => console.warn('maplibre:', (e.error && e.error.message) || e));
+
+  map.on('load', () => {
+    map.addSource('space', { type: 'geojson', data });
+
+    for (const layer of LIFTED) {
+      map.addLayer({
+        id: layer.id, type: 'fill-extrusion', source: 'space',
+        filter: ['==', ['get', 'kind'], layer.kind],
+        // replaced by refilter below, which is the one place that decides
+        paint: {
+          'fill-extrusion-color': ['get', 'colour'],
+          'fill-extrusion-base': ['get', 'base'],
+          'fill-extrusion-height': ['get', 'height'],
+          'fill-extrusion-opacity': layer.opacity,
+        },
+      });
+    }
+
+    // the way through the graph, on the ground, which is what all of it means
+    map.addLayer({
+      id: 'unpacked', type: 'line', source: 'space',
+      filter: ['==', ['get', 'kind'], 'unpacked'],
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: {
+        'line-color': ['get', 'colour'],
+        'line-width': ['interpolate', ['linear'], ['zoom'], 4, 2.2, 12, 5],
+      },
+    });
+
+    // What is drawn is decided in one place, from which levels are wanted and
+    // how far into the search the cursor is. Two things composing a filter
+    // from opposite ends of the file is how one of them ends up quietly
+    // dropping what the other asked for.
+    const ALL = [...LIFTED, { id: 'unpacked', kind: 'unpacked' }];
+    const shown = new Set(levels);
+    const last = Math.max(...features.map(f => f.properties.step));
+    let cursor = last;
+
+    const refilter = () => {
+      for (const layer of ALL) {
+        const terms = [['==', ['get', 'kind'], layer.kind],
+                       ['<=', ['get', 'step'], cursor]];
+        if (BY_LEVEL.includes(layer.id)) {
+          const keep = ['in', ['get', 'level'], ['literal', [...shown]]];
+          // what happened below the levels happened on the ground, and no
+          // level's checkbox owns it
+          terms.push(layer.id === 'cells' ? keep
+                                          : ['any', ['<', ['get', 'level'], 0], keep]);
+        }
+        map.setFilter(layer.id, ['all', ...terms]);
+      }
+    };
+
+    // The search, as it stood when it had settled so many nodes. Every mark
+    // carries the step it happened at, so running the cursor is running the
+    // search: nothing is recomputed and nothing is animated but the filter.
+    const progress = document.getElementById('progress');
+    const reading = document.getElementById('at');
+    progress.max = last;
+    progress.value = last;
+    const cut = step => {
+      cursor = Math.round(step);
+      progress.value = cursor;
+      reading.textContent = `${cursor.toLocaleString()} / ${last.toLocaleString()} settled`;
+      refilter();
+    };
+    progress.addEventListener('input', () => cut(Number(progress.value)));
+    // the animation is driven from outside as well, a frame at a time
+    window.cut = cut;
+    cut(last);
+
+    let running = null;
+    document.getElementById('play').addEventListener('click', event => {
+      if (running) {
+        cancelAnimationFrame(running);
+        running = null;
+        event.target.textContent = 'play';
+        return;
+      }
+      event.target.textContent = 'stop';
+      let step = 0;
+      const tick = () => {
+        step += Math.max(1, last / 300);
+        cut(Math.min(step, last));
+        running = step < last ? requestAnimationFrame(tick) : null;
+        if (!running) event.target.textContent = 'play';
+      };
+      tick();
+    });
+
+    // Fitting the bounds frames the ground, and everything else stands
+    // hundreds of kilometres over it, which on a tilted map is straight up the
+    // screen. Padding the fit would only zoom out again -- it shrinks the
+    // viewport it fits into -- so the ground is fitted at the size it wants
+    // and the camera is then lifted to put the levels in the picture.
+    map.panBy([0, -RAISE], { duration: 0 });
+
+    // one row per thing the search did, so any of it can be looked at alone
+    const kinds = document.getElementById('kinds');
+    for (const layer of LIFTED.filter(l => l.label)) {
+      kinds.append(toggle(layer.label, mean(of(layer.kind).map(f => f.properties.colour)),
+        on => map.setLayoutProperty(layer.id, 'visibility', on ? 'visible' : 'none')));
+    }
+    kinds.append(toggle('the way through the graph', '#ece9e2',
+      on => map.setLayoutProperty('unpacked', 'visibility', on ? 'visible' : 'none')));
+    if (ground.base.length) {
+      kinds.append(toggle('the ground under it', '#b6b6bc', on => {
+        for (const layer of [...ground.base, 'veil']) {
+          map.setLayoutProperty(layer, 'visibility', on ? 'visible' : 'none');
+        }
+      }));
+    }
+
+    // The levels are drawn where the file said, and this scales that. Pulling
+    // them together is how the way is read against the ground; pushing them
+    // apart is how a level with a lot in it is read on its own.
+    const spread = document.getElementById('spread');
+    spread.addEventListener('input', () => {
+      const factor = spread.value / 100;
+      for (const layer of LIFTED) {
+        map.setPaintProperty(layer.id, 'fill-extrusion-base', ['*', ['get', 'base'], factor]);
+        map.setPaintProperty(layer.id, 'fill-extrusion-height', ['*', ['get', 'height'], factor]);
+      }
+    });
+
+    // one row per level, so a level can be looked at on its own. The swatch is
+    // the middle of what that level's cells came out, there being no one
+    // colour for a level any more.
+    const rows = document.getElementById('levels');
+    for (const level of [...levels].reverse()) {
+      const cells = features.filter(f => f.properties.level === level
+                                      && f.properties.kind === 'cell');
+      const row = toggle(`level ${level}`, mean(cells.map(f => f.properties.colour)), on => {
+        if (on) { shown.add(level); } else { shown.delete(level); }
+        refilter();
+      });
+      const count = document.createElement('span');
+      count.className = 'count';
+      count.textContent = cells.length;
+      row.append(count);
+      rows.append(row);
+    }
+  });
+}
+
+// a labelled checkbox with a colour beside it
+function toggle(label, colour, onChange) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  const box = document.createElement('input');
+  box.type = 'checkbox'; box.checked = true;
+  const swatch = document.createElement('span');
+  swatch.className = 'sw'; swatch.style.background = colour;
+  const text = document.createElement('span');
+  text.textContent = label;
+  const wrap = document.createElement('label');
+  wrap.append(box, swatch, text);
+  row.append(wrap);
+  box.addEventListener('change', () => onChange(box.checked));
+  return row;
+}
+
+// the middle of a set of colours, for a swatch standing in for all of them
+function mean(colours) {
+  if (!colours.length) return '#777777';
+  const sum = [0, 0, 0];
+  for (const colour of colours) {
+    for (let band = 0; band < 3; band++) {
+      sum[band] += parseInt(colour.slice(1 + band * 2, 3 + band * 2), 16);
+    }
+  }
+  return '#' + sum.map(v => Math.round(v / colours.length)
+    .toString(16).padStart(2, '0')).join('');
+}
+</script>
+</body>
+</html>
