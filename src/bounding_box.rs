@@ -1,6 +1,6 @@
 use crate::geometry::FPCoordinate;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct BoundingBox {
     min: FPCoordinate,
     max: FPCoordinate,

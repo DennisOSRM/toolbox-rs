@@ -34,10 +34,10 @@ use rustc_hash::FxHashSet;
 
 use crate::{
     border_levels::BorderLevels,
-    customization::Customization,
     dense_heap::DenseHeap,
     graph::{Graph, NodeID},
     heap_stats::{Counters, HeapStats, Untracked},
+    overlay::{CellTable, Overlay},
     packed_partition::PackedPartition,
 };
 
@@ -169,8 +169,8 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
     ///
     /// A second run over the same partition finds the room already there and
     /// the entries already put back by `clear`.
-    fn make_room_for(&mut self, customization: &Customization) {
-        let levels = customization.directory().levels();
+    fn make_room_for<O: Overlay>(&mut self, customization: &O) {
+        let levels = customization.levels();
         let mut at = Vec::with_capacity(levels + 1);
         let mut total = 0;
         for level in 0..levels {
@@ -195,9 +195,9 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
     ///
     /// Panics if a level of the partition has no cells worked out for it,
     /// which would mean a directory that does not describe the graph.
-    pub fn run(
+    pub fn run<O: Overlay>(
         &mut self,
-        customization: &Customization,
+        customization: &O,
         source: NodeID,
         targets: &[NodeID],
     ) -> bool {
@@ -288,9 +288,9 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
 
     /// The arcs across the cell, which the customization worked out.
     #[inline(never)]
-    fn relax_across_cell(
+    fn relax_across_cell<O: Overlay>(
         &mut self,
-        customization: &Customization,
+        customization: &O,
         partition: &PackedPartition,
         node: NodeID,
         distance: usize,
@@ -311,7 +311,7 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
         // the row and the nodes it is about, walked in step as two pieces of
         // memory rather than asked for an entry at a time
         let here = u32::try_from(node).unwrap_or(u32::MAX);
-        for (&target, &across) in distances.border_nodes.iter().zip(distances.row(from)) {
+        for (&target, &across) in distances.border_nodes().iter().zip(distances.row(from)) {
             if across == u32::MAX || target == here {
                 continue;
             }

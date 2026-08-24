@@ -31,7 +31,7 @@
 //! near its own end ever reaches, and goes to the back. The sort being stable,
 //! the cells stay laid out side by side within each group.
 
-use std::{cmp::Reverse, sync::OnceLock};
+use std::cmp::Reverse;
 
 use rkyv::{Archive, Deserialize, Serialize};
 
@@ -58,16 +58,37 @@ pub struct NodeOrdering {
     on_a_border: usize,
 }
 
-/// Whether to number by cell path first and border level second, rather than
-/// the other way round.
+/// Which of the two orders a numbering is worked out in.
 ///
-/// Here to measure one against the other, and read once. The orders want
-/// opposite things -- one lays every subtree out in a single run of numbers,
-/// the other puts every coarse border node of the graph at the front of every
-/// array -- and which of them a run wants is not a thing this module can know.
-fn cell_major() -> bool {
-    static ASKED: OnceLock<bool> = OnceLock::new();
-    *ASKED.get_or_init(|| std::env::var("TOOLBOX_CELL_MAJOR").is_ok())
+/// They want opposite things and both are wanted somewhere, so this is asked
+/// for rather than decided here.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Numbering {
+    /// Border nodes of the coarsest cells first, over the whole graph.
+    ///
+    /// A search over the cells touches the border nodes of coarse cells, a few
+    /// hundred thousand of eighteen million, and this puts all of them at the
+    /// front of every array a search keeps a node in. It is what a search in
+    /// memory wants: measured over europe.ptv it is worth a quarter of the
+    /// median query and nearly half of a continental one.
+    ///
+    /// What it gives up is any grouping: a cell's nodes end up scattered the
+    /// width of the numbering.
+    #[default]
+    BorderFirst,
+    /// By cell path, and border nodes first only within a cell.
+    ///
+    /// Every cell of every level comes out one run of numbers, and so does
+    /// every subtree, since the cells of a cell are themselves next to one
+    /// another. That is what a store that hands out a subtree at a time wants:
+    /// a block holds a range, and a range nobody has is a part of the map
+    /// nobody downloaded.
+    ///
+    /// Measured over europe.ptv it costs a fifth of the median query against
+    /// [`BorderFirst`](Self::BorderFirst), all of it above rank 2^10. Below
+    /// that it is the faster of the two, a short search staying inside a few
+    /// cells being the case it lays out well.
+    CellPath,
 }
 
 impl NodeOrdering {
@@ -78,6 +99,20 @@ impl NodeOrdering {
     /// Panics if the graph and the partition are not over the same nodes.
     #[must_use]
     pub fn of<G: Graph<u32>>(graph: &G, partition: &PackedPartition) -> Self {
+        Self::in_order(graph, partition, Numbering::BorderFirst)
+    }
+
+    /// The same, in whichever of the two orders is asked for.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the graph and the partition are not over the same nodes.
+    #[must_use]
+    pub fn in_order<G: Graph<u32>>(
+        graph: &G,
+        partition: &PackedPartition,
+        numbering: Numbering,
+    ) -> Self {
         let nodes = partition.number_of_nodes();
         assert_eq!(
             graph.number_of_nodes(),
@@ -106,7 +141,7 @@ impl NodeOrdering {
 
         let mut to_old =
             (0..u32::try_from(nodes).expect("the graph is too large to hold")).collect::<Vec<_>>();
-        if cell_major() {
+        if numbering == Numbering::CellPath {
             // The same two keys the other way round: by cell path first and by
             // border level only within a cell. This keeps the nodes of a cell,
             // and so of every subtree above it, in one run of numbers, which

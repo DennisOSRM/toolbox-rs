@@ -20,6 +20,7 @@ use crate::{
     graph::{Graph, NodeID},
     level_directory::{CellId, LevelDirectory},
     one_to_many_dijkstra::OneToManyDijkstra,
+    overlay::{CellTable, Overlay},
     packed_partition::PackedPartition,
     static_graph::StaticGraph,
 };
@@ -76,6 +77,12 @@ pub struct CellDistances {
 }
 
 impl CellDistances {
+    /// The nodes on the border of the cell, in the order the table is in.
+    #[must_use]
+    pub fn border_nodes_of(&self) -> &[u32] {
+        &self.border_nodes
+    }
+
     /// What the table takes up, near enough to count with.
     ///
     /// The three runs of numbers are exact. The map of places is not: it is
@@ -1021,6 +1028,69 @@ impl Customization {
         let searched = of_node.len();
         edges.sort_unstable();
         (StaticGraph::from_sorted_slice(searched, edges), searched)
+    }
+}
+
+impl CellTable for &CellDistances {
+    #[inline]
+    fn border_nodes(&self) -> &[u32] {
+        CellDistances::border_nodes_of(self)
+    }
+
+    #[inline]
+    fn row(&self, source: usize) -> &[u32] {
+        CellDistances::row(self, source)
+    }
+
+    #[inline]
+    fn column(&self, target: usize) -> &[u32] {
+        CellDistances::column(self, target)
+    }
+
+    #[inline]
+    fn place_of(&self, node: NodeID) -> Option<usize> {
+        CellDistances::place_of(self, node)
+    }
+}
+
+/// The overlay a server runs on: every table in memory, worked out on the
+/// first request and kept.
+///
+/// Handing a table out is a load. Nothing here can be evicted while a search
+/// reads it, so the table is lent rather than guarded and the lifetime is the
+/// customization's own.
+impl Overlay for Customization {
+    type Graph = StaticGraph<u32>;
+    type Table<'a> = &'a CellDistances;
+
+    #[inline]
+    fn graph(&self) -> &Self::Graph {
+        Customization::graph(self)
+    }
+
+    #[inline]
+    fn partition(&self) -> &PackedPartition {
+        Customization::partition(self)
+    }
+
+    #[inline]
+    fn border_levels(&self) -> &BorderLevels {
+        Customization::border_levels(self)
+    }
+
+    #[inline]
+    fn levels(&self) -> usize {
+        self.directory().levels()
+    }
+
+    #[inline]
+    fn cells_on_level(&self, level: usize) -> usize {
+        Customization::cells_on_level(self, level)
+    }
+
+    #[inline]
+    fn distances_of(&self, level: usize, cell: CellId) -> Option<Self::Table<'_>> {
+        Customization::distances_of(self, level, cell)
     }
 }
 

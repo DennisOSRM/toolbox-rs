@@ -69,7 +69,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let started = Instant::now();
-    let ordering = NodeOrdering::of(&graph, &PackedPartition::of(&directory));
+    let ordering = NodeOrdering::in_order(
+        &graph,
+        &PackedPartition::of(&directory),
+        args.numbering.into(),
+    );
     info!(
         "numbered {} nodes in {:.1} s, {} of them ({:.1}%) on the border of a cell",
         ordering.len(),
