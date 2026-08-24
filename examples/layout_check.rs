@@ -31,6 +31,10 @@ use toolbox_rs::{
     customization::Customization, io, level_directory::LevelDirectory, static_graph::StaticGraph,
 };
 
+fn directory_of(customization: &Customization) -> &LevelDirectory {
+    customization.directory()
+}
+
 fn main() {
     env_logger::init();
     let mut argv = args().skip(1);
@@ -95,7 +99,25 @@ fn main() {
         );
     }
 
+    // and whether the cells of a level are laid out under their parents, which
+    // is what makes a cell's children a run rather than a list
+    let mut children_run = true;
+    for level in 1..levels {
+        let above = directory_of(&customization)
+            .parents_on_level(level - 1)
+            .to_vec();
+        children_run &= above.windows(2).all(|pair| pair[0] <= pair[1]);
+    }
+
     println!();
+    println!(
+        "the children of a cell are a run:       {}",
+        if children_run {
+            "yes, everywhere"
+        } else {
+            "NO"
+        }
+    );
     println!(
         "the nodes of a cell are the run itself: {}",
         if all_runs { "yes, everywhere" } else { "NO" }

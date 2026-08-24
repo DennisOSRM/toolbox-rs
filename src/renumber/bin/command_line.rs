@@ -50,6 +50,16 @@ pub struct Arguments {
     /// query, all of it on the long routes.
     #[clap(long, value_enum, default_value_t = Order::BorderFirst)]
     pub numbering: Order,
+
+    /// Number the cells of each level in the order their keys run, before
+    /// numbering the nodes.
+    ///
+    /// Out of the assembly a cell is numbered as the merging happened to reach
+    /// it, so a run of cell numbers is not a range of keys. Renumbered, a
+    /// block of a store is a range of keys, of cell numbers and of node
+    /// numbers at once. Says nothing about which cell a node is in.
+    #[clap(long, action)]
+    pub cells_in_key_order: bool,
 }
 
 impl Display for Arguments {
