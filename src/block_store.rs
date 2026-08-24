@@ -229,8 +229,19 @@ impl BlockStore {
         Ok(())
     }
 
+    /// The entry naming the block a cell is in, and nothing where no block
+    /// holds it.
+    #[must_use]
+    pub fn entry_of(&self, level: usize, cell: CellId) -> Option<BlockEntry> {
+        self.map.holding_cell(level, cell).copied()
+    }
+
     /// Reads and decodes the block an entry names.
-    fn block_at(&self, entry: &crate::block_map::BlockEntry) -> Result<CellBlock, NotRead> {
+    ///
+    /// # Errors
+    ///
+    /// What the codec or the file said.
+    pub fn block_at(&self, entry: &crate::block_map::BlockEntry) -> Result<CellBlock, NotRead> {
         let codec = Codec::of(entry.codec).map_err(|why| NotRead::UnknownCodec(why.0))?;
         let mut stored = vec![0_u8; entry.stored as usize];
         read_at(&self.blocks, entry.at, &mut stored)?;
@@ -242,7 +253,8 @@ impl BlockStore {
     }
 
     /// How wide each table of a block is, which the tree knows.
-    fn widths_of(&self, entry: &crate::block_map::BlockEntry, level: usize) -> Vec<usize> {
+    #[must_use]
+    pub fn widths_of(&self, entry: &BlockEntry, level: usize) -> Vec<usize> {
         (0..entry.cells)
             .map(|at| self.tree.facts(level, entry.first_cell + at).on_border as usize)
             .collect()

@@ -30,9 +30,17 @@
 use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
 
+/// How many blocks are kept in hand while their cells are unpacked.
+///
+/// A block is wanted only while the cells around it are being read; a few is
+/// enough to keep a search walking cells side by side from reading the same
+/// block twice, and more would be room better given to the tables.
+const BLOCKS_IN_HAND: usize = 8;
+
 use crate::{
     block_store::{BlockStore, NotRead},
     border_levels::BorderLevels,
+    cell_block::CellBlock,
     cell_tree::CellTree,
     graph::NodeID,
     level_directory::CellId,
@@ -98,6 +106,10 @@ pub struct Faults {
     pub misses: u64,
     /// tables thrown away to make room
     pub evicted: u64,
+    /// blocks read off the file, which is what a fault really costs
+    pub reads: u64,
+    /// tables unpacked out of a block already in hand
+    pub unpacked: u64,
     /// what is held now, in bytes
     pub held: usize,
 }
@@ -186,6 +198,17 @@ pub struct PagedOverlay {
 struct Kept {
     tables: LRU<(u8, CellId), Arc<HeldTable>>,
     bytes: usize,
+    /// The blocks a table was last unpacked out of.
+    ///
+    /// A read is of a block and a table is of a cell, and a block holds many
+    /// cells. Without this, two cells of one block are two reads of that block
+    /// and two passes of the codec over it, which for a search walking cells
+    /// side by side is nearly every read it makes.
+    ///
+    /// Held apart from the tables and given a fixed few, since a block is
+    /// wanted only while the cells around it are being unpacked and a table is
+    /// wanted for as long as the search keeps coming back to it.
+    blocks: LRU<(u8, CellId), Arc<CellBlock>>,
     faults: Faults,
 }
 
@@ -211,6 +234,7 @@ impl PagedOverlay {
             kept: Mutex::new(Kept {
                 tables: LRU::new_with_capacity(1 << 16),
                 bytes: 0,
+                blocks: LRU::new_with_capacity(BLOCKS_IN_HAND),
                 faults: Faults::default(),
             }),
             budget,
@@ -354,9 +378,49 @@ impl PagedOverlay {
     /// A fault is a disk read and a pass of a codec, and holding the cache
     /// through it would stop every other thread.
     fn read(&self, level: usize, cell: CellId) -> Result<Arc<HeldTable>, NotRead> {
+        let entry = self.store.entry_of(level, cell).ok_or(NotRead::NotHere)?;
+        let key = (
+            u8::try_from(level).map_err(|_| NotRead::NotHere)?,
+            entry.first_cell,
+        );
+
+        // the block this cell is in, off the file or out of the few in hand
+        let block = {
+            let mut kept = self.kept.lock().expect("the cache is poisoned");
+            kept.blocks.get(&key).cloned()
+        };
+        let block = match block {
+            Some(block) => {
+                self.kept
+                    .lock()
+                    .expect("the cache is poisoned")
+                    .faults
+                    .unpacked += 1;
+                block
+            }
+            None => {
+                let read = Arc::new(self.store.block_at(&entry)?);
+                let mut kept = self.kept.lock().expect("the cache is poisoned");
+                kept.faults.reads += 1;
+                kept.blocks.push(&key, read.clone());
+                read
+            }
+        };
+
+        let widths = self.store.widths_of(&entry, level);
+        let which = (cell - entry.first_cell) as usize;
         let mut matrix = Vec::new();
         let mut nodes = Vec::new();
-        self.store.cell_into(level, cell, &mut matrix, &mut nodes)?;
+        block.unpack_into(which, &widths, &mut matrix);
+        block.places_into(which, &widths, &mut nodes);
+        let begins = self.store.tree().nodes_begin(level, cell);
+        if nodes.is_empty() {
+            nodes.extend((0..widths[which] as u32).map(|at| begins + at));
+        } else {
+            for node in &mut nodes {
+                *node += begins;
+            }
+        }
         let wide = nodes.len();
         let mut transposed = vec![u32::MAX; matrix.len()];
         for source in 0..wide {
