@@ -15,13 +15,17 @@
 //! pieces as the numbering broke it into, and the store would have to hold a
 //! list for it.
 //!
-//! `TOOLBOX_CELL_MAJOR=1` picks the other numbering.
+//! A third argument of `cell-path` picks the other numbering.
 
 use std::{env::args, time::Instant};
 
 use toolbox_rs::{
-    graph::NodeID, io, level_directory::LevelDirectory, node_ordering::NodeOrdering,
-    packed_partition::PackedPartition, static_graph::StaticGraph,
+    graph::NodeID,
+    io,
+    level_directory::LevelDirectory,
+    node_ordering::{NodeOrdering, Numbering},
+    packed_partition::PackedPartition,
+    static_graph::StaticGraph,
 };
 
 fn main() {
@@ -34,18 +38,22 @@ fn main() {
     let graph = StaticGraph::new(io::read_edges_from_file(&next("graph")));
     let directory: LevelDirectory = io::read_from_file(&next("directory"));
     let levels = directory.levels();
+    let numbering = match argv.next().as_deref() {
+        Some("cell-path") => Numbering::CellPath,
+        Some(other) => panic!("no numbering called {other}: border-first or cell-path"),
+        None => Numbering::BorderFirst,
+    };
 
     let partition = PackedPartition::of(&directory);
     let started = Instant::now();
-    let ordering = NodeOrdering::of(&graph, &partition);
+    let ordering = NodeOrdering::in_order(&graph, &partition, numbering);
     println!(
         "numbered {} nodes in {:.2?}, {}",
         ordering.len(),
         started.elapsed(),
-        if std::env::var("TOOLBOX_CELL_MAJOR").is_ok() {
-            "by cell path first"
-        } else {
-            "by border level first"
+        match numbering {
+            Numbering::CellPath => "by cell path first",
+            Numbering::BorderFirst => "by border level first",
         }
     );
 

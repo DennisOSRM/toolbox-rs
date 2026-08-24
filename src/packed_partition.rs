@@ -127,6 +127,17 @@ impl PackedPartition {
         self.levels
     }
 
+    /// Where each level's cell id begins in a word, finest level first, with
+    /// the width of a whole word in the last entry.
+    ///
+    /// This is the layout of a key, and a format that stores keys has to store
+    /// it beside them: how many bits a level was given depends on how many
+    /// cells it turned out to have.
+    #[must_use]
+    pub fn level_layout(&self) -> &[u32] {
+        &self.begins_at
+    }
+
     /// how many nodes it was built over
     #[must_use]
     pub fn number_of_nodes(&self) -> usize {
