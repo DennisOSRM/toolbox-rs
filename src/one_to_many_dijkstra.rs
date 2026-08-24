@@ -5,7 +5,7 @@
 /// search space of each run in its internal structures. From there paths can
 /// be unpacked.
 use crate::{
-    addressable_binary_heap::AddressableHeapWithStats,
+    dense_heap::DenseHeap,
     graph::{Graph, NodeID},
     heap_stats::{Counters, HeapStats, Untracked},
 };
@@ -23,7 +23,16 @@ pub type OneToManyDijkstra = OneToManySearch<Untracked>;
 pub type TrackedOneToManyDijkstra = OneToManySearch<Counters>;
 
 pub struct OneToManySearch<S: HeapStats<NodeID>> {
-    queue: AddressableHeapWithStats<NodeID, usize, NodeID, S>,
+    /// A queue that finds a node in an array rather than in a map.
+    ///
+    /// The graph this search runs over is a cell, whose nodes are numbered
+    /// from nothing with no gaps, so the array is as long as the cell is wide
+    /// and the search never asks a hash anything. It was a map before, and a
+    /// relaxation asked it three or four separate questions -- is this node
+    /// on the queue, is it still on it, what is it held at, now lower it --
+    /// where the array answers all of them in one look. On the coarse levels
+    /// of a continent that inner loop runs some thousand million times.
+    queue: DenseHeap<S>,
     reached_target_count: usize,
 }
 
@@ -36,9 +45,8 @@ impl<S: HeapStats<NodeID>> Default for OneToManySearch<S> {
 impl<S: HeapStats<NodeID>> OneToManySearch<S> {
     #[must_use]
     pub fn new() -> Self {
-        let queue = AddressableHeapWithStats::<NodeID, usize, NodeID, S>::new();
         Self {
-            queue,
+            queue: DenseHeap::new(),
             reached_target_count: 0,
         }
     }
@@ -71,20 +79,50 @@ impl<S: HeapStats<NodeID>> OneToManySearch<S> {
     /// to run consecutive searches, even on different graphs. It is cleared on
     /// every run, which saves on allocations.
     pub fn run<G: Graph<u32>>(&mut self, graph: &G, source: NodeID, targets: &[NodeID]) -> bool {
-        let targets =
+        let wanted =
             rustc_hash::FxHashMap::<NodeID, ()>::from_iter(targets.iter().map(|&x| (x, ())));
+        self.walk(graph, source, wanted.len(), |node| {
+            wanted.contains_key(&node)
+        })
+    }
 
+    /// The same search, to the first `count` nodes of the graph.
+    ///
+    /// A search whose targets are a prefix of the numbering does not need to
+    /// be told which nodes they are. [`run`](Self::run) builds a set of them
+    /// and asks it once per settled node, which for a customization is a set
+    /// the size of the answer being computed: one built and thrown away per
+    /// search, and one lookup per settle, to ask a question that is
+    /// `node < count`. The border nodes of a cell are numbered first exactly
+    /// so that it is.
+    pub fn run_to_leading<G: Graph<u32>>(
+        &mut self,
+        graph: &G,
+        source: NodeID,
+        count: usize,
+    ) -> bool {
+        self.walk(graph, source, count, |node| node < count)
+    }
+
+    /// What both of them do, differing only in how a target is recognised.
+    fn walk<G: Graph<u32>>(
+        &mut self,
+        graph: &G,
+        source: NodeID,
+        wanted: usize,
+        is_target: impl Fn(NodeID) -> bool,
+    ) -> bool {
         // clear the search space
         self.clear();
 
-        debug!("[start] sources: {source:?}, targets: {targets:?}");
+        debug!("[start] source: {source:?}, {wanted} targets");
 
         // prime queue
         self.queue.insert(source, 0, source);
         debug!("[push] {source} at distance {}", self.queue.weight(source));
 
         // iteratively search the graph
-        while !self.queue.is_empty() && self.reached_target_count < targets.len() {
+        while !self.queue.is_empty() && self.reached_target_count < wanted {
             // settle next node from queue
             let u = self.queue.delete_min();
             let distance = self.queue.weight(u);
@@ -92,31 +130,22 @@ impl<S: HeapStats<NodeID>> OneToManySearch<S> {
             debug!("[pop] {u} at distance {distance}");
 
             // check if target is reached
-            if targets.contains_key(&u) {
+            if is_target(u) {
                 self.reached_target_count += 1;
                 debug!("[done] reached {u} at {distance}");
             }
 
-            // relax outgoing edges
+            // relax outgoing edges, each in one look at the queue: whether
+            // the node is on it, what it is held at and whether this is an
+            // improvement are the same question asked of the same slot
             for edge in graph.edge_range(u) {
-                debug!("[relax] edge {edge}");
                 let v = graph.target(edge);
                 let new_distance = distance + *graph.data(edge) as usize;
-
-                if !self.queue.inserted(v) {
-                    debug!("[push] node: {v}, weight: {new_distance}, parent: {u}");
-                    // if target not enqued before, do now
-                    self.queue.insert(v, new_distance, u);
-                }
-                if self.queue.contains(v) && self.queue.weight(v) > new_distance {
-                    debug!("[decrease] node: {v}, new weight: {new_distance}, new parent: {u}");
-                    // if lower distance found, update distance and its parent
-                    self.queue.decrease_key_and_update_data(v, new_distance, u);
-                }
+                self.queue.insert_or_decrease(v, new_distance, u);
             }
         }
 
-        self.reached_target_count == targets.len()
+        self.reached_target_count == wanted
     }
 
     /// retrieve path from the node to the queue according to the search space
@@ -134,7 +163,7 @@ impl<S: HeapStats<NodeID>> OneToManySearch<S> {
             // since the target was inserted (as checked above) and the sources
             // parent is the source node of the search itself, this loop will
             // terminate.
-            let parent = *self.queue.data(node);
+            let parent = self.queue.data(node);
             if parent == node {
                 // reverse order to go from source to target
                 path.reverse();

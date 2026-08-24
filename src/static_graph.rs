@@ -99,7 +99,7 @@ impl<T: Ord + Copy> StaticGraph<T> {
         mut input: Vec<impl Edge<ID = NodeID> + EdgeData<DATA = T> + Ord>,
     ) -> Self {
         input.sort();
-        Self::assemble(nodes, input)
+        Self::assemble(nodes, &input)
     }
 
     /// Assembles a graph from a prebuilt adjacency array. The caller has to
@@ -123,19 +123,29 @@ impl<T: Ord + Copy> StaticGraph<T> {
     pub fn new_from_sorted_list(
         input: Vec<impl Edge<ID = NodeID> + EdgeData<DATA = T> + Ord>,
     ) -> Self {
-        Self::assemble(0, input)
+        Self::assemble(0, &input)
     }
 
     /// Builds the adjacency array out of a sorted arc list, over as many nodes
     /// as the arcs reach or as many as were asked for, whichever is more.
-    fn assemble(
+    /// Builds the arrays from a sorted list the caller keeps.
+    ///
+    /// A customization builds one graph per cell and a continent has six
+    /// hundred thousand cells, so the list the graph is made of is worth
+    /// refilling rather than making anew each time. Nothing here needs to own
+    /// it: the arrays are built by reading it once.
+    pub fn from_sorted_slice(
         nodes: usize,
-        input: Vec<impl Edge<ID = NodeID> + EdgeData<DATA = T> + Ord>,
+        input: &[impl Edge<ID = NodeID> + EdgeData<DATA = T> + Ord],
     ) -> Self {
+        Self::assemble(nodes, input)
+    }
+
+    fn assemble(nodes: usize, input: &[impl Edge<ID = NodeID> + EdgeData<DATA = T> + Ord]) -> Self {
         // TODO: renumber IDs if necessary
         let number_of_edges = input.len();
         let mut number_of_nodes = nodes.saturating_sub(1);
-        for edge in &input {
+        for edge in input {
             number_of_nodes = max(edge.source(), number_of_nodes);
             number_of_nodes = max(edge.target(), number_of_nodes);
         }
@@ -160,13 +170,14 @@ impl<T: Ord + Copy> StaticGraph<T> {
             .node_array
             .push(NodeArrayEntry::new((input.len()) as EdgeID));
 
-        graph.edge_array = input
-            .iter()
-            .map(move |edge| EdgeArrayEntry {
+        // extended rather than collected into: collecting throws away the
+        // room reserved for it just above and asks for the same room again
+        graph
+            .edge_array
+            .extend(input.iter().map(|edge| EdgeArrayEntry {
                 target: u32::try_from(edge.target()).expect("the graph is too large to hold"),
                 data: *edge.data(),
-            })
-            .collect();
+            }));
         debug_assert!(graph.check_integrity());
         graph
     }
