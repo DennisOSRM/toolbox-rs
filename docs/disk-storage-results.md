@@ -72,13 +72,13 @@ At a budget of 150 MiB, medians over 4,800 pairs:
 
 | block target | blocks | on disk | median | p95 | reads a query |
 |---|---|---|---|---|---|
-| 4096 KiB | 66 | 107.8 MiB | 2118µs | 9061µs | 1.9 |
-| 512 KiB | 491 | 108.0 MiB | 635µs | 7069µs | 2.2 |
-| **64 KiB** | **3,633** | **108.2 MiB** | **437µs** | **6829µs** | 2.5 |
-| 16 KiB | 13,217 | 108.8 MiB | 507µs | 6957µs | 3.0 |
-| 4 KiB | 45,088 | 110.3 MiB | 752µs | 7321µs | 4.2 |
+| 4096 KiB | 66 | 107.8 MiB | 1197µs | 7055µs | 1.3 |
+| 512 KiB | 491 | 108.0 MiB | 262µs | 5957µs | 1.6 |
+| **64 KiB** | **3,633** | **108.2 MiB** | **130µs** | **5669µs** | 1.7 |
+| 16 KiB | 13,217 | 108.8 MiB | 196µs | 6182µs | 2.0 |
+| 4 KiB | 45,088 | 110.3 MiB | 320µs | 6314µs | 2.7 |
 
-The plan's four megabytes is **4.8 times worse than the best** and its smallest
+The plan's four megabytes is **9.2 times worse than the best**, and its smallest
 suggested size, one megabyte, is still two to three times worse. A 4 MiB block
 is read, decoded and parsed to hand back one table of a few hundred bytes.
 
@@ -86,45 +86,85 @@ Below 64 KiB it turns: reads a query climb faster than each read gets cheaper,
 and the file grows, since a smaller block gives lz4 less to work with — 108.2
 MiB at 64 KiB against 110.3 at 4 KiB.
 
-**Recommendation: 64 KiB**, and the curve is shallow between 64 and 512, so a
-build with a reason to prefer fewer, larger blocks loses little at 512.
+**Recommendation: 64 KiB.** The curve is shallow between 64 and 512, so a build
+with a reason to prefer fewer, larger blocks loses little at 512, and steep
+above that.
 
 ## Memory budget: which levels to hold
 
 Levels cost, unpacked, from the coarsest down: 18.3, 40.0, 61.0, 93.1, 125.0
 and 186.4 MiB, so from the top 18.3, 58.2, 119.2, 212.4, 337.4 and 523.8.
 
-At 4 MiB blocks, 4,800 pairs, half the budget available to hold levels:
+At 64 KiB blocks, 4,800 pairs, half the budget available to hold levels:
 
 | budget | held | held bytes | cache | open | median | p95 | reads a query | hit rate |
 |---|---|---|---|---|---|---|---|---|
-| 75 MiB | L5 | 18.3 MiB | 56.7 MiB | 5.6s | 3397µs | 12229µs | 3.8 | 95.3% |
-| 150 MiB | L4+ | 58.2 MiB | 91.8 MiB | 5.4s | 2173µs | 8632µs | 1.9 | 96.9% |
-| 300 MiB | L3+ | 119.2 MiB | 180.8 MiB | 5.5s | 2192µs | 8688µs | 1.6 | 93.8% |
-| 700 MiB | L1+ | 337.4 MiB | 362.6 MiB | 5.8s | 953µs | 6873µs | 0.5 | 82.2% |
+| 75 MiB | L5 | 18.3 MiB | 56.7 MiB | 5.6s | 211µs | 6171µs | 5.2 | 94.9% |
+| **150 MiB** | **L4+** | **58.2 MiB** | **91.8 MiB** | 5.4s | **130µs** | 5680µs | 1.7 | 97.1% |
+| 300 MiB | L3+ | 119.2 MiB | 180.8 MiB | 5.4s | 124µs | 5598µs | 1.5 | 93.9% |
+| 700 MiB | L1+ | 337.4 MiB | 362.6 MiB | 5.5s | 95µs | 5508µs | 0.6 | 83.7% |
 
-**Every answer at every budget matched the same search over the cells in
-memory**, 4,800 pairs each.
-
-Holding the two coarsest levels is most of what there is to gain: 75 to 150
-MiB halves the median, and 150 to 300 changes nothing worth naming. Going to
-700 halves it again, but that is 337 MiB of held tables to save a millisecond,
-and by then the hit rate has *fallen* to 82% because the cache is holding fine
-tables that a query touches once.
+**Holding the two coarsest levels is nearly all of what there is to gain.** 75
+to 150 MiB cuts the median by 38% and reads a query from 5.2 to 1.7; 150 to 300
+buys 5%. Going to 700 buys another 27%, but for 337 MiB of held tables, and by
+then the hit rate has *fallen* to 84% because the cache is holding fine tables
+a query touches once.
 
 Opening a store is about 5.5s at any budget, nearly all of it reading and
 unpacking the levels to be held.
 
 ## Against the same query in memory
 
-The in-memory search is 63µs at the median under the border-first numbering
-and 76µs under cell-path. The paged store is **437µs at 64 KiB blocks and a
-150 MiB budget**, so between five and seven times slower.
+Both engines over the same 4,800 pairs, 64 KiB blocks, a 150 MiB budget, the
+cells in memory fully customized first. Medians by Dijkstra rank:
 
-That is the price of the whole exercise and it is worth stating plainly: a
-device holding a hundred and eight megabytes answers in about four hundred
-microseconds where a server holding one and a half gigabytes answers in
-seventy.
+| rank | in memory | paged | |
+|---|---|---|---|
+| 2^4 | 3.1µs | 3.3µs | 1.07× |
+| 2^6 | 7.5µs | 7.8µs | 1.05× |
+| 2^8 | 16.1µs | 34.0µs | 2.12× |
+| 2^10 | 32.7µs | 71.1µs | **2.17×** |
+| 2^12 | 64.5µs | 115.2µs | 1.79× |
+| 2^14 | 140.2µs | 211.3µs | 1.51× |
+| 2^16 | 289.7µs | 391.0µs | 1.35× |
+| 2^18 | 584.1µs | 715.5µs | 1.23× |
+| 2^20 | 1331.8µs | 1401.9µs | 1.05× |
+| 2^22 | 2981.6µs | 2933.4µs | 0.98× |
+| 2^24 | 7008.6µs | 6305.3µs | 0.90× |
+| **all** | **75.2µs** | **137.1µs** | **1.82×** |
+
+**A store of 108 MiB answers within a factor of two of a customization holding
+about a gigabyte and a half.**
+
+The curve has a shape worth reading. Below rank 2^7 there is almost nothing in
+it: a short search stays in the cells around its ends, which are cached after
+the first touch. It peaks at 2^10, where a search has started reaching cells it
+has not seen and has not yet reached the levels that are held outright. Above
+2^19 it closes, and at the very top the paged store is *faster* — the held
+levels are one run of memory apiece, where the customization reaches through a
+vector of boxes per cell.
+
+**Every one of the 4,800 answers equals the same query run on the original,
+un-renumbered instance**, through two renumberings, the packing, lz4 and the
+cache.
+
+## A measurement that was wrong, and is corrected here
+
+Everything above was first measured with the wrong pairs. The pair file holds
+node ids of the instance they were drawn on, and the store is built on a
+renumbered one, so the ids named different nodes: of 4,800 pairs, **none** gave
+the same distance on both instances, and the rank beside each belonged to
+somebody else.
+
+It was caught by a number that did not fit — the in-memory engine measured
+341µs where the same engine on the same pairs measures 75µs — and confirmed by
+comparing the two instances' answers pair by pair. The pairs are now put
+through the numbering that `renumber` wrote.
+
+The conclusions held: 64 KiB was the best block size before and after, and the
+two coarsest levels were the ones worth holding before and after. The numbers
+did not: the paged store was reported at five to seven times the in-memory
+query and is under two.
 
 ## What has not been measured
 
@@ -137,4 +177,4 @@ seventy.
   open, which is the 5.5s. Mapping them would trade that for a slower first
   touch.
 - **zstd with a trained dictionary**, which the plan wanted for the small-frame
-  case. With 64 KiB blocks there is a case for it that there was not at 4 MiB.
+  case. At 64 KiB blocks there is a case for it that there was not at 4 MiB.
