@@ -73,9 +73,11 @@ change alone.
 
 ## Pull requests
 
-Say in the PR description that it was written with agent assistance, and link
-the session there. That is the place for it, and it keeps the history clean
-while the provenance stays where a reviewer looks for it.
+Say in the PR description that it was written with agent assistance. Do not
+link the session: a transcript holds the whole of what was said to get there,
+which is more than provenance and not ours to publish. That the description
+says how the change was made is what a reviewer needs; the reasoning behind
+it belongs in the description itself, written out, rather than behind a link.
 
 The title follows the same rule as a commit subject: name the algorithm or
 the structure, not the effect. A pull request doing several things names the
