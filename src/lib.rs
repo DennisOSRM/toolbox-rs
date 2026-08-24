@@ -67,6 +67,7 @@ pub mod one_to_many_dijkstra;
 pub mod overlay;
 pub mod packed_distances;
 pub mod packed_partition;
+pub mod paged_overlay;
 pub mod partition_id;
 pub mod path_based_scc;
 pub mod path_unpacking;

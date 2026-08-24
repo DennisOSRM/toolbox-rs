@@ -117,6 +117,14 @@ pub struct CellTree {
     /// per level, the box each of its cells lies in, and an invalid box for a
     /// cell holding no node with a coordinate
     bounds: Vec<Vec<BoundingBox>>,
+    /// Per level, where each cell's nodes begin, with one past the end last.
+    ///
+    /// The running total of what the cells hold, which is where their nodes
+    /// begin only when the nodes are numbered by cell path: then a cell is one
+    /// run and the runs follow one another in the order the cells are in. Under
+    /// any other numbering these are counts and nothing more, which is why
+    /// [`nodes_begin`](Self::nodes_begin) says what it assumes.
+    begins_node: Vec<Vec<u32>>,
 }
 
 impl CellTree {
@@ -240,8 +248,24 @@ impl CellTree {
             parents.push(above_of.to_vec());
         }
 
+        // where each cell's nodes begin, as a running total of what they hold
+        let begins_node = facts
+            .iter()
+            .map(|holding| {
+                let mut begins = Vec::with_capacity(holding.len() + 1);
+                let mut at = 0_u32;
+                begins.push(0);
+                for cell in holding {
+                    at += cell.nodes;
+                    begins.push(at);
+                }
+                begins
+            })
+            .collect();
+
         Self {
             version: VERSION,
+            begins_node,
             begins_at: partition.level_layout().to_vec(),
             starts,
             children,
@@ -297,6 +321,21 @@ impl CellTree {
         let from = starts[cell as usize] as usize;
         let to = starts[cell as usize + 1] as usize;
         &held[from..to]
+    }
+
+    /// Where a cell's nodes begin.
+    ///
+    /// True only of an instance numbered by cell path, where a cell is one run
+    /// of numbers and the runs follow the cells. Under any other numbering the
+    /// cell holds the same nodes but they are not this run, and a caller that
+    /// asks anyway will be told about nodes belonging to somebody else.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there is no such cell on that level.
+    #[must_use]
+    pub fn nodes_begin(&self, level: usize, cell: CellId) -> u32 {
+        self.begins_node[level][cell as usize]
     }
 
     /// The key of a cell: the path from the root down to it.

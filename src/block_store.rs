@@ -193,6 +193,61 @@ impl BlockStore {
         &self.tree
     }
 
+    /// A whole cell: its table, and which node each place of it is.
+    ///
+    /// The nodes are worked out rather than read. A place is an offset into
+    /// the cell's run of numbers, which the tree says where to find, and on
+    /// the finest level the border nodes are the front of the run so the
+    /// offsets are nought upward and are not stored at all.
+    ///
+    /// # Errors
+    ///
+    /// [`NotRead::NotHere`] where no block holds the cell.
+    pub fn cell_into(
+        &self,
+        level: usize,
+        cell: CellId,
+        table: &mut Vec<u32>,
+        nodes: &mut Vec<u32>,
+    ) -> Result<(), NotRead> {
+        let entry = *self.map.holding_cell(level, cell).ok_or(NotRead::NotHere)?;
+        let block = self.block_at(&entry)?;
+        let widths = self.widths_of(&entry, level);
+        let which = (cell - entry.first_cell) as usize;
+        block.unpack_into(which, &widths, table);
+
+        let begins = self.tree.nodes_begin(level, cell);
+        block.places_into(which, &widths, nodes);
+        if nodes.is_empty() {
+            // the border nodes lead the run, so the places are nought upward
+            nodes.extend((0..widths[which] as u32).map(|at| begins + at));
+        } else {
+            for node in nodes.iter_mut() {
+                *node += begins;
+            }
+        }
+        Ok(())
+    }
+
+    /// Reads and decodes the block an entry names.
+    fn block_at(&self, entry: &crate::block_map::BlockEntry) -> Result<CellBlock, NotRead> {
+        let codec = Codec::of(entry.codec).map_err(|why| NotRead::UnknownCodec(why.0))?;
+        let mut stored = vec![0_u8; entry.stored as usize];
+        read_at(&self.blocks, entry.at, &mut stored)?;
+        let bytes = codec
+            .decode(&stored, entry.unpacked as usize)
+            .map_err(NotRead::Corrupt)?;
+        rkyv::from_bytes::<CellBlock, rkyv::rancor::Error>(&bytes)
+            .map_err(|why| NotRead::Corrupt(why.to_string()))
+    }
+
+    /// How wide each table of a block is, which the tree knows.
+    fn widths_of(&self, entry: &crate::block_map::BlockEntry, level: usize) -> Vec<usize> {
+        (0..entry.cells)
+            .map(|at| self.tree.facts(level, entry.first_cell + at).on_border as usize)
+            .collect()
+    }
+
     /// The distances across one cell, read out of whichever block holds it.
     ///
     /// Into a buffer the caller keeps, since a search asks for one cell after
@@ -209,21 +264,8 @@ impl BlockStore {
         out: &mut Vec<u32>,
     ) -> Result<(), NotRead> {
         let entry = *self.map.holding_cell(level, cell).ok_or(NotRead::NotHere)?;
-        let codec = Codec::of(entry.codec).map_err(|why| NotRead::UnknownCodec(why.0))?;
-
-        let mut stored = vec![0_u8; entry.stored as usize];
-        read_at(&self.blocks, entry.at, &mut stored)?;
-        let bytes = codec
-            .decode(&stored, entry.unpacked as usize)
-            .map_err(NotRead::Corrupt)?;
-        let block = rkyv::from_bytes::<CellBlock, rkyv::rancor::Error>(&bytes)
-            .map_err(|why| NotRead::Corrupt(why.to_string()))?;
-
-        // how wide each table of the block is, which the tree knows and the
-        // block does not carry
-        let widths = (0..entry.cells)
-            .map(|at| self.tree.facts(level, entry.first_cell + at).on_border as usize)
-            .collect::<Vec<_>>();
+        let block = self.block_at(&entry)?;
+        let widths = self.widths_of(&entry, level);
         block.unpack_into((cell - entry.first_cell) as usize, &widths, out);
         Ok(())
     }
