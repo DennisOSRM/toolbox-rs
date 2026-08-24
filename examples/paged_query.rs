@@ -34,6 +34,7 @@ use toolbox_rs::{
     io,
     level_directory::{CellId, LevelDirectory},
     mld_query::MldQuery,
+    node_ordering::NodeOrdering,
     packed_partition::PackedPartition,
     paged_overlay::{Budget, PagedOverlay},
     static_graph::StaticGraph,
@@ -134,7 +135,7 @@ fn pack(
     writer.finish()
 }
 
-fn pairs_of(path: &str) -> Vec<(NodeID, NodeID)> {
+fn pairs_of(path: &str) -> Vec<(NodeID, NodeID, usize)> {
     let mut pairs = Vec::new();
     for line in BufReader::new(File::open(path).expect("the pairs"))
         .lines()
@@ -142,10 +143,12 @@ fn pairs_of(path: &str) -> Vec<(NodeID, NodeID)> {
     {
         let line = line.expect("a line");
         let mut fields = line.split(',');
-        if let (Some(Ok(source)), Some(Ok(target))) =
-            (fields.next().map(str::parse), fields.next().map(str::parse))
-        {
-            pairs.push((source, target));
+        if let (Some(Ok(source)), Some(Ok(target)), Some(Ok(rank))) = (
+            fields.next().map(str::parse),
+            fields.next().map(str::parse),
+            fields.next().map(str::parse),
+        ) {
+            pairs.push((source, target, rank));
         }
     }
     pairs
@@ -167,6 +170,8 @@ fn main() {
     let budgets = argv
         .map(|mib| mib.parse::<usize>().expect("a size in MiB") * MIB)
         .collect::<Vec<_>>();
+    // where to write the timings, if anywhere
+    let writing = std::env::var("TOOLBOX_TIMINGS").ok();
     let budgets = if budgets.is_empty() {
         vec![75 * MIB, 150 * MIB, 300 * MIB, 700 * MIB]
     } else {
@@ -179,19 +184,49 @@ fn main() {
     let graph = StaticGraph::new(edges.clone());
     let partition = PackedPartition::of(&directory);
     let tree = CellTree::of(&directory, &partition, &graph, &coordinates);
-    let pairs = pairs_of(&pairs_path);
+    let mut pairs = pairs_of(&pairs_path);
+    // The pairs are nodes of whatever instance they were drawn on, and this
+    // one has been renumbered, so they name different nodes until they are put
+    // through the numbering that renumber wrote. Without it every pair is a
+    // different pair and the rank beside it belongs to somebody else.
+    match std::env::var("TOOLBOX_ORDERING") {
+        Ok(path) => {
+            let ordering: NodeOrdering = io::read_from_file(&path);
+            for pair in &mut pairs {
+                pair.0 = ordering.new_of(pair.0);
+                pair.1 = ordering.new_of(pair.1);
+            }
+            println!("{} pairs put through the numbering in {path}", pairs.len());
+        }
+        Err(_) => println!(
+            "{} pairs taken as nodes of this instance; set TOOLBOX_ORDERING if they are not",
+            pairs.len()
+        ),
+    }
     println!("{} pairs, {} levels", pairs.len(), tree.levels());
 
     let in_memory = Customization::new(StaticGraph::new(edges.clone()), directory.clone());
     let path = Path::new(&blocks_path);
+    // Everything is customized before anything is timed, whether or not the
+    // store has to be written. The customization works a cell out the first
+    // time it is wanted, so an instance that is not warmed does that work
+    // inside the timed loop and is measured doing it rather than querying --
+    // which is a server that has been running for a while against a device,
+    // and not the comparison anybody wants.
+    let started = Instant::now();
+    for level in 0..tree.levels() {
+        for cell in 0..tree.cells_on_level(level) {
+            let _ = in_memory.distances_of(level, cell as CellId);
+        }
+    }
+    println!(
+        "customized {} cells in memory in {:.1?}",
+        in_memory.customized_cells(),
+        started.elapsed()
+    );
+
     if !path.exists() {
         let started = Instant::now();
-        // everything is customized before anything is written
-        for level in 0..tree.levels() {
-            for cell in 0..tree.cells_on_level(level) {
-                let _ = in_memory.distances_of(level, cell as CellId);
-            }
-        }
         // how large a block is cut, in kibibytes of raw entries
         let target = std::env::var("TOOLBOX_BLOCK_KIB")
             .ok()
@@ -233,19 +268,59 @@ fn main() {
 
         let mut over_file = MldQuery::new();
         let mut over_memory = MldQuery::new();
+        // Both are warmed before either is timed. The customization works a
+        // cell out the first time it is wanted, so an unwarmed first query
+        // pays for forty-three thousand cells; the store reads its first
+        // blocks. Neither is what either engine costs once it is running.
+        let warmup = pairs.len().min(500);
+        for &(source, target, _) in pairs.iter().take(warmup) {
+            over_file.clear();
+            over_file.run(&paged, source, &[target]);
+            over_memory.clear();
+            over_memory.run(&in_memory, source, &[target]);
+        }
+
         let mut took = Vec::with_capacity(pairs.len());
         let mut wrong = 0_u64;
         let before = paged.faults();
-        for &(source, target) in &pairs {
+        // both engines timed over the same pairs, in the shape rank_plot wants
+        let mut timings = String::new();
+        for &(source, target, rank) in &pairs {
             over_file.clear();
             let started = Instant::now();
             over_file.run(&paged, source, &[target]);
-            took.push(started.elapsed().as_nanos() as u64);
+            let paged_nanos = started.elapsed().as_nanos();
+            took.push(paged_nanos as u64);
+
             over_memory.clear();
+            let started = Instant::now();
             over_memory.run(&in_memory, source, &[target]);
-            if over_file.distance(target) != over_memory.distance(target) {
+            let memory_nanos = started.elapsed().as_nanos();
+
+            let (from_file, from_memory) =
+                (over_file.distance(target), over_memory.distance(target));
+            if from_file != from_memory {
                 wrong += 1;
             }
+            if writing.is_some() {
+                use std::fmt::Write;
+                let _ = writeln!(
+                    timings,
+                    "mld,{source},{target},{rank},{memory_nanos},{from_memory}"
+                );
+                let _ = writeln!(
+                    timings,
+                    "paged,{source},{target},{rank},{paged_nanos},{from_file}"
+                );
+            }
+        }
+        if let Some(path) = &writing {
+            use std::io::Write;
+            let name = format!("{path}.{}mib.csv", bytes / MIB);
+            let mut out = File::create(&name).expect("somewhere to write the timings");
+            writeln!(out, "engine,source,target,rank,nanos,distance").expect("a header");
+            out.write_all(timings.as_bytes()).expect("the timings");
+            println!("  wrote {name}");
         }
         took.sort_unstable();
         let faults = paged.faults();
