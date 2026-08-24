@@ -27,11 +27,13 @@
 //! that meant nothing: the same number of them is two megabytes or six hundred
 //! depending on which ones a search happened to want.
 
+use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
 
 use crate::{
     block_store::{BlockStore, NotRead},
     border_levels::BorderLevels,
+    cell_tree::CellTree,
     graph::NodeID,
     level_directory::CellId,
     lru::LRU,
@@ -100,6 +102,73 @@ pub struct Faults {
     pub held: usize,
 }
 
+/// How much room a store may use, and how much of it is never given back.
+///
+/// # Why some levels are held and not cached
+///
+/// The coarse levels are read by every query that goes any distance and there
+/// are few of them: on europe.ptv the top level is 18 MiB unpacked and the
+/// finest is 186. Left to a cache they would be read, thrown away and read
+/// again as the fine levels churned through the same room, and they are
+/// exactly the tables a long query cannot do without.
+///
+/// So the coarse levels are held outright, from the top down, for as many as
+/// fit the share asked for, and what is left of the budget is the cache. Held
+/// tables need no lock and cannot be evicted; the rest take their chances.
+///
+/// Whatever the pinned share does not use goes to the cache rather than being
+/// left idle: a share is a ceiling on what may be held, not a reservation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Budget {
+    /// what the tables may come to in all, in bytes
+    pub bytes: usize,
+    /// the most of it that may be held outright, as a share of the whole
+    pub pinned_share: f64,
+}
+
+impl Budget {
+    /// A budget with half of it available to hold levels outright.
+    #[must_use]
+    pub fn of(bytes: usize) -> Self {
+        Self {
+            bytes,
+            pinned_share: 0.5,
+        }
+    }
+
+    /// The lowest level worth holding outright, and the level count when none
+    /// is: levels from here up are held, levels below are cached.
+    #[must_use]
+    pub fn pin_from(&self, tree: &CellTree) -> usize {
+        let room = (self.bytes as f64 * self.pinned_share.clamp(0.0, 1.0)) as u64;
+        let mut taken = 0_u64;
+        let mut from = tree.levels();
+        for level in (0..tree.levels()).rev() {
+            let wants = tree.unpacked_bytes(level);
+            if taken + wants > room {
+                break;
+            }
+            taken += wants;
+            from = level;
+        }
+        from
+    }
+
+    /// What the held levels come to, and what is left for the cache.
+    #[must_use]
+    pub fn split(&self, tree: &CellTree) -> (u64, usize) {
+        let from = self.pin_from(tree);
+        let pinned = (from..tree.levels())
+            .map(|level| tree.unpacked_bytes(level))
+            .sum::<u64>();
+        (
+            pinned,
+            self.bytes
+                .saturating_sub(usize::try_from(pinned).unwrap_or(usize::MAX)),
+        )
+    }
+}
+
 /// The cells of a partition, read off a file and kept while there is room.
 pub struct PagedOverlay {
     store: BlockStore,
@@ -108,6 +177,10 @@ pub struct PagedOverlay {
     borders: BorderLevels,
     kept: Mutex<Kept>,
     budget: usize,
+    /// the lowest level held outright, and the level count when none is
+    pin_from: usize,
+    /// the held levels, from `pin_from` up, and nothing for a cell with no table
+    pinned: Vec<Vec<Option<Arc<HeldTable>>>>,
 }
 
 struct Kept {
@@ -133,6 +206,8 @@ impl PagedOverlay {
             borders,
             // room for the entries, which the budget in bytes bounds; the
             // count is only what the map is made large enough for
+            pin_from: usize::MAX,
+            pinned: Vec::new(),
             kept: Mutex::new(Kept {
                 tables: LRU::new_with_capacity(1 << 16),
                 bytes: 0,
@@ -140,6 +215,63 @@ impl PagedOverlay {
             }),
             budget,
         }
+    }
+
+    /// Opens a store and holds as many of the coarse levels as the budget
+    /// allows, leaving the rest of it to the cache.
+    ///
+    /// The held levels are read here rather than on the first query, which is
+    /// what a startup pays so that a first query does not.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a level that was to be held cannot be read: a store missing
+    /// what it says it holds is broken rather than sparse.
+    #[must_use]
+    pub fn within(
+        store: BlockStore,
+        graph: StaticGraph<u32>,
+        partition: PackedPartition,
+        borders: BorderLevels,
+        budget: Budget,
+    ) -> Self {
+        let pin_from = budget.pin_from(store.tree());
+        let (_, cache) = budget.split(store.tree());
+        let levels = store.tree().levels();
+
+        let mut held = Self::new(store, graph, partition, borders, cache);
+        held.pinned = (pin_from..levels)
+            .map(|level| {
+                (0..held.store.tree().cells_on_level(level) as CellId)
+                    .into_par_iter()
+                    .map(|cell| match held.read(level, cell) {
+                        Ok(table) => Some(table),
+                        // a cell with no border has no table
+                        Err(NotRead::NotHere) => None,
+                        Err(why) => panic!("a level that was to be held: {why}"),
+                    })
+                    .collect()
+            })
+            .collect();
+        held.pin_from = pin_from;
+        held
+    }
+
+    /// The lowest level held outright, and the level count when none is.
+    #[must_use]
+    pub fn pinned_from(&self) -> usize {
+        self.pin_from
+    }
+
+    /// What the held levels come to.
+    #[must_use]
+    pub fn pinned_bytes(&self) -> usize {
+        self.pinned
+            .iter()
+            .flatten()
+            .flatten()
+            .map(|table| table.bytes())
+            .sum()
     }
 
     /// What has been asked of it so far.
@@ -178,6 +310,16 @@ impl PagedOverlay {
     ///
     /// Panics if another thread failed while holding the cache.
     pub fn table_of(&self, level: usize, cell: CellId) -> Result<Arc<HeldTable>, NotRead> {
+        // a held level needs no lock and cannot have been thrown away
+        if level >= self.pin_from
+            && let Some(held) = self.pinned.get(level - self.pin_from)
+        {
+            return held
+                .get(cell as usize)
+                .and_then(Clone::clone)
+                .ok_or(NotRead::NotHere);
+        }
+
         let key = (u8::try_from(level).map_err(|_| NotRead::NotHere)?, cell);
         {
             let mut kept = self.kept.lock().expect("the cache is poisoned");
@@ -188,23 +330,7 @@ impl PagedOverlay {
             }
         }
 
-        // read outside the lock: a fault is a disk read and a pass of a codec,
-        // and holding the cache through it would stop every other thread
-        let mut matrix = Vec::new();
-        let mut nodes = Vec::new();
-        self.store.cell_into(level, cell, &mut matrix, &mut nodes)?;
-        let wide = nodes.len();
-        let mut transposed = vec![u32::MAX; matrix.len()];
-        for source in 0..wide {
-            for target in 0..wide {
-                transposed[target * wide + source] = matrix[source * wide + target];
-            }
-        }
-        let held = Arc::new(HeldTable {
-            matrix,
-            transposed,
-            nodes,
-        });
+        let held = self.read(level, cell)?;
 
         let mut kept = self.kept.lock().expect("the cache is poisoned");
         kept.faults.misses += 1;
@@ -221,6 +347,28 @@ impl PagedOverlay {
             kept.faults.evicted += 1;
         }
         Ok(held)
+    }
+
+    /// Reads a cell off the file, holding nothing while it does.
+    ///
+    /// A fault is a disk read and a pass of a codec, and holding the cache
+    /// through it would stop every other thread.
+    fn read(&self, level: usize, cell: CellId) -> Result<Arc<HeldTable>, NotRead> {
+        let mut matrix = Vec::new();
+        let mut nodes = Vec::new();
+        self.store.cell_into(level, cell, &mut matrix, &mut nodes)?;
+        let wide = nodes.len();
+        let mut transposed = vec![u32::MAX; matrix.len()];
+        for source in 0..wide {
+            for target in 0..wide {
+                transposed[target * wide + source] = matrix[source * wide + target];
+            }
+        }
+        Ok(Arc::new(HeldTable {
+            matrix,
+            transposed,
+            nodes,
+        }))
     }
 }
 
@@ -451,6 +599,123 @@ mod tests {
         assert!(faults.misses > 0, "nothing was ever read off the file");
         assert!(faults.hits > 0, "nothing was ever found already held");
         assert!(faults.evicted > 0, "the budget was never reached");
+    }
+
+    /// The coarse levels are held and the fine ones are not, and the search
+    /// answers the same either way.
+    #[test]
+    fn a_held_level_is_never_read_twice_and_answers_the_same() {
+        let side = 16;
+        let (edges, directory) = laid_out(side);
+        let graph = StaticGraph::new(edges.clone());
+        let partition = PackedPartition::of(&directory);
+        let coordinates = vec![FPCoordinate::new(0, 0); side * side];
+        let tree = CellTree::of(&directory, &partition, &graph, &coordinates);
+        let in_memory = Customization::new(StaticGraph::new(edges.clone()), directory.clone());
+
+        let held = tempfile::tempdir().expect("a directory to write in");
+        let path = held.path().join("blocks");
+        let map = pack(&in_memory, &tree, &path, 3);
+
+        // room enough for the two coarsest levels and no more
+        let levels = tree.levels();
+        let wanted = tree.unpacked_bytes(levels - 1) + tree.unpacked_bytes(levels - 2);
+        let budget = Budget {
+            bytes: usize::try_from(wanted).expect("a budget of that size") * 2,
+            pinned_share: 0.5,
+        };
+        let pin_from = budget.pin_from(&tree);
+        assert_eq!(pin_from, levels - 2, "two levels were to be held");
+
+        let store = BlockStore::open(&path, map, tree).expect("a store to open");
+        let paged = PagedOverlay::within(
+            store,
+            StaticGraph::new(edges.clone()),
+            PackedPartition::of(&directory),
+            BorderLevels::of(&graph, &partition),
+            budget,
+        );
+        assert_eq!(paged.pinned_from(), pin_from);
+        assert!(paged.pinned_bytes() > 0, "nothing was held");
+
+        // whatever the search does now, a held level is never read again
+        let read_when_held = paged.faults().misses;
+        let mut over_memory = MldQuery::new();
+        let mut over_file = MldQuery::new();
+        for source in (0..side * side).step_by(5) {
+            for target in (0..side * side).step_by(7) {
+                over_memory.clear();
+                over_file.clear();
+                over_memory.run(&in_memory, source, &[target]);
+                over_file.run(&paged, source, &[target]);
+                assert_eq!(
+                    over_memory.distance(target),
+                    over_file.distance(target),
+                    "from {source} to {target}"
+                );
+            }
+        }
+        let faults = paged.faults();
+        assert!(
+            faults.misses > read_when_held,
+            "the levels that were not held were never read"
+        );
+        // every read of a held level would have been a miss, and there are none
+        for level in pin_from..levels {
+            for cell in 0..paged.cells_on_level(level) as CellId {
+                let before = paged.faults().misses;
+                let _ = paged.distances_of(level, cell);
+                assert_eq!(paged.faults().misses, before, "level {level} was read");
+            }
+        }
+    }
+
+    #[test]
+    fn a_budget_too_small_holds_only_what_costs_nothing() {
+        let side = 8;
+        let (edges, directory) = laid_out(side);
+        let graph = StaticGraph::new(edges.clone());
+        let partition = PackedPartition::of(&directory);
+        let coordinates = vec![FPCoordinate::new(0, 0); side * side];
+        let tree = CellTree::of(&directory, &partition, &graph, &coordinates);
+        let budget = Budget {
+            bytes: 8,
+            pinned_share: 0.5,
+        };
+        // The topmost cell holds the whole graph, so no arc leaves it, so it
+        // has no table and costs nothing to hold. A level that costs nothing
+        // fits any budget, so what is asserted is that nothing which costs
+        // anything was held.
+        let from = budget.pin_from(&tree);
+        for level in from..tree.levels() {
+            assert_eq!(
+                tree.unpacked_bytes(level),
+                0,
+                "level {level} was held in eight bytes"
+            );
+        }
+        assert_eq!(budget.split(&tree).0, 0, "nothing with a cost was held");
+    }
+
+    /// What the pinned share does not use is the cache's, not nobody's.
+    #[test]
+    fn room_the_held_levels_do_not_want_goes_to_the_cache() {
+        let side = 8;
+        let (edges, directory) = laid_out(side);
+        let graph = StaticGraph::new(edges.clone());
+        let partition = PackedPartition::of(&directory);
+        let coordinates = vec![FPCoordinate::new(0, 0); side * side];
+        let tree = CellTree::of(&directory, &partition, &graph, &coordinates);
+        let budget = Budget {
+            bytes: 1 << 20,
+            pinned_share: 0.5,
+        };
+        let (pinned, cache) = budget.split(&tree);
+        assert_eq!(
+            cache,
+            budget.bytes - usize::try_from(pinned).expect("a size"),
+            "the cache gets everything the held levels did not"
+        );
     }
 
     #[test]

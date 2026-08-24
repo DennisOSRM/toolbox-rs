@@ -323,6 +323,24 @@ impl CellTree {
         &held[from..to]
     }
 
+    /// What a level's tables come to once read off a file and unpacked.
+    ///
+    /// A table is held as the entries, the same entries transposed for a
+    /// search running backwards, and the node each place of it is. That is
+    /// eight bytes an entry rather than the four a packed one takes, which is
+    /// the price of being read rather than searched: a store that pages is
+    /// bounded by what it holds unpacked, not by what it downloaded.
+    #[must_use]
+    pub fn unpacked_bytes(&self, level: usize) -> u64 {
+        self.facts[level]
+            .iter()
+            .map(|cell| {
+                let wide = u64::from(cell.on_border);
+                wide * wide * 8 + wide * 4
+            })
+            .sum()
+    }
+
     /// Where a cell's nodes begin.
     ///
     /// True only of an instance numbered by cell path, where a cell is one run
