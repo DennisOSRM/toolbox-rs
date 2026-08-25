@@ -28,7 +28,7 @@
 
 use crate::{
     border_levels::BorderLevels,
-    graph::{Graph, NodeID},
+    graph::{Arcs, NodeID},
     level_directory::CellId,
     packed_partition::PackedPartition,
 };
@@ -57,7 +57,7 @@ pub trait CellTable {
 /// Whatever holds the cells a search runs over.
 pub trait Overlay {
     /// the arcs of the graph itself, which a search walks near its ends
-    type Graph: Graph<u32>;
+    type Graph: Arcs<u32>;
 
     /// What [`distances_of`](Self::distances_of) hands out.
     ///

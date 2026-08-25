@@ -6,6 +6,62 @@ pub const INVALID_NODE_ID: NodeID = NodeID::MAX;
 pub const INVALID_EDGE_ID: EdgeID = EdgeID::MAX;
 pub const UNREACHABLE: usize = usize::MAX;
 
+/// What a search asks of a graph.
+///
+/// # Why this is not [`Graph`]
+///
+/// The weight comes back by value, and that is the whole of the difference. A
+/// graph holding its arcs in memory can lend one out and the reference stays
+/// good for as long as the graph does. A graph reading its arcs off a file in
+/// blocks cannot: the block a reference would point into has to be free to be
+/// let go of the moment the room it takes is wanted for another, and a
+/// reference handed out earlier would still be pointing at it.
+///
+/// So a search that means to run over either asks for this, and every
+/// [`Graph`] answers it without being written to.
+pub trait Arcs<T> {
+    fn node_range(&self) -> Range<NodeID>;
+    fn edge_range(&self, n: NodeID) -> Range<EdgeID>;
+    fn number_of_nodes(&self) -> usize;
+    fn number_of_edges(&self) -> usize;
+    fn target(&self, e: EdgeID) -> NodeID;
+    /// What the arc costs, by value.
+    fn weight(&self, e: EdgeID) -> T;
+}
+
+/// Every graph that keeps its arcs answers by lending one and copying it out.
+impl<T: Copy, G: Graph<T>> Arcs<T> for G {
+    #[inline]
+    fn node_range(&self) -> Range<NodeID> {
+        Graph::node_range(self)
+    }
+
+    #[inline]
+    fn edge_range(&self, n: NodeID) -> Range<EdgeID> {
+        Graph::edge_range(self, n)
+    }
+
+    #[inline]
+    fn number_of_nodes(&self) -> usize {
+        Graph::number_of_nodes(self)
+    }
+
+    #[inline]
+    fn number_of_edges(&self) -> usize {
+        Graph::number_of_edges(self)
+    }
+
+    #[inline]
+    fn target(&self, e: EdgeID) -> NodeID {
+        Graph::target(self, e)
+    }
+
+    #[inline]
+    fn weight(&self, e: EdgeID) -> T {
+        *Graph::data(self, e)
+    }
+}
+
 pub trait Graph<T> {
     fn node_range(&self) -> Range<NodeID>;
     fn edge_range(&self, n: NodeID) -> Range<EdgeID>;
