@@ -45,6 +45,18 @@ pub trait Arcs<T> {
             f(self.target(edge), self.weight(edge));
         }
     }
+
+    /// What this graph costs standing still, whatever budget it is under.
+    ///
+    /// A graph holding its arcs costs all of them and cannot be asked for
+    /// less. One reading them off a file costs only what it must keep to find
+    /// a block, and the blocks it holds are a budget rather than a footing.
+    ///
+    /// The default is the first of those, since a graph that does not say
+    /// otherwise is holding what it has.
+    fn standing(&self) -> usize {
+        self.number_of_edges() * 8 + self.number_of_nodes() * 4
+    }
 }
 
 /// Every graph that keeps its arcs answers by lending one and copying it out.

@@ -347,6 +347,11 @@ impl Arcs<u32> for PagedGraph {
             .expect("an arc the graph holds")
     }
 
+    /// Only the index stands: the blocks are a budget, not a footing.
+    fn standing(&self) -> usize {
+        self.index.bytes()
+    }
+
     /// The block is found once and walked, rather than found again for every
     /// arc and again for every weight.
     fn for_each_arc(&self, node: NodeID, mut f: impl FnMut(NodeID, u32)) {
