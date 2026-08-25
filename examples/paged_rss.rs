@@ -268,6 +268,15 @@ fn main() {
 
     // the arrays a search wants, which go with the nodes of the graph and not
     // with the budget: one query is run to make it allocate them
+    // every Nth pair, so a run can be made shorter without losing the spread
+    // of ranks: what RSS does against the number of queries is what says
+    // whether something is growing with the run or standing still
+    if let Ok(stride) = std::env::var("TOOLBOX_PAIR_STRIDE") {
+        let stride: usize = stride.parse().expect("a stride");
+        pairs = pairs.into_iter().step_by(stride.max(1)).collect();
+        println!("every {stride} pairs kept, leaving {}", pairs.len());
+    }
+
     let mut query = SparseMldQuery::new();
     // the ways go into the same pool the arcs and the tables draw on
     let mut unpacker = Unpacker::sharing(Arc::clone(paged.pool()));

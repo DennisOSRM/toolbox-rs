@@ -220,18 +220,27 @@ impl PagedGraph {
 
     /// Reads a block off the file and unpacks it.
     fn read(&self, entry: &BlockEntry) -> Result<HeldArcs, NotRead> {
-        let mut stored = vec![0_u8; entry.stored as usize];
-        read_at(&self.arcs, entry.at, &mut stored)?;
-        let codec = Codec::of(entry.codec).map_err(|_| NotRead::UnknownCodec(entry.codec))?;
-        let bytes = codec
-            .decode(&stored, entry.unpacked as usize)
-            .map_err(NotRead::Corrupt)?;
+        // the room comes out of the free list rather than off the allocator,
+        // which over a run of a few hundred thousand reads is the difference
+        // between a process the size of its budget and one several times that
+        let mut stored = self.pool.take_bytes(entry.stored as usize);
+        let read = read_at(&self.arcs, entry.at, &mut stored);
+        let unpacked = read.and_then(|()| {
+            let codec = Codec::of(entry.codec)
+                .map_err(|_| std::io::Error::other("a codec this does not know"))?;
+            codec
+                .decode(&stored, entry.unpacked as usize)
+                .map_err(std::io::Error::other)
+        });
+        self.pool.give_bytes(stored);
+        let bytes = unpacked.map_err(|why| NotRead::Corrupt(why.to_string()))?;
+
         let block = rkyv::from_bytes::<GraphBlock, rkyv::rancor::Error>(&bytes)
             .map_err(|why| NotRead::Corrupt(why.to_string()))?;
         block
             .check_version()
             .map_err(|found| NotRead::Corrupt(format!("a block written under version {found}")))?;
-        let mut held = HeldArcs::default();
+        let mut held = self.pool.take_arcs();
         block.unpack_into(&mut held);
         Ok(held)
     }

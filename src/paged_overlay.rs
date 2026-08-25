@@ -60,6 +60,13 @@ pub struct HeldTable {
 }
 
 impl HeldTable {
+    /// Empties it, keeping the room, so it can be filled again.
+    pub fn empty(&mut self) {
+        self.matrix.clear();
+        self.transposed.clear();
+        self.nodes.clear();
+    }
+
     /// What it takes up, which is what the budget counts.
     #[must_use]
     pub fn bytes(&self) -> usize {
@@ -584,30 +591,32 @@ impl<G: Arcs<u32> + Sync, B: Borders + Sync> PagedOverlay<G, B> {
 
         let widths = self.store.widths_of(&entry, level);
         let which = (cell - entry.first_cell) as usize;
-        let mut matrix = Vec::new();
-        let mut nodes = Vec::new();
-        block.unpack_into(which, &widths, &mut matrix);
-        block.places_into(which, &widths, &mut nodes);
+        // the room comes out of the free list rather than off the allocator
+        let mut held = self.pool.take_table();
+        let HeldTable {
+            matrix,
+            transposed,
+            nodes,
+        } = &mut held;
+        block.unpack_into(which, &widths, matrix);
+        block.places_into(which, &widths, nodes);
         let begins = self.store.tree().nodes_begin(level, cell);
         if nodes.is_empty() {
             nodes.extend((0..widths[which] as u32).map(|at| begins + at));
         } else {
-            for node in &mut nodes {
+            for node in nodes.iter_mut() {
                 *node += begins;
             }
         }
         let wide = nodes.len();
-        let mut transposed = vec![u32::MAX; matrix.len()];
+        transposed.clear();
+        transposed.resize(matrix.len(), u32::MAX);
         for source in 0..wide {
             for target in 0..wide {
                 transposed[target * wide + source] = matrix[source * wide + target];
             }
         }
-        Ok(Arc::new(HeldTable {
-            matrix,
-            transposed,
-            nodes,
-        }))
+        Ok(Arc::new(held))
     }
 }
 

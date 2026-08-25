@@ -65,7 +65,11 @@ impl Held {
         let held = match self {
             Self::Arcs(arcs) => arcs.bytes(),
             Self::Table(table) => table.bytes(),
-            Self::Block(block) => block.framing_bytes(),
+            // `bytes` and not `framing_bytes`: the framing is what a block
+            // costs beyond its entries, and the entries are nearly all of it.
+            // Counted the other way a sixty four kibibyte block reads as a few
+            // hundred bytes and the pool holds many times its budget.
+            Self::Block(block) => block.bytes(),
             Self::Way(way) => way.capacity() * size_of::<NodeID>(),
         };
         held + size_of::<Key>() + size_of::<Self>() + PER_ENTRY
@@ -87,10 +91,38 @@ pub struct Faults {
     pub highest: usize,
 }
 
+/// How many buffers of each kind to keep for the next read.
+///
+/// A free list and not a cache: it holds nothing anybody wants, only room
+/// somebody is about to want again. A few is enough, since what it is for is
+/// the gap between letting one block go and reading the next.
+const SPARE: usize = 16;
+
+/// Buffers kept to be filled again.
+///
+/// # Why the room is kept when the contents are not
+///
+/// A block read builds three or four vectors, fills them, and gives them back
+/// when the block is let go of. Over a run of a few hundred thousand reads
+/// that is a million allocations of up to sixty four kibibytes apiece, and an
+/// allocator handed that pattern fragments and does not give the pages back:
+/// a pool that never holds more than its budget can still sit inside a process
+/// several times that size.
+///
+/// So the vectors are not dropped. On the way out of the cache they are
+/// emptied and put here, and the next read fills them again.
+#[derive(Default)]
+struct Scrap {
+    arcs: Vec<HeldArcs>,
+    tables: Vec<HeldTable>,
+    bytes: Vec<Vec<u8>>,
+}
+
 struct Inside {
     kept: LRU<Key, Held>,
     bytes: usize,
     faults: Faults,
+    scrap: Scrap,
 }
 
 /// A byte-budgeted cache shared by everything that reads.
@@ -111,6 +143,7 @@ impl Pool {
                 kept: LRU::new_with_capacity(1 << 18),
                 bytes: 0,
                 faults: Faults::default(),
+                scrap: Scrap::default(),
             }),
         })
     }
@@ -165,17 +198,80 @@ impl Pool {
         {
             inside.bytes -= gone.bytes();
             inside.faults.evicted += 1;
+            recycle(&mut inside.scrap, gone);
         }
         inside.kept.push(&key, held);
         inside.bytes += cost;
         inside.faults.highest = inside.faults.highest.max(inside.bytes);
     }
 
-    /// Lets go of everything.
+    /// Lets go of everything, keeping the room for what comes next.
     pub fn forget(&self) {
         let mut inside = self.inside.lock().expect("the pool");
+        while let Some((_, gone)) = inside.kept.pop_lru() {
+            recycle(&mut inside.scrap, gone);
+        }
         inside.kept.clear();
         inside.bytes = 0;
+    }
+
+    /// A block of arcs to fill, emptied and with whatever room it had kept.
+    #[must_use]
+    pub fn take_arcs(&self) -> HeldArcs {
+        let mut inside = self.inside.lock().expect("the pool");
+        inside.scrap.arcs.pop().unwrap_or_default()
+    }
+
+    /// A table to fill, on the same terms.
+    #[must_use]
+    pub fn take_table(&self) -> HeldTable {
+        let mut inside = self.inside.lock().expect("the pool");
+        inside.scrap.tables.pop().unwrap_or_default()
+    }
+
+    /// A run of bytes at least this long, for reading a block off the file.
+    ///
+    /// It comes back the length asked for and holding nothing worth reading.
+    #[must_use]
+    pub fn take_bytes(&self, want: usize) -> Vec<u8> {
+        let mut held = {
+            let mut inside = self.inside.lock().expect("the pool");
+            inside.scrap.bytes.pop().unwrap_or_default()
+        };
+        held.clear();
+        held.resize(want, 0);
+        held
+    }
+
+    /// Hands a run of bytes back, where there is room to keep it.
+    pub fn give_bytes(&self, mut held: Vec<u8>) {
+        let mut inside = self.inside.lock().expect("the pool");
+        if inside.scrap.bytes.len() < SPARE {
+            held.clear();
+            inside.scrap.bytes.push(held);
+        }
+    }
+}
+
+/// Empties what is being let go of into the free list, where there is room.
+///
+/// Only what nobody else is holding: a caller may still have the thing that
+/// was evicted, and the room is not free until it is done with it.
+fn recycle(scrap: &mut Scrap, gone: Held) {
+    match gone {
+        Held::Arcs(arcs) if scrap.arcs.len() < SPARE => {
+            if let Some(mut held) = Arc::into_inner(arcs) {
+                held.empty();
+                scrap.arcs.push(held);
+            }
+        }
+        Held::Table(table) if scrap.tables.len() < SPARE => {
+            if let Some(mut held) = Arc::into_inner(table) {
+                held.empty();
+                scrap.tables.push(held);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -229,6 +325,41 @@ mod tests {
             pool.get(&Key::Arcs(0)).is_none(),
             "the ways did not push the arcs out"
         );
+    }
+
+    /// The one this is for: a run of reads asks the allocator for the room
+    /// once and then keeps handing the same buffers round.
+    #[test]
+    fn the_room_a_read_wants_comes_back_from_the_one_before_it() {
+        let pool = Pool::of(4 * 1024);
+
+        // a run of blocks, each pushing the last out
+        let mut seen = Vec::new();
+        for at in 0..32 {
+            let mut held = pool.take_arcs();
+            held.pretend(64);
+            seen.push(held.bytes());
+            pool.put(Key::Arcs(at), Held::Arcs(Arc::new(held)));
+        }
+        assert!(pool.faults().evicted > 0, "nothing was let go of");
+
+        // and the room comes back rather than being asked for again
+        let recycled = pool.take_arcs();
+        assert!(recycled.spare() > 0, "a buffer came back with no room kept");
+        assert_eq!(recycled.edges(), 0, "and it came back holding something");
+    }
+
+    #[test]
+    fn a_run_of_bytes_comes_back_the_length_asked_for_and_empty() {
+        let pool = Pool::of(1 << 20);
+        let mut first = pool.take_bytes(100);
+        assert_eq!(first.len(), 100);
+        first[0] = 7;
+        pool.give_bytes(first);
+
+        let second = pool.take_bytes(40);
+        assert_eq!(second.len(), 40, "a different length than was asked for");
+        assert!(second.iter().all(|&byte| byte == 0), "it held something");
     }
 
     #[test]
