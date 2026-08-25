@@ -103,6 +103,29 @@ impl BorderLevels {
         usize::from(self.of_edge[edge]) > level
     }
 
+    /// The bytes themselves, one an arc, for writing into a store.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.of_edge
+    }
+
+    /// Takes back what [`as_bytes`](Self::as_bytes) wrote.
+    ///
+    /// This is what an instance does instead of working the levels out: they
+    /// are settled once when the store is packed and do not change again, and
+    /// working them out means walking every arc of the graph, which is the one
+    /// thing a store that pages its arcs was built not to do.
+    #[must_use]
+    pub fn of_bytes(of_edge: Vec<u8>) -> Self {
+        Self { of_edge }
+    }
+
+    /// What this takes: a byte an arc.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        self.of_edge.capacity()
+    }
+
     /// The highest level at which the arc leaves a cell, and `None` for one
     /// whose ends sit in the same cell on every level.
     ///

@@ -27,7 +27,6 @@ use toolbox_rs::{
     paged_graph::PagedGraph,
     paged_overlay::{Budget, Footing, PagedOverlay},
     path_unpacking::Unpacker,
-    static_graph::StaticGraph,
 };
 
 const MIB: f64 = (1024 * 1024) as f64;
@@ -95,7 +94,7 @@ fn main() {
             panic!("usage: paged_rss <graph> <directory> <pairs> <blocks> [MiB]: missing {what}")
         })
     };
-    let graph_path = next("graph");
+    let _graph_path = next("graph");
     let directory_path = next("directory");
     let pairs_path = next("pairs");
     let blocks_path = next("blocks");
@@ -109,8 +108,10 @@ fn main() {
     let start = resident();
     println!("{:<38} {:>9.1} MiB", "an empty process", start as f64 / MIB);
 
-    let graph = StaticGraph::new(io::read_edges_from_file(&graph_path));
-    let mut at = report("the graph", start);
+    // No graph is read at all. It was here for the border levels, which are
+    // now written down when the store is packed and read back, and nothing
+    // else an instance does wants every arc at once.
+    let mut at = report("no graph is read", start);
 
     // The directory is what the partition and the border levels are built out
     // of, and neither keeps it, so an offline instance drops it here. It is
@@ -235,7 +236,14 @@ fn main() {
     }
     let store = BlockStore::open(Path::new(&blocks_path), map, tree).expect("a store");
     let opening = Instant::now();
-    let border_levels = BorderLevels::of(&graph, &partition);
+    // read back rather than walked: the levels were settled when the store was
+    // packed and working them out again means touching every arc of a graph
+    // that is on a file
+    let border_map: BlockMap = io::read_from_file(&format!("{arcs}.borders.map"));
+    let border_levels = BorderLevels::of_bytes(
+        toolbox_rs::paged_graph::read_borders(Path::new(&format!("{arcs}.borders")), &border_map)
+            .expect("the border levels"),
+    );
     let paged = PagedOverlay::within(store, paged_arcs, partition, border_levels, budget);
     let open = opening.elapsed();
     at = report("the held levels, read and unpacked", at);
@@ -294,7 +302,11 @@ fn main() {
         footing.partition,
         "a run a cell, not a word a node",
     );
-    line("the border levels", nodes, "one byte a node");
+    line(
+        "the border levels",
+        footing.border_levels,
+        "one byte an arc, read and not walked",
+    );
     line("the block map", map_bytes, "one entry a block");
     line("the cell tree", tree_bytes, "one entry a cell");
     line("the cell tables", tables, "<- the budget governs this one");

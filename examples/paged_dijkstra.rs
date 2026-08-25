@@ -16,6 +16,7 @@ use std::{env::args, fs::File, io::Write, path::Path, time::Instant};
 use toolbox_rs::{
     block_codec::Codec,
     block_map::BlockMap,
+    border_levels::BorderLevels,
     cell_tree::CellTree,
     geometry::FPCoordinate,
     graph::{Graph, NodeID},
@@ -24,7 +25,7 @@ use toolbox_rs::{
     node_ordering::NodeOrdering,
     one_to_many_dijkstra::OneToManyDijkstra,
     packed_partition::PackedPartition,
-    paged_graph::{PagedGraph, pack},
+    paged_graph::{PagedGraph, pack, pack_borders},
     static_graph::StaticGraph,
 };
 
@@ -118,6 +119,24 @@ fn main() {
         );
         io::write_to_file(&format!("{arcs_path}.map"), &map);
         io::write_vec_to_file(&index_path, &first_edges);
+        // and the border levels beside them, so that opening the store never
+        // has to walk the arcs to work them out again
+        let started = Instant::now();
+        let walked = BorderLevels::of(&graph, &partition);
+        let borders = pack_borders(
+            walked.as_bytes(),
+            &first_edges,
+            Path::new(&format!("{arcs_path}.borders")),
+            Codec::Lz4,
+            3,
+        )
+        .expect("the border levels to pack");
+        io::write_to_file(&format!("{arcs_path}.borders.map"), &borders);
+        println!(
+            "packed the border levels into {} blocks in {:.1?}",
+            borders.len(),
+            started.elapsed()
+        );
         (map, first_edges)
     };
 

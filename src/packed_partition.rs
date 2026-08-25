@@ -53,33 +53,70 @@ thread_local! {
     ///
     /// A search settles a node and then another, and the nodes of a cell are a
     /// run, so the two are usually in the same one. This is only a shortcut:
-    /// where it holds nothing, or another partition's run, the search is done.
+    /// where it holds nothing, or another partition's run, the run is looked
+    /// up in the ordinary way.
     static RECENT: Cell<Option<(usize, u32, u32, u128)>> = const { Cell::new(None) };
 }
 
-/// Writes a sorted run of entries down in Eytzinger order.
+/// Room past the last word, so a read of a whole word from the last one does
+/// not run off the end and does not have to be checked for.
+const SPILL: usize = 32;
+
+/// The narrowest and widest a bucket may be, as a power of two nodes.
 ///
-/// Walked in order, `k`, `2k`, `2k + 1` visits the entries smallest first, so
-/// filling them in that order puts each where a search will look for it.
-fn lay_out(
-    k: usize,
-    runs: usize,
-    at: &mut usize,
-    from: &[(u32, u32, u128)],
-    begins: &mut [u32],
-    ends: &mut [u32],
-    words: &mut [u128],
-) {
-    if k > runs {
-        return;
+/// Narrow buckets are more of them; wide ones are a longer walk. Between these
+/// the width is chosen from the graph, so that a bucket holds about one run.
+const NARROWEST: u32 = 4;
+const WIDEST: u32 = 16;
+
+/// Puts a word down at a bit offset.
+fn write_word(packed: &mut [u8], at: u64, width: u32, value: u128) {
+    let byte = (at / 8) as usize;
+    let shift = (at % 8) as u32;
+    let mask = if width >= BITS {
+        u128::MAX
+    } else {
+        (1_u128 << width) - 1
+    };
+    let value = value & mask;
+
+    // a word straddles at most seventeen bytes, which two overlapping sixteen
+    // byte reads cover
+    let low = u128::from_le_bytes(packed[byte..byte + 16].try_into().expect("sixteen bytes"));
+    packed[byte..byte + 16].copy_from_slice(&(low | (value << shift)).to_le_bytes());
+    if shift > 0 {
+        let over = value >> (BITS - shift);
+        if over != 0 {
+            let high = u128::from_le_bytes(
+                packed[byte + 16..byte + 32]
+                    .try_into()
+                    .expect("sixteen bytes"),
+            );
+            packed[byte + 16..byte + 32].copy_from_slice(&(high | over).to_le_bytes());
+        }
     }
-    lay_out(2 * k, runs, at, from, begins, ends, words);
-    let (first, upto, word) = from[*at];
-    begins[k] = first;
-    ends[k] = upto;
-    words[k] = word;
-    *at += 1;
-    lay_out(2 * k + 1, runs, at, from, begins, ends, words);
+}
+
+/// Picks a word back up from a bit offset.
+#[inline]
+fn read_word(packed: &[u8], at: u64, width: u32) -> u128 {
+    let byte = (at / 8) as usize;
+    let shift = (at % 8) as u32;
+    let low = u128::from_le_bytes(packed[byte..byte + 16].try_into().expect("sixteen bytes"));
+    let mut held = low >> shift;
+    if shift > 0 {
+        let high = u128::from_le_bytes(
+            packed[byte + 16..byte + 32]
+                .try_into()
+                .expect("sixteen bytes"),
+        );
+        held |= high << (BITS - shift);
+    }
+    if width >= BITS {
+        held
+    } else {
+        held & ((1_u128 << width) - 1)
+    }
 }
 
 /// The cell each node sits in on every level.
@@ -90,44 +127,56 @@ fn lay_out(
 /// parent, and in its parent's parent: the whole word is the same for all of
 /// them. The nodes were renumbered so that a cell's nodes are a run, which is
 /// what let a cell table be found by a range and a block of arcs be keyed by
-/// one. It does the same thing here: the words come in runs, and a run is
-/// worth storing once.
-///
-/// On a continent that is six hundred thousand runs against eighteen million
-/// nodes. A partition that took a hundred and sixty three mebibytes takes
-/// fourteen.
+/// one. It does the same thing here, and the words come in runs worth storing
+/// once. On a continent that is five hundred thousand runs against eighteen
+/// million nodes.
 ///
 /// Where the numbering is *not* in cell order this still holds -- a run is
-/// ended wherever the word changes, and in the worst case there is one a node,
-/// which is what the old layout was. It costs correctness nothing and saves
-/// nothing.
+/// ended wherever the word changes, and at worst there is one a node, which is
+/// what a word a node was. It costs correctness nothing and saves nothing.
 ///
-/// # Why the runs are laid out the way they are
+/// # A word is as wide as its levels ask for
 ///
-/// A node is turned back into its run by looking for the last run that begins
-/// at or before it, which is a binary search. Laid out in order, that search
-/// touches a different cache line at every step and the last few steps are the
-/// only ones that were ever going to be near each other.
+/// A word is handed out as a `u128`, because that is what the shifting and the
+/// exclusive or want. It is stored in the bits the levels actually ask for,
+/// which on a continent cut into six is seventy six of the hundred and twenty
+/// eight.
 ///
-/// So they are laid out in Eytzinger order instead: the array is the binary
-/// search tree written down breadth first, so the root is first, its two
-/// children next to each other after it, their four children after those. The
-/// steps a search takes are `k`, `2k`, `4k` -- reads that walk forward through
-/// memory rather than halving their way across it, and the first several steps
-/// share a cache line.
+/// # Finding the run without searching for it
 ///
-/// # And most searches do not happen
+/// A node is turned back into its run by finding the last run that begins at
+/// or before it. That is a binary search, and there are two ways to make one
+/// fast: lay the array out so the search is cache friendly, or arrange not to
+/// search.
+///
+/// This does the second. Alongside the runs is one entry for every block of
+/// `1 << shift` nodes, saying which run was current where that block began,
+/// with the width picked so a block holds about one run. A lookup reads its
+/// block's entry and walks forward over the runs that began inside it, which
+/// is usually none and rarely more than a few, and those runs are next to each
+/// other in memory.
+///
+/// So it is two reads and a short forward walk, against the twenty dependent
+/// reads a binary search over five hundred thousand runs takes however they
+/// are laid out. An Eytzinger layout makes those twenty reads walk forward
+/// instead of halving across memory, which is a real improvement on a search
+/// and no improvement at all on not searching.
+///
+/// # And most lookups do not reach any of that
 ///
 /// A search settles a node and then another, and the nodes of a cell are a
 /// run, so the next node is very often in the run just used. Each thread keeps
 /// the last run it wanted, which turns the common case into two comparisons.
 pub struct PackedPartition {
-    /// where each run begins and ends, and the word every node of it has, all
-    /// three in Eytzinger order and all three one based: entry zero is unused
-    /// so that the children of `k` are `2k` and `2k + 1`
+    /// where each run begins, in order, with one past the last node on the end
+    /// so that a run is `begins[r]..begins[r + 1]`
     begins: Vec<u32>,
-    ends: Vec<u32>,
-    words: Vec<u128>,
+    /// the word of each run, laid end to end at `width` bits apiece
+    words: Vec<u8>,
+    /// which run was current where each block of `1 << shift` nodes began
+    buckets: Vec<u32>,
+    /// how wide a block of nodes a bucket stands for, as a power of two
+    shift: u32,
     /// how many runs there are
     runs: usize,
     nodes: usize,
@@ -204,40 +253,56 @@ impl PackedPartition {
             word
         };
 
-        let mut sorted: Vec<(u32, u32, u128)> = Vec::new();
+        // the runs, in order, and the word each of them has
+        let mut begins: Vec<u32> = Vec::new();
+        let mut of_run: Vec<u128> = Vec::new();
+        let mut last: Option<u128> = None;
         for node in 0..nodes {
             let word = word_of(node);
-            let at = u32::try_from(node).expect("a node in four bytes");
-            match sorted.last_mut() {
-                Some((_, upto, held)) if *held == word => *upto = at + 1,
-                _ => sorted.push((at, at + 1, word)),
+            if last != Some(word) {
+                begins.push(u32::try_from(node).expect("a node in four bytes"));
+                of_run.push(word);
+                last = Some(word);
             }
         }
+        let runs = of_run.len();
+        // one past the last node, so a run is always a span between two entries
+        begins.push(u32::try_from(nodes).expect("a graph in four bytes"));
 
-        let runs = sorted.len();
-        let mut begins = vec![0_u32; runs + 1];
-        let mut ends = vec![0_u32; runs + 1];
-        let mut words = vec![0_u128; runs + 1];
-        let mut placed = 0;
-        lay_out(
-            1,
-            runs,
-            &mut placed,
-            &sorted,
-            &mut begins,
-            &mut ends,
-            &mut words,
-        );
-        debug_assert_eq!(placed, runs, "a run was not laid out");
-        drop(sorted);
+        let width = at.max(1);
+        let mut words = vec![0_u8; (runs as u64 * u64::from(width)).div_ceil(8) as usize + SPILL];
+        for (run, &word) in of_run.iter().enumerate() {
+            write_word(&mut words, run as u64 * u64::from(width), width, word);
+        }
+        drop(of_run);
+
+        // A bucket for about every run: narrower is more of them and wider is
+        // a longer walk, and one run apiece is where the two meet.
+        let shift = nodes.checked_div(runs).map_or(NARROWEST, |apiece| {
+            apiece
+                .next_power_of_two()
+                .trailing_zeros()
+                .clamp(NARROWEST, WIDEST)
+        });
+        let mut buckets = vec![0_u32; (nodes >> shift) + 2];
+        let mut run = 0_usize;
+        for (bucket, held) in buckets.iter_mut().enumerate() {
+            let first = (bucket << shift) as u32;
+            // the last run that had begun by the time this block of nodes did
+            while run + 1 < runs && begins[run + 1] <= first {
+                run += 1;
+            }
+            *held = u32::try_from(run).expect("a run count in four bytes");
+        }
 
         Self {
             begins,
-            ends,
             words,
+            buckets,
+            shift,
             runs,
             nodes,
-            width: at.max(1),
+            width,
             which: NEXT_PARTITION.fetch_add(1, Ordering::Relaxed),
             begins_at,
             level_of_bit,
@@ -273,10 +338,16 @@ impl PackedPartition {
     #[must_use]
     pub fn bytes(&self) -> usize {
         self.begins.capacity() * size_of::<u32>()
-            + self.ends.capacity() * size_of::<u32>()
-            + self.words.capacity() * size_of::<u128>()
+            + self.words.capacity()
+            + self.buckets.capacity() * size_of::<u32>()
             + self.level_of_bit.capacity()
             + self.begins_at.capacity() * size_of::<u32>()
+    }
+
+    /// How wide a block of nodes a bucket of the index stands for.
+    #[must_use]
+    pub fn bucket_shift(&self) -> u32 {
+        self.shift
     }
 
     /// How many bits a word is stored in.
@@ -306,27 +377,20 @@ impl PackedPartition {
             return word;
         }
 
-        // Eytzinger: the tree is walked from its root, going right where a run
-        // begins at or before the node and left where it begins after, and the
-        // last one gone right at is the run wanted
-        let mut k = 1;
-        let mut found = 0;
-        while k <= self.runs {
-            if self.begins[k] <= node {
-                found = k;
-                k = 2 * k + 1;
-            } else {
-                k *= 2;
-            }
+        // otherwise the bucket this node's block of nodes falls in, and then
+        // forward over whichever runs began inside that block
+        let mut run = self.buckets[(node >> self.shift) as usize] as usize;
+        while run + 1 < self.runs && self.begins[run + 1] <= node {
+            run += 1;
         }
-        assert!(found > 0, "no run holds node {node}");
+        let word = read_word(&self.words, run as u64 * u64::from(self.width), self.width);
         RECENT.set(Some((
             self.which,
-            self.begins[found],
-            self.ends[found],
-            self.words[found],
+            self.begins[run],
+            self.begins[run + 1],
+            word,
         )));
-        self.words[found]
+        word
     }
 
     /// How many runs the partition came to.
@@ -429,6 +493,10 @@ mod tests {
         let packed = PackedPartition::of(&directory);
         let nodes = directory.number_of_nodes();
 
+        assert!(
+            packed.bucket_shift() >= NARROWEST && packed.bucket_shift() <= WIDEST,
+            "the bucket width was not chosen from the graph"
+        );
         assert!(
             packed.runs() < nodes,
             "{} runs against {nodes} nodes",

@@ -168,7 +168,7 @@ pub struct Footing {
     pub graph: u64,
     /// the bits the levels of the partition ask for, a node
     pub partition: u64,
-    /// one byte a node
+    /// one byte an arc
     pub border_levels: u64,
     /// one entry a block, and one a cell
     pub block_map: u64,
@@ -218,7 +218,8 @@ impl Footing {
             // arcs where it holds them and only an index where it pages them
             graph: graph.standing() as u64,
             partition: partition_bytes,
-            border_levels: nodes,
+            // a byte an arc, not a byte a node: it is a property of the arc
+            border_levels: graph.number_of_edges() as u64,
             block_map: blocks as u64 * size_of::<BlockEntry>() as u64,
             cell_tree: (0..tree.levels())
                 .map(|level| tree.cells_on_level(level) as u64 * size_of::<CellFacts>() as u64)

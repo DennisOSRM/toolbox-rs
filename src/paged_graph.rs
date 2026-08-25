@@ -449,6 +449,72 @@ impl ArcWriter {
     }
 }
 
+/// What the border levels are filed under, since they are neither cells nor
+/// runs of arcs.
+const BORDERS: u8 = u8::MAX - 1;
+
+/// Writes the border levels out as blocks, one for each block of arcs.
+///
+/// A border level is a byte an arc saying the highest level at which the arc
+/// leaves the cell of its source. It is settled when the store is packed and
+/// does not change, and working it out means walking every arc of the graph --
+/// which is the one thing a store that pages its arcs was built not to do. So
+/// it is written down instead, through the same [`BlockWriter`] and the same
+/// codec as everything else, cut on the same block boundaries as the arcs.
+///
+/// # Errors
+///
+/// Returns whatever went wrong writing the file.
+pub fn pack_borders(
+    levels: &[u8],
+    first_edges: &[u64],
+    path: &Path,
+    codec: Codec,
+    effort: i32,
+) -> std::io::Result<BlockMap> {
+    let mut writer = BlockWriter::create(path)?;
+    for (block, span) in first_edges.windows(2).enumerate() {
+        let (from, upto) = (span[0] as usize, span[1] as usize);
+        writer.push_bytes(
+            &levels[from..upto],
+            BORDERS,
+            (from as u128, upto.saturating_sub(1) as u128),
+            (
+                u32::try_from(block).expect("a block count in four bytes"),
+                1,
+            ),
+            (
+                u32::try_from(from).expect("an arc in four bytes"),
+                u32::try_from(upto - from).expect("a run of arcs in four bytes"),
+            ),
+            codec,
+            effort,
+        )?;
+    }
+    writer.finish()
+}
+
+/// Reads back what [`pack_borders`] wrote, in one run a byte an arc.
+///
+/// # Errors
+///
+/// Returns whatever went wrong reading it.
+pub fn read_borders(path: &Path, map: &BlockMap) -> Result<Vec<u8>, NotRead> {
+    let file = File::open(path)?;
+    let mut levels = Vec::new();
+    for entry in map.entries() {
+        let mut stored = vec![0_u8; entry.stored as usize];
+        read_at(&file, entry.at, &mut stored)?;
+        let codec = Codec::of(entry.codec).map_err(|_| NotRead::UnknownCodec(entry.codec))?;
+        levels.extend_from_slice(
+            &codec
+                .decode(&stored, entry.unpacked as usize)
+                .map_err(NotRead::Corrupt)?,
+        );
+    }
+    Ok(levels)
+}
+
 /// Packs a graph into blocks of about so many arcs apiece.
 ///
 /// `arcs_in_a_block` sets how much a read brings back: eight bytes an arc
@@ -635,6 +701,45 @@ mod tests {
             let first = read.index().block_of_edge(range.start);
             let last = read.index().block_of_edge(range.end - 1);
             assert_eq!(first, last, "node {node} is split across blocks");
+        }
+    }
+
+    /// The border levels are written down when the store is packed and read
+    /// back, rather than worked out by walking every arc of a graph that is on
+    /// a file.
+    #[test]
+    fn the_border_levels_read_back_as_the_walk_would_have_found_them() {
+        use crate::{
+            border_levels::BorderLevels, grid_graph::grid_directory,
+            packed_partition::PackedPartition,
+        };
+
+        let side = 16;
+        let graph = grid(side);
+        let directory = grid_directory(side);
+        let partition = PackedPartition::of(&directory);
+        let walked = BorderLevels::of(&graph, &partition);
+
+        let held = tempfile::tempdir().expect("a directory to write in");
+        let arcs = held.path().join("arcs");
+        let (_, first_edges) =
+            pack(&graph, None, &arcs, 64, Codec::Lz4, 3).expect("a graph to pack");
+        let borders = held.path().join("borders");
+        let map = pack_borders(walked.as_bytes(), &first_edges, &borders, Codec::Lz4, 3)
+            .expect("the levels to pack");
+        assert!(map.len() > 1, "the pack is worth checking");
+
+        let read = BorderLevels::of_bytes(read_borders(&borders, &map).expect("the levels"));
+        assert_eq!(read.len(), walked.len(), "a different number of arcs");
+        for edge in 0..walked.len() {
+            assert_eq!(read.highest_of(edge), walked.highest_of(edge), "arc {edge}");
+            for level in 0..directory.levels() {
+                assert_eq!(
+                    read.leaves_cell(edge, level),
+                    walked.leaves_cell(edge, level),
+                    "arc {edge} at level {level}"
+                );
+            }
         }
     }
 
