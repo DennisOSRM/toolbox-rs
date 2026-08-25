@@ -68,6 +68,7 @@ pub mod one_to_many_dijkstra;
 pub mod overlay;
 pub mod packed_distances;
 pub mod packed_partition;
+pub mod paged_array;
 pub mod paged_graph;
 pub mod paged_overlay;
 pub mod partition_id;

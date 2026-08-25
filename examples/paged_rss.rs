@@ -18,7 +18,6 @@ use toolbox_rs::{
     cell_tree::CellTree,
     graph::{Arcs, NodeID},
     io,
-    level_directory::LevelDirectory,
     mld_query::SparseMldQuery,
     node_ordering::NodeOrdering,
     overlay::Overlay,
@@ -26,6 +25,7 @@ use toolbox_rs::{
     paged_graph::{GraphIndex, PagedGraph},
     paged_overlay::{Budget, Footing, PagedOverlay},
     path_unpacking::Unpacker,
+    pool::Pool,
 };
 
 const MIB: f64 = (1024 * 1024) as f64;
@@ -133,7 +133,7 @@ fn main() {
         })
     };
     let _graph_path = next("graph");
-    let directory_path = next("directory");
+    let _directory_path = next("directory");
     let pairs_path = next("pairs");
     let blocks_path = next("blocks");
     let bytes = argv
@@ -151,16 +151,20 @@ fn main() {
     // else an instance does wants every arc at once.
     let mut at = report("no graph is read", start);
 
-    // The directory is what the partition and the border levels are built out
-    // of, and neither keeps it, so an offline instance drops it here. It is
-    // counted anyway, since a process that opens a store has to hold it for as
-    // long as it takes to build the two.
-    let partition = {
-        let directory: LevelDirectory = io::read_from_file(&directory_path);
-        at = report("  ... and the level directory", at);
-        PackedPartition::of(&directory)
-    };
-    at = report("the partition, directory dropped", at);
+    // No directory is read either. The partition was settled when the store
+    // was packed, and building it from a directory means reading seventy one
+    // mebibytes of one to throw it away again -- which puts the high-water
+    // mark of the process above anything it goes on to hold.
+    let early = Pool::of(4 * toolbox_rs::paged_array::BLOCK_BYTES);
+    let partition = PackedPartition::open(
+        Path::new(&format!(
+            "{}.partition",
+            std::env::var("TOOLBOX_ARCS").unwrap_or_default()
+        )),
+        &early,
+    )
+    .expect("a partition beside the arcs");
+    at = report("the partition, read not built", at);
     println!(
         "  the partition is {} runs over {} nodes, {:.1} MiB",
         partition.runs(),
@@ -184,12 +188,14 @@ fn main() {
     }
 
     let map: BlockMap = io::read_from_file(&format!("{blocks_path}.map"));
-    let mut tree: CellTree = io::read_from_file(&format!("{blocks_path}.tree"));
-    // A query asks a tree where a cell's nodes begin and how wide it is, and
-    // nothing else. The children, the parents and the boxes are for building
-    // one and for asking what lies where, and an instance that only answers
-    // routes has no use for them.
-    tree.trim_for_queries();
+    // The tree written beside the arcs is already the query half: reading the
+    // whole one to throw the build half away would put twenty two mebibytes
+    // through the process on the way to holding seven.
+    let arcs = std::env::var("TOOLBOX_ARCS").unwrap_or_else(|_| {
+        panic!("set TOOLBOX_ARCS to a pack of arcs; this measures an instance that pages both")
+    });
+    let tree: CellTree = io::read_from_file(&format!("{arcs}.tree"));
+    assert!(!tree.whole(), "the tree beside the arcs was not trimmed");
     at = report("the block map and the cell tree", at);
     for (part, bytes) in tree.bytes_by_part() {
         println!("    the tree's {part:<12} {:>7.1} MiB", bytes as f64 / MIB);
@@ -209,7 +215,12 @@ fn main() {
 
     let budget = Budget {
         bytes,
-        pinned_share: 0.5,
+        // levels held outright are read at open and never let go of, so a run
+        // that must never exceed its budget while starting up may want none
+        pinned_share: std::env::var("TOOLBOX_PIN_SHARE")
+            .ok()
+            .and_then(|share| share.parse().ok())
+            .unwrap_or(0.5),
     };
     // Where a pack of the arcs is at hand, the graph pages too and the footing
     // stands for its index rather than for its arcs.

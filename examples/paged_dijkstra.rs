@@ -130,6 +130,17 @@ fn main() {
         );
         io::write_to_file(&format!("{arcs_path}.map"), &map);
         io::write_vec_to_file(&index_path, &first_edges);
+        // the level information, settled once here so that opening an instance
+        // never reads a directory it is going to throw away
+        partition
+            .save(Path::new(&format!("{arcs_path}.partition")))
+            .expect("a partition to write");
+        // and the query half of the cell tree, so that opening an instance
+        // never reads the build half to throw it away
+        let mut trimmed = tree.clone();
+        trimmed.trim_for_queries();
+        io::write_to_file(&format!("{arcs_path}.tree"), &trimmed);
+        println!("wrote the partition and the trimmed tree beside the arcs");
         (map, first_edges)
     };
 

@@ -43,6 +43,8 @@ pub enum Key {
     Block(u8, CellId),
     /// a way already put back, by its ends and the level it crosses
     Way(u32, u32, u8),
+    /// a block of a fixed-width array, by which array and which block
+    Array(u16, u32),
 }
 
 /// What one thing in the pool is.
@@ -52,6 +54,8 @@ pub enum Held {
     Table(Arc<HeldTable>),
     Block(Arc<CellBlock>),
     Way(Arc<Vec<NodeID>>),
+    /// a run of bytes read off a file, as a paged array holds them
+    Bytes(Arc<Vec<u8>>),
 }
 
 impl Held {
@@ -71,6 +75,7 @@ impl Held {
             // hundred bytes and the pool holds many times its budget.
             Self::Block(block) => block.bytes(),
             Self::Way(way) => way.capacity() * size_of::<NodeID>(),
+            Self::Bytes(held) => held.capacity(),
         };
         held + size_of::<Key>() + size_of::<Self>() + PER_ENTRY
     }
