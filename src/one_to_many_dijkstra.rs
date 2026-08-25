@@ -6,7 +6,7 @@
 /// be unpacked.
 use crate::{
     dense_heap::DenseHeap,
-    graph::{Graph, NodeID},
+    graph::{Arcs, NodeID},
     heap_stats::{Counters, HeapStats, Untracked},
 };
 
@@ -78,7 +78,7 @@ impl<S: HeapStats<NodeID>> OneToManySearch<S> {
     /// run a path computation from s to t on some graph. The object is reusable
     /// to run consecutive searches, even on different graphs. It is cleared on
     /// every run, which saves on allocations.
-    pub fn run<G: Graph<u32>>(&mut self, graph: &G, source: NodeID, targets: &[NodeID]) -> bool {
+    pub fn run<G: Arcs<u32>>(&mut self, graph: &G, source: NodeID, targets: &[NodeID]) -> bool {
         let wanted =
             rustc_hash::FxHashMap::<NodeID, ()>::from_iter(targets.iter().map(|&x| (x, ())));
         self.walk(graph, source, wanted.len(), |node| {
@@ -95,7 +95,7 @@ impl<S: HeapStats<NodeID>> OneToManySearch<S> {
     /// search, and one lookup per settle, to ask a question that is
     /// `node < count`. The border nodes of a cell are numbered first exactly
     /// so that it is.
-    pub fn run_to_leading<G: Graph<u32>>(
+    pub fn run_to_leading<G: Arcs<u32>>(
         &mut self,
         graph: &G,
         source: NodeID,
@@ -105,7 +105,7 @@ impl<S: HeapStats<NodeID>> OneToManySearch<S> {
     }
 
     /// What both of them do, differing only in how a target is recognised.
-    fn walk<G: Graph<u32>>(
+    fn walk<G: Arcs<u32>>(
         &mut self,
         graph: &G,
         source: NodeID,
@@ -140,7 +140,7 @@ impl<S: HeapStats<NodeID>> OneToManySearch<S> {
             // improvement are the same question asked of the same slot
             for edge in graph.edge_range(u) {
                 let v = graph.target(edge);
-                let new_distance = distance + *graph.data(edge) as usize;
+                let new_distance = distance + graph.weight(edge) as usize;
                 self.queue.insert_or_decrease(v, new_distance, u);
             }
         }
@@ -505,7 +505,7 @@ mod tests {
     /// Checking the two of them against each other is not enough: they share
     /// a heap, so a fault in it moves both the same way and they go on
     /// agreeing. This reference shares nothing with either.
-    fn distances_from<G: Graph<u32>>(graph: &G, source: NodeID) -> Vec<usize> {
+    fn distances_from<G: crate::graph::Arcs<u32>>(graph: &G, source: NodeID) -> Vec<usize> {
         use std::{cmp::Reverse, collections::BinaryHeap};
 
         let mut settled = vec![usize::MAX; graph.number_of_nodes()];
@@ -519,7 +519,7 @@ mod tests {
             for edge in graph.edge_range(node) {
                 let target = graph.target(edge);
                 if settled[target] == usize::MAX {
-                    queue.push(Reverse((cost + *graph.data(edge) as usize, target)));
+                    queue.push(Reverse((cost + graph.weight(edge) as usize, target)));
                 }
             }
         }

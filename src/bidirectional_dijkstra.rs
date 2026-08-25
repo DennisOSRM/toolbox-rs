@@ -19,7 +19,7 @@
 //! two are the same object and it can simply be handed over twice.
 use crate::{
     dense_heap::DenseHeap,
-    graph::{Graph, INVALID_NODE_ID, NodeID},
+    graph::{Arcs, INVALID_NODE_ID, NodeID},
     heap_stats::{Counters, HeapStats, Untracked},
 };
 
@@ -87,7 +87,7 @@ impl<S: HeapStats<NodeID>> BidirectionalSearch<S> {
     /// The node it settles is done for this side, so whatever the other side
     /// holds for that node is a path from one end to the other through it, and
     /// the shortest such path seen so far is what the search is bounded by.
-    fn advance<G: Graph<u32>>(
+    fn advance<G: Arcs<u32>>(
         queue: &mut DenseHeap<S>,
         other: &DenseHeap<S>,
         graph: &G,
@@ -111,7 +111,7 @@ impl<S: HeapStats<NodeID>> BidirectionalSearch<S> {
 
         for edge in graph.edge_range(u) {
             let v = graph.target(edge);
-            queue.insert_or_decrease(v, distance + *graph.data(edge) as usize, u);
+            queue.insert_or_decrease(v, distance + graph.weight(edge) as usize, u);
         }
     }
 
@@ -122,7 +122,7 @@ impl<S: HeapStats<NodeID>> BidirectionalSearch<S> {
     /// network the same graph is handed over twice.
     ///
     /// The object is reusable and clears itself on every run.
-    pub fn run<G: Graph<u32>>(&mut self, graph: &G, reverse: &G, s: NodeID, t: NodeID) -> usize {
+    pub fn run<G: Arcs<u32>>(&mut self, graph: &G, reverse: &G, s: NodeID, t: NodeID) -> usize {
         self.clear();
 
         self.forward.insert(s, 0, s);

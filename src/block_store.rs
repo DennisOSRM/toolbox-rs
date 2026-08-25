@@ -35,13 +35,13 @@ use crate::{
 ///
 /// Positional, so that one open file answers several threads at once.
 #[cfg(unix)]
-fn read_at(file: &File, at: u64, into: &mut [u8]) -> io::Result<()> {
+pub(crate) fn read_at(file: &File, at: u64, into: &mut [u8]) -> io::Result<()> {
     use std::os::unix::fs::FileExt;
     file.read_exact_at(into, at)
 }
 
 #[cfg(windows)]
-fn read_at(file: &File, at: u64, into: &mut [u8]) -> io::Result<()> {
+pub(crate) fn read_at(file: &File, at: u64, into: &mut [u8]) -> io::Result<()> {
     use std::os::windows::fs::FileExt;
     let mut read = 0;
     while read < into.len() {
@@ -98,13 +98,46 @@ impl BlockWriter {
     ) -> io::Result<()> {
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(block)
             .map_err(|why| io::Error::other(format!("a block will not serialize: {why}")))?;
-        let stored = codec.encode(&bytes, effort);
+        self.push_bytes(
+            &bytes,
+            u8::try_from(block.level()).expect("more levels than a byte counts"),
+            keys,
+            cells,
+            nodes,
+            codec,
+            effort,
+        )
+    }
+
+    /// Writes a block that has already been serialized.
+    ///
+    /// This is what [`push`](Self::push) is written on, and what anything else
+    /// that goes into a store of this shape uses: a run of arcs is written the
+    /// same way a run of cell tables is, through the same codec, with the same
+    /// entry and the same hash over it, so there is one packing path and not
+    /// two that have to be kept saying the same thing.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever went wrong writing it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_bytes(
+        &mut self,
+        bytes: &[u8],
+        level: u8,
+        keys: (u128, u128),
+        cells: (CellId, u32),
+        nodes: (u32, u32),
+        codec: Codec,
+        effort: i32,
+    ) -> io::Result<()> {
+        let stored = codec.encode(bytes, effort);
         self.out.write_all(&stored)?;
 
         self.entries.push(BlockEntry {
             first_key: keys.0,
             last_key: keys.1,
-            level: u8::try_from(block.level()).expect("more levels than a byte counts"),
+            level,
             codec: codec.id(),
             first_cell: cells.0,
             cells: cells.1,
@@ -115,7 +148,7 @@ impl BlockWriter {
                 .expect("a block of more than four thousand million"),
             unpacked: u32::try_from(bytes.len())
                 .expect("a block of more than four thousand million"),
-            hash: xxhash_rust::xxh3::xxh3_64(&bytes),
+            hash: xxhash_rust::xxh3::xxh3_64(bytes),
         });
         self.at += stored.len() as u64;
         Ok(())
