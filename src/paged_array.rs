@@ -55,6 +55,7 @@ pub const BLOCK_BYTES: usize = 64 * 1024;
 static NEXT_ARRAY: AtomicUsize = AtomicUsize::new(0);
 
 /// A run of fixed-width entries on a file.
+#[derive(Debug)]
 pub struct PagedArray {
     held: File,
     /// where the entries begin in the file

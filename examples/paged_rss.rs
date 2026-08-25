@@ -194,8 +194,12 @@ fn main() {
     let arcs = std::env::var("TOOLBOX_ARCS").unwrap_or_else(|_| {
         panic!("set TOOLBOX_ARCS to a pack of arcs; this measures an instance that pages both")
     });
-    let tree: CellTree = io::read_from_file(&format!("{arcs}.tree"));
+    let mut tree: CellTree = io::read_from_file(&format!("{arcs}.tree"));
     assert!(!tree.whole(), "the tree beside the arcs was not trimmed");
+    // the two arrays a query asks of a tree are read as well, so what stands
+    // in their place is an offset a level rather than an entry a cell
+    tree.open_cells(Path::new(&format!("{arcs}.cells")), &early)
+        .expect("the cells beside the arcs");
     at = report("the block map and the cell tree", at);
     for (part, bytes) in tree.bytes_by_part() {
         println!("    the tree's {part:<12} {:>7.1} MiB", bytes as f64 / MIB);

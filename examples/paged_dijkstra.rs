@@ -140,7 +140,12 @@ fn main() {
         let mut trimmed = tree.clone();
         trimmed.trim_for_queries();
         io::write_to_file(&format!("{arcs_path}.tree"), &trimmed);
-        println!("wrote the partition and the trimmed tree beside the arcs");
+        // and the two arrays a query asks of a tree, so an instance reads them
+        // a block at a time rather than keeping one entry a cell
+        trimmed
+            .save_cells(Path::new(&format!("{arcs_path}.cells")))
+            .expect("the cells to write");
+        println!("wrote the partition, the trimmed tree and its cells beside the arcs");
         (map, first_edges)
     };
 

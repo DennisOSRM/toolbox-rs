@@ -36,13 +36,32 @@
 
 use rkyv::{Archive, Deserialize, Serialize};
 
+use std::{
+    fs::File,
+    io::{BufWriter, Write},
+    path::Path,
+    sync::Arc,
+};
+
 use crate::{
     bounding_box::BoundingBox,
     geometry::FPCoordinate,
     graph::{Graph, NodeID},
     level_directory::{CellId, LevelDirectory},
     packed_partition::PackedPartition,
+    paged_array::PagedArray,
+    pool::Pool,
 };
+
+/// What a written pair of cell arrays says about itself before them.
+#[derive(Archive, Serialize, Deserialize)]
+struct CellsHead {
+    version: u16,
+    /// how many cells each level has
+    counts: Vec<u32>,
+    /// what each level's tables come to unpacked
+    unpacked: Vec<u64>,
+}
 
 /// The version this is written under. A reader that does not know a version
 /// refuses the file rather than reading it as though it were another one.
@@ -93,7 +112,11 @@ pub struct CellFacts {
 }
 
 /// The assembled partition, with the parts of it a store has to ask about.
-#[derive(Clone, Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
+/// Cloned, compared and printed by what it holds. The arrays it may read
+/// instead are a way of getting at the same answers and not part of what it
+/// is, so two trees over the same cells are the same tree whether either of
+/// them is reading or keeping.
+#[derive(Debug, Archive, Serialize, Deserialize)]
 pub struct CellTree {
     version: u16,
     /// where each level's bits begin in a key, finest first; the last entry is
@@ -114,18 +137,102 @@ pub struct CellTree {
     parents: Vec<Vec<CellId>>,
     /// per level, what each of its cells holds
     facts: Vec<Vec<CellFacts>>,
-    /// per level, the box each of its cells lies in, and an invalid box for a
-    /// cell holding no node with a coordinate
-    bounds: Vec<Vec<BoundingBox>>,
     /// Per level, where each cell's nodes begin, with one past the end last.
     ///
     /// The running total of what the cells hold, which is where their nodes
-    /// begin only when the nodes are numbered by cell path: then a cell is one
-    /// run and the runs follow one another in the order the cells are in. Under
-    /// any other numbering these are counts and nothing more, which is why
-    /// [`nodes_begin`](Self::nodes_begin) says what it assumes.
+    /// begin only when the nodes are numbered by cell path.
     begins_node: Vec<Vec<u32>>,
+    /// The same two read off a file instead, where there are any.
+    ///
+    /// Never written: a tree is serialized as what it holds, and a tree that
+    /// holds nothing is opened from the arrays beside it rather than read.
+    #[rkyv(with = rkyv::with::Skip)]
+    paged: Option<Arc<PagedCells>>,
+    /// per level, the box each of its cells lies in, and an invalid box for a
+    /// cell holding no node with a coordinate
+    bounds: Vec<Vec<BoundingBox>>,
 }
+
+/// Where the two arrays a query asks for live.
+///
+/// # Why they are the last thing to page
+///
+/// Everything else an instance holds is either bounded by its budget or gone.
+/// These two are one entry a cell, and a cell is one per thirty-odd nodes, so
+/// on a continent they come to seven mebibytes and on a planet to eighty --
+/// which is a budget spent before a single block is read.
+///
+/// Read, what stands in their place is an offset a level: the logarithm of the
+/// nodes rather than the nodes.
+/// The two arrays a query asks for, read off a file rather than kept.
+///
+/// # Why they are the last thing to page
+///
+/// Everything else an instance holds is either bounded by its budget or gone.
+/// These two are one entry a cell, and a cell is one per thirty-odd nodes, so
+/// on a continent they come to seven mebibytes and on a planet to eighty --
+/// which is a budget spent before a single block is read.
+///
+/// What stands in their place is an offset a level: the logarithm of the nodes
+/// rather than the nodes.
+#[derive(Debug)]
+pub struct PagedCells {
+    /// the two, laid end to end across the levels
+    facts: PagedArray,
+    begins_node: PagedArray,
+    /// where each level begins in each of them, and how many cells it has
+    facts_at: Vec<u64>,
+    nodes_at: Vec<u64>,
+    counts: Vec<u32>,
+    /// what each level's tables come to unpacked, worked out when this was
+    /// written rather than by reading every cell of it back
+    unpacked: Vec<u64>,
+}
+
+impl PagedCells {
+    /// What it costs standing still: an entry a level, and two file handles.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        self.facts.bytes()
+            + self.begins_node.bytes()
+            + (self.facts_at.capacity() + self.nodes_at.capacity() + self.unpacked.capacity()) * 8
+            + self.counts.capacity() * 4
+    }
+}
+
+impl Clone for CellTree {
+    fn clone(&self) -> Self {
+        Self {
+            paged: self.paged.clone(),
+            ..Self {
+                version: self.version,
+                begins_at: self.begins_at.clone(),
+                starts: self.starts.clone(),
+                children: self.children.clone(),
+                parents: self.parents.clone(),
+                facts: self.facts.clone(),
+                bounds: self.bounds.clone(),
+                begins_node: self.begins_node.clone(),
+                paged: None,
+            }
+        }
+    }
+}
+
+impl PartialEq for CellTree {
+    fn eq(&self, other: &Self) -> bool {
+        self.version == other.version
+            && self.begins_at == other.begins_at
+            && self.starts == other.starts
+            && self.children == other.children
+            && self.parents == other.parents
+            && self.facts == other.facts
+            && self.bounds == other.bounds
+            && self.begins_node == other.begins_node
+    }
+}
+
+impl Eq for CellTree {}
 
 impl CellTree {
     /// Works the tree out from the assembly's answer and the graph it was cut
@@ -265,6 +372,7 @@ impl CellTree {
 
         Self {
             version: VERSION,
+            paged: None,
             begins_node,
             begins_at: partition.level_layout().to_vec(),
             starts,
@@ -277,12 +385,17 @@ impl CellTree {
 
     #[must_use]
     pub fn levels(&self) -> usize {
-        self.facts.len()
+        self.paged
+            .as_ref()
+            .map_or_else(|| self.facts.len(), |read| read.counts.len())
     }
 
     #[must_use]
     pub fn cells_on_level(&self, level: usize) -> usize {
-        self.facts[level].len()
+        self.paged.as_ref().map_or_else(
+            || self.facts[level].len(),
+            |read| read.counts[level] as usize,
+        )
     }
 
     /// How wide a key is, in bits. The whole path fits in this many.
@@ -300,7 +413,15 @@ impl CellTree {
     /// What a cell holds.
     #[must_use]
     pub fn facts(&self, level: usize, cell: CellId) -> CellFacts {
-        self.facts[level][cell as usize]
+        let Some(read) = &self.paged else {
+            return self.facts[level][cell as usize];
+        };
+        let at = read.facts_at[level] as usize + cell as usize;
+        let held = read.facts.get::<8>(at).expect("a cell the tree has");
+        CellFacts {
+            nodes: u32::from_le_bytes(held[0..4].try_into().expect("four bytes")),
+            on_border: u32::from_le_bytes(held[4..8].try_into().expect("four bytes")),
+        }
     }
 
     /// The box a cell's nodes lie in.
@@ -340,6 +461,9 @@ impl CellTree {
     /// bounded by what it holds unpacked, not by what it downloaded.
     #[must_use]
     pub fn unpacked_bytes(&self, level: usize) -> u64 {
+        if let Some(read) = &self.paged {
+            return read.unpacked[level];
+        }
         self.facts[level]
             .iter()
             .map(|cell| {
@@ -361,7 +485,124 @@ impl CellTree {
     /// Panics if there is no such cell on that level.
     #[must_use]
     pub fn nodes_begin(&self, level: usize, cell: CellId) -> u32 {
-        self.begins_node[level][cell as usize]
+        let Some(read) = &self.paged else {
+            return self.begins_node[level][cell as usize];
+        };
+        let at = read.nodes_at[level] as usize + cell as usize;
+        u32::from_le_bytes(read.begins_node.get::<4>(at).expect("a cell the tree has"))
+    }
+
+    /// Writes the two arrays a query asks for, for [`open_cells`](Self::open_cells).
+    ///
+    /// What a query wants of a tree is one entry a cell, twice over, and a
+    /// cell is one per thirty-odd nodes: seven mebibytes of a continent and
+    /// eighty of a planet. Written here they are read a block at a time and
+    /// what stands in their place is an offset a level.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever went wrong writing them.
+    pub fn save_cells(&self, path: &Path) -> std::io::Result<()> {
+        let head = CellsHead {
+            version: VERSION,
+            counts: (0..self.levels())
+                .map(|level| u32::try_from(self.facts[level].len()).expect("a level in four bytes"))
+                .collect(),
+            // worked out here so that a budget does not have to read every
+            // cell of every level back to ask how wide they are
+            unpacked: (0..self.levels())
+                .map(|level| self.unpacked_bytes(level))
+                .collect(),
+        };
+        let head = rkyv::to_bytes::<rkyv::rancor::Error>(&head)
+            .map_err(|why| std::io::Error::other(format!("a tree will not serialize: {why}")))?;
+
+        let mut out = BufWriter::new(File::create(path)?);
+        out.write_all(&(head.len() as u64).to_le_bytes())?;
+        out.write_all(&head)?;
+        for level in &self.facts {
+            for cell in level {
+                out.write_all(&cell.nodes.to_le_bytes())?;
+                out.write_all(&cell.on_border.to_le_bytes())?;
+            }
+        }
+        for level in &self.begins_node {
+            for &begins in level {
+                out.write_all(&begins.to_le_bytes())?;
+            }
+        }
+        out.flush()
+    }
+
+    /// Reads those two back, holding neither.
+    ///
+    /// The tree is otherwise whatever it already was: this only says where the
+    /// per-cell answers come from. A tree opened this way holds an offset a
+    /// level and two file handles.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever went wrong reading them, and refuses a version this
+    /// does not know.
+    pub fn open_cells(&mut self, path: &Path, pool: &Arc<Pool>) -> std::io::Result<()> {
+        let file = File::open(path)?;
+        let mut length = [0_u8; 8];
+        crate::block_store::read_at(&file, 0, &mut length)?;
+        let length = u64::from_le_bytes(length) as usize;
+        let mut head = vec![0_u8; length];
+        crate::block_store::read_at(&file, 8, &mut head)?;
+        let head: CellsHead = rkyv::from_bytes::<CellsHead, rkyv::rancor::Error>(&head)
+            .map_err(|why| std::io::Error::other(format!("a tree will not read: {why}")))?;
+        if head.version != VERSION {
+            return Err(std::io::Error::other(format!(
+                "a tree written under version {}",
+                head.version
+            )));
+        }
+
+        // where each level begins in each array, which is the running total of
+        // the ones before it: an entry a level, and there are a handful
+        let mut facts_at = Vec::with_capacity(head.counts.len());
+        let mut running = 0_u64;
+        for &count in &head.counts {
+            facts_at.push(running);
+            running += u64::from(count);
+        }
+        let cells = running;
+        // the second array has one past the end for each level
+        let mut nodes_at = Vec::with_capacity(head.counts.len());
+        let mut running = 0_u64;
+        for &count in &head.counts {
+            nodes_at.push(running);
+            running += u64::from(count) + 1;
+        }
+        let begins = running;
+
+        let at = 8 + length as u64;
+        self.paged = Some(Arc::new(PagedCells {
+            facts: PagedArray::open(path, at, cells as usize, 8, Arc::clone(pool))?,
+            begins_node: PagedArray::open(
+                path,
+                at + cells * 8,
+                begins as usize,
+                4,
+                Arc::clone(pool),
+            )?,
+            facts_at,
+            nodes_at,
+            counts: head.counts,
+            unpacked: head.unpacked,
+        }));
+        // and the kept arrays go, since nothing will ask them again
+        self.facts = Vec::new();
+        self.begins_node = Vec::new();
+        Ok(())
+    }
+
+    /// Whether this tree reads its per-cell answers rather than keeping them.
+    #[must_use]
+    pub fn reads_cells(&self) -> bool {
+        self.paged.is_some()
     }
 
     /// Lets go of everything only the build wanted.
@@ -461,6 +702,7 @@ impl CellTree {
                 .map(|l| l.capacity() * size_of::<BoundingBox>())
                 .sum::<usize>()
             + apiece(&self.begins_node)
+            + self.paged.as_ref().map_or(0, |read| read.bytes())
     }
 
     /// Which cell of a level a node is in, and nothing where none is.
@@ -775,5 +1017,76 @@ mod tests {
         let mut trimmed = CellTree::of(&directory, &partition, &graph, &coordinates);
         trimmed.trim_for_queries();
         let _ = trimmed.parent_of(0, 0);
+    }
+
+    /// The one that matters: a tree that reads its cells answers what the one
+    /// that keeps them does, and costs an entry a level rather than a cell.
+    #[test]
+    fn a_tree_that_reads_its_cells_answers_what_one_that_keeps_them_does() {
+        let held = tempfile::tempdir().expect("a directory to write in");
+        for side in [8_usize, 16, 32] {
+            let (graph, directory, coordinates) = grid(side);
+            let partition = PackedPartition::of(&directory);
+            let whole = CellTree::of(&directory, &partition, &graph, &coordinates);
+
+            let path = held.path().join(format!("cells{side}"));
+            whole.save_cells(&path).expect("the cells to write");
+
+            let mut read = CellTree::of(&directory, &partition, &graph, &coordinates);
+            read.trim_for_queries();
+            read.open_cells(&path, &Pool::of(2 * crate::paged_array::BLOCK_BYTES))
+                .expect("the cells to read");
+            assert!(read.reads_cells());
+
+            assert_eq!(read.levels(), whole.levels());
+            for level in 0..whole.levels() {
+                assert_eq!(read.cells_on_level(level), whole.cells_on_level(level));
+                assert_eq!(
+                    read.unpacked_bytes(level),
+                    whole.unpacked_bytes(level),
+                    "level {level} of {side}"
+                );
+                for cell in 0..whole.cells_on_level(level) as CellId {
+                    assert_eq!(
+                        read.facts(level, cell),
+                        whole.facts(level, cell),
+                        "cell {cell} of level {level} of {side}"
+                    );
+                    assert_eq!(
+                        read.nodes_begin(level, cell),
+                        whole.nodes_begin(level, cell),
+                        "cell {cell} of level {level} of {side}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// And what it costs goes with the levels and not with the cells.
+    #[test]
+    fn a_tree_that_reads_its_cells_costs_the_same_however_many_there_are() {
+        let held = tempfile::tempdir().expect("a directory to write in");
+        let pool = Pool::of(1 << 20);
+        let mut sizes = Vec::new();
+        for side in [16_usize, 64] {
+            let (graph, directory, coordinates) = grid(side);
+            let partition = PackedPartition::of(&directory);
+            let path = held.path().join(format!("cells{side}"));
+            let whole = CellTree::of(&directory, &partition, &graph, &coordinates);
+            whole.save_cells(&path).expect("the cells to write");
+
+            let mut read = CellTree::of(&directory, &partition, &graph, &coordinates);
+            read.trim_for_queries();
+            read.open_cells(&path, &pool).expect("the cells to read");
+            let cells: usize = (0..read.levels()).map(|l| read.cells_on_level(l)).sum();
+            sizes.push((cells, read.bytes()));
+        }
+        assert!(sizes[1].0 > sizes[0].0 * 8, "the two are the same size");
+        for &(cells, bytes) in &sizes {
+            assert!(
+                bytes < 4096,
+                "a tree over {cells} cells costs {bytes} bytes standing still"
+            );
+        }
     }
 }

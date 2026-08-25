@@ -123,6 +123,18 @@ struct Scrap {
     bytes: Vec<Vec<u8>>,
 }
 
+impl std::fmt::Debug for Pool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // what it is holding and what it may, and not the contents: a pool
+        // printed entry by entry is a hundred thousand lines
+        let faults = self.faults();
+        f.debug_struct("Pool")
+            .field("budget", &self.budget)
+            .field("held", &faults.held)
+            .finish()
+    }
+}
+
 struct Inside {
     kept: LRU<Key, Held>,
     bytes: usize,
