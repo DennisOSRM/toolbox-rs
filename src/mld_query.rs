@@ -33,8 +33,8 @@ use log::debug;
 use rustc_hash::FxHashSet;
 
 use crate::{
-    border_levels::BorderLevels,
-    dense_heap::DenseHeap,
+    border_levels::Borders,
+    dense_heap::{DenseHeap, HashHeap, Queue},
     graph::{Arcs, NodeID},
     heap_stats::{Counters, HeapStats, Untracked},
     overlay::{CellTable, Overlay},
@@ -43,13 +43,25 @@ use crate::{
 
 /// A query that counts nothing, which is what a run whose time is being taken
 /// wants.
-pub type MldQuery = MldSearch<Untracked>;
+/// The search with the queue that finds a node in an array: one look, and room
+/// for every node of the graph whether the run reaches it or not.
+pub type MldQuery = MldSearch<Untracked, DenseHeap<Untracked>>;
+
+/// The same search with the queue that finds a node in a map: a hash on every
+/// look, and room only for what the run touched.
+///
+/// This is what an instance with a budget for the whole of it runs. On a
+/// continent the array costs sixty eight mebibytes standing still, which is
+/// half of a hundred and twenty eight megabyte budget spent before a single
+/// arc or table is read.
+pub type SparseMldQuery = MldSearch<Untracked, HashHeap<Untracked>>;
 
 /// The same query, counting what its queue did.
-pub type TrackedMldQuery = MldSearch<Counters>;
+pub type TrackedMldQuery = MldSearch<Counters, DenseHeap<Counters>>;
 
-pub struct MldSearch<S: HeapStats<NodeID>> {
-    queue: DenseHeap<S>,
+pub struct MldSearch<S: HeapStats<NodeID>, Q: Queue<S> = DenseHeap<S>> {
+    queue: Q,
+    holds: std::marker::PhantomData<S>,
     /// Which cells hold a target, every level in one run of memory with
     /// `holds_target_at` saying where each of them starts.
     ///
@@ -78,17 +90,18 @@ pub struct MldSearch<S: HeapStats<NodeID>> {
     reached_target_count: usize,
 }
 
-impl<S: HeapStats<NodeID>> Default for MldSearch<S> {
+impl<S: HeapStats<NodeID>, Q: Queue<S>> Default for MldSearch<S, Q> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<S: HeapStats<NodeID>> MldSearch<S> {
+impl<S: HeapStats<NodeID>, Q: Queue<S>> MldSearch<S, Q> {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            queue: DenseHeap::<S>::new(),
+            queue: Q::new(),
+            holds: std::marker::PhantomData,
             holds_target: Vec::new(),
             holds_target_at: Vec::new(),
             marked: Vec::new(),
@@ -232,7 +245,6 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
         self.source_word = partition.word(source);
 
         let graph = customization.graph();
-        let borders = customization.border_levels();
         self.queue.insert(source, 0, source);
 
         while !self.queue.is_empty() && self.reached_target_count < self.targets.len() {
@@ -267,7 +279,7 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
                     {
                         self.relax_across_cell(customization, partition, u, distance, level);
                     }
-                    self.relax_out_of_cell(graph, borders, u, distance, level);
+                    self.relax_out_of_cell(graph, customization.borders(), u, distance, level);
                 }
                 None => self.relax_every_arc(graph, u, distance),
             }
@@ -329,10 +341,10 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
     /// The arcs of the graph that leave the cell, which is how the search gets
     /// out of one.
     #[inline(never)]
-    fn relax_out_of_cell<G: Arcs<u32>>(
+    fn relax_out_of_cell<G: Arcs<u32>, B: Borders>(
         &mut self,
         graph: &G,
-        borders: &BorderLevels,
+        borders: &B,
         node: NodeID,
         distance: usize,
         level: usize,

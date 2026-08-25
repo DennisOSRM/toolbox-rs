@@ -10,17 +10,16 @@
 //! The steps are cumulative: each line is what the process holds once that
 //! step is done, and the difference between two lines is what the step added.
 
-use std::{env::args, path::Path, process, time::Instant};
+use std::{env::args, path::Path, process, sync::Arc, time::Instant};
 
 use toolbox_rs::{
     block_map::BlockMap,
     block_store::BlockStore,
-    border_levels::BorderLevels,
     cell_tree::CellTree,
     graph::{Arcs, NodeID},
     io,
     level_directory::LevelDirectory,
-    mld_query::MldQuery,
+    mld_query::SparseMldQuery,
     node_ordering::NodeOrdering,
     overlay::Overlay,
     packed_partition::PackedPartition,
@@ -190,8 +189,11 @@ fn main() {
     };
     at = report("the arcs, which page too", at);
 
+    // the sparse queue, since an array over the nodes of a continent is more
+    // than half of a hundred and twenty eight megabyte budget standing still
     let footing =
-        Footing::with_partition(&paged_arcs, partition.bytes() as u64, &tree, map.len(), 1);
+        Footing::with_partition(&paged_arcs, partition.bytes() as u64, &tree, map.len(), 1)
+            .with_sparse_searches();
     let (pinned, cache) = budget.split(&tree, &footing);
     match budget.for_tables(&footing) {
         Ok(left) => println!(
@@ -236,21 +238,23 @@ fn main() {
     }
     let store = BlockStore::open(Path::new(&blocks_path), map, tree).expect("a store");
     let opening = Instant::now();
-    // read back rather than walked: the levels were settled when the store was
-    // packed and working them out again means touching every arc of a graph
-    // that is on a file
-    let border_map: BlockMap = io::read_from_file(&format!("{arcs}.borders.map"));
-    let border_levels = BorderLevels::of_bytes(
-        toolbox_rs::paged_graph::read_borders(Path::new(&format!("{arcs}.borders")), &border_map)
-            .expect("the border levels"),
+    // Nothing is read for the border levels: they ride in the blocks with the
+    // arcs they belong to, so the graph is what answers for them and the same
+    // handle serves as both.
+    let held = Arc::new(paged_arcs);
+    let paged = PagedOverlay::within(
+        store,
+        Arc::clone(&held),
+        partition,
+        Arc::clone(&held),
+        budget,
     );
-    let paged = PagedOverlay::within(store, paged_arcs, partition, border_levels, budget);
     let open = opening.elapsed();
     at = report("the held levels, read and unpacked", at);
 
     // the arrays a search wants, which go with the nodes of the graph and not
     // with the budget: one query is run to make it allocate them
-    let mut query = MldQuery::new();
+    let mut query = SparseMldQuery::new();
     let mut unpacker = Unpacker::for_instance(&paged);
     if let Some(&(source, target)) = pairs.first() {
         query.run(&paged, source, &[target]);
@@ -305,7 +309,7 @@ fn main() {
     line(
         "the border levels",
         footing.border_levels,
-        "one byte an arc, read and not walked",
+        "nothing: they ride in the arc blocks",
     );
     line("the block map", map_bytes, "one entry a block");
     line("the cell tree", tree_bytes, "one entry a cell");

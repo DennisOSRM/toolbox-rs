@@ -25,7 +25,7 @@ use toolbox_rs::{
     node_ordering::NodeOrdering,
     one_to_many_dijkstra::OneToManyDijkstra,
     packed_partition::PackedPartition,
-    paged_graph::{PagedGraph, pack, pack_borders},
+    paged_graph::{PagedGraph, pack},
     static_graph::StaticGraph,
 };
 
@@ -109,8 +109,18 @@ fn main() {
         (map, first_edges)
     } else {
         let started = Instant::now();
-        let (map, first_edges) = pack(&graph, Some(&tree), path, arcs_in_a_block, Codec::Lz4, 3)
-            .expect("a graph to pack");
+        // the border levels ride in the blocks with the arcs they belong to
+        let walked = BorderLevels::of(&graph, &partition);
+        let (map, first_edges) = pack(
+            &graph,
+            &walked,
+            Some(&tree),
+            path,
+            arcs_in_a_block,
+            Codec::Lz4,
+            3,
+        )
+        .expect("a graph to pack");
         println!(
             "packed {} arcs into {} blocks of about {kib} KiB in {:.1?}",
             Graph::number_of_edges(&graph),
@@ -119,24 +129,6 @@ fn main() {
         );
         io::write_to_file(&format!("{arcs_path}.map"), &map);
         io::write_vec_to_file(&index_path, &first_edges);
-        // and the border levels beside them, so that opening the store never
-        // has to walk the arcs to work them out again
-        let started = Instant::now();
-        let walked = BorderLevels::of(&graph, &partition);
-        let borders = pack_borders(
-            walked.as_bytes(),
-            &first_edges,
-            Path::new(&format!("{arcs_path}.borders")),
-            Codec::Lz4,
-            3,
-        )
-        .expect("the border levels to pack");
-        io::write_to_file(&format!("{arcs_path}.borders.map"), &borders);
-        println!(
-            "packed the border levels into {} blocks in {:.1?}",
-            borders.len(),
-            started.elapsed()
-        );
         (map, first_edges)
     };
 

@@ -31,6 +31,7 @@ use log::debug;
 
 use crate::{
     border_levels::BorderLevels,
+    border_levels::Borders,
     dense_heap::DenseHeap,
     graph::{Arcs, INVALID_NODE_ID, NodeID},
     heap_stats::{Counters, HeapStats, Untracked},
@@ -197,7 +198,6 @@ impl<S: HeapStats<NodeID>> BidirectionalMldSearch<S> {
         self.target_word = partition.word(target);
 
         let graph = customization.graph();
-        let borders = customization.border_levels();
         self.forward.insert(source, 0, source);
         self.backward.insert(target, 0, target);
 
@@ -252,7 +252,14 @@ impl<S: HeapStats<NodeID>> BidirectionalMldSearch<S> {
                     }
                     match side {
                         Side::Forward => {
-                            self.relax_out_of_cell(graph, borders, side, u, distance, level);
+                            self.relax_out_of_cell(
+                                graph,
+                                customization.borders(),
+                                side,
+                                u,
+                                distance,
+                                level,
+                            );
                         }
                         Side::Backward => {
                             self.relax_out_of_cell(
@@ -328,10 +335,10 @@ impl<S: HeapStats<NodeID>> BidirectionalMldSearch<S> {
     /// The arcs of the graph that leave the cell, which is how a search gets
     /// out of one.
     #[inline(never)]
-    fn relax_out_of_cell<G: Arcs<u32>>(
+    fn relax_out_of_cell<G: Arcs<u32>, B: Borders>(
         &mut self,
         graph: &G,
-        borders: &BorderLevels,
+        borders: &B,
         side: Side,
         node: NodeID,
         distance: usize,

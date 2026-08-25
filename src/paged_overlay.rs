@@ -40,7 +40,7 @@ const BLOCKS_IN_HAND: usize = 8;
 use crate::{
     block_map::BlockEntry,
     block_store::{BlockStore, NotRead},
-    border_levels::BorderLevels,
+    border_levels::{BorderLevels, Borders},
     cell_block::CellBlock,
     cell_tree::{CellFacts, CellTree},
     graph::{Arcs, NodeID},
@@ -168,7 +168,8 @@ pub struct Footing {
     pub graph: u64,
     /// the bits the levels of the partition ask for, a node
     pub partition: u64,
-    /// one byte an arc
+    /// one byte an arc where they are kept apart, and nothing where the arcs
+    /// carry their own
     pub border_levels: u64,
     /// one entry a block, and one a cell
     pub block_map: u64,
@@ -218,8 +219,10 @@ impl Footing {
             // arcs where it holds them and only an index where it pages them
             graph: graph.standing() as u64,
             partition: partition_bytes,
-            // a byte an arc, not a byte a node: it is a property of the arc
-            border_levels: graph.number_of_edges() as u64,
+            // Nothing, where the arcs carry their own: the level rides in the
+            // block with the arc and is read when the arc is. A caller whose
+            // graph does not carry them says so with `with_borders`.
+            border_levels: 0,
             block_map: blocks as u64 * size_of::<BlockEntry>() as u64,
             cell_tree: (0..tree.levels())
                 .map(|level| tree.cells_on_level(level) as u64 * size_of::<CellFacts>() as u64)
@@ -229,6 +232,26 @@ impl Footing {
             // graph, and is not standing room
             searches: searches as u64 * nodes * 4,
         }
+    }
+
+    /// The same, for an instance whose searches keep only what a run touched.
+    ///
+    /// A queue over an array costs four bytes a node standing still, which on
+    /// a continent is sixty eight mebibytes before anybody searches. A queue
+    /// over a map costs a hash on every look and nothing standing, and that is
+    /// what an instance with a budget for the whole of it runs -- see
+    /// [`SparseMldQuery`](crate::mld_query::SparseMldQuery).
+    #[must_use]
+    pub fn with_sparse_searches(mut self) -> Self {
+        self.searches = 0;
+        self
+    }
+
+    /// The same, for an instance keeping a byte an arc beside its graph.
+    #[must_use]
+    pub fn with_borders(mut self, arcs: usize) -> Self {
+        self.border_levels = arcs as u64;
+        self
     }
 
     /// What the whole of it comes to.
@@ -329,11 +352,11 @@ impl Budget {
 }
 
 /// The cells of a partition, read off a file and kept while there is room.
-pub struct PagedOverlay<G = StaticGraph<u32>> {
+pub struct PagedOverlay<G = StaticGraph<u32>, B = BorderLevels> {
     store: BlockStore,
     graph: G,
     partition: PackedPartition,
-    borders: BorderLevels,
+    borders: B,
     kept: Mutex<Kept>,
     budget: usize,
     /// the lowest level held outright, and the level count when none is
@@ -359,14 +382,14 @@ struct Kept {
     faults: Faults,
 }
 
-impl<G: Arcs<u32> + Sync> PagedOverlay<G> {
+impl<G: Arcs<u32> + Sync, B: Borders + Sync> PagedOverlay<G, B> {
     /// Opens a store to read cells from, holding `budget` bytes of them.
     #[must_use]
     pub fn new(
         store: BlockStore,
         graph: G,
         partition: PackedPartition,
-        borders: BorderLevels,
+        borders: B,
         budget: usize,
     ) -> Self {
         Self {
@@ -403,7 +426,7 @@ impl<G: Arcs<u32> + Sync> PagedOverlay<G> {
         store: BlockStore,
         graph: G,
         partition: PackedPartition,
-        borders: BorderLevels,
+        borders: B,
         budget: Budget,
     ) -> Self {
         let footing = Footing::with_partition(
@@ -590,7 +613,7 @@ impl<G: Arcs<u32> + Sync> PagedOverlay<G> {
     }
 }
 
-impl<G: Arcs<u32> + Sync> Overlay for PagedOverlay<G> {
+impl<G: Arcs<u32> + Sync, B: Borders + Sync> Overlay for PagedOverlay<G, B> {
     type Graph = G;
     type Table<'a>
         = Arc<HeldTable>
@@ -605,7 +628,9 @@ impl<G: Arcs<u32> + Sync> Overlay for PagedOverlay<G> {
         &self.partition
     }
 
-    fn border_levels(&self) -> &BorderLevels {
+    type Borders = B;
+
+    fn borders(&self) -> &Self::Borders {
         &self.borders
     }
 
@@ -909,8 +934,16 @@ mod tests {
         let tables = held.path().join("blocks");
         let map = pack_cells(&in_memory, &tree, &tables, 3);
         let arcs = held.path().join("arcs");
-        let (arc_map, first_edges) =
-            pack(&graph, Some(&tree), &arcs, 32, Codec::Lz4, 3).expect("a graph to pack");
+        let (arc_map, first_edges) = pack(
+            &graph,
+            &BorderLevels::of(&graph, &partition),
+            Some(&tree),
+            &arcs,
+            32,
+            Codec::Lz4,
+            3,
+        )
+        .expect("a graph to pack");
 
         // both under budgets too small to hold what they are for, so both are
         // reading throughout rather than reading once and running in memory

@@ -27,7 +27,7 @@
 //! What the search wants is the answer, and both can give it.
 
 use crate::{
-    border_levels::BorderLevels,
+    border_levels::Borders,
     graph::{Arcs, NodeID},
     level_directory::CellId,
     packed_partition::PackedPartition,
@@ -74,7 +74,11 @@ pub trait Overlay {
 
     /// The level at which each arc leaves a cell, which is how a search knows
     /// an arc is worth taking without asking the partition about both ends.
-    fn border_levels(&self) -> &BorderLevels;
+    /// What says whether an arc leaves its source's cell: a byte an arc where
+    /// the instance keeps one, and the graph itself where the arcs carry it.
+    type Borders: Borders;
+
+    fn borders(&self) -> &Self::Borders;
 
     fn levels(&self) -> usize;
 
@@ -146,8 +150,10 @@ mod tests {
         fn partition(&self) -> &PackedPartition {
             Overlay::partition(&self.held)
         }
-        fn border_levels(&self) -> &BorderLevels {
-            Overlay::border_levels(&self.held)
+        type Borders = crate::border_levels::BorderLevels;
+
+        fn borders(&self) -> &Self::Borders {
+            Overlay::borders(&self.held)
         }
         fn levels(&self) -> usize {
             Overlay::levels(&self.held)
