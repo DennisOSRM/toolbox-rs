@@ -356,6 +356,43 @@ impl CellTree {
         self.begins_node[level][cell as usize]
     }
 
+    /// What the tree takes once read back.
+    ///
+    /// Every one of its arrays, not the cell facts alone: the children, the
+    /// parents, the boxes and where each cell's nodes begin come to several
+    /// times what the facts do, and a footing that counts only the facts is a
+    /// footing that is wrong by that much.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        let apiece = |held: &Vec<Vec<u32>>| -> usize {
+            held.iter().map(|level| level.capacity() * 4).sum::<usize>()
+        };
+        size_of::<Self>()
+            + self.begins_at.capacity() * 4
+            + apiece(&self.starts)
+            + self
+                .children
+                .iter()
+                .map(|l| l.capacity() * size_of::<CellId>())
+                .sum::<usize>()
+            + self
+                .parents
+                .iter()
+                .map(|l| l.capacity() * size_of::<CellId>())
+                .sum::<usize>()
+            + self
+                .facts
+                .iter()
+                .map(|l| l.capacity() * size_of::<CellFacts>())
+                .sum::<usize>()
+            + self
+                .bounds
+                .iter()
+                .map(|l| l.capacity() * size_of::<BoundingBox>())
+                .sum::<usize>()
+            + apiece(&self.begins_node)
+    }
+
     /// Which cell of a level a node is in, and nothing where none is.
     ///
     /// Found by searching where the cells begin rather than by asking the

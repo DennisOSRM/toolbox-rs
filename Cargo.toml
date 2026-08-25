@@ -58,6 +58,7 @@ xxhash-rust = {version = "0.8.15", features = ["xxh3"] }
 lz4_flex = "0.14.0"
 flate2 = "1.1.9"
 zstd = "0.13.3"
+libc = "0.2.189"
 
 [target.'cfg(unix)'.dependencies]
 jemallocator = "0.5.4"

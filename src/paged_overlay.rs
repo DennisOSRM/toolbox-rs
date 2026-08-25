@@ -39,7 +39,7 @@ use crate::{
     block_map::BlockEntry,
     block_store::{BlockStore, NotRead},
     border_levels::{BorderLevels, Borders},
-    cell_tree::{CellFacts, CellTree},
+    cell_tree::CellTree,
     graph::{Arcs, NodeID},
     level_directory::CellId,
     overlay::{CellTable, Overlay},
@@ -228,9 +228,10 @@ impl Footing {
             // graph does not carry them says so with `with_borders`.
             border_levels: 0,
             block_map: blocks as u64 * size_of::<BlockEntry>() as u64,
-            cell_tree: (0..tree.levels())
-                .map(|level| tree.cells_on_level(level) as u64 * size_of::<CellFacts>() as u64)
-                .sum(),
+            // what the whole tree takes, and not the cell facts alone: the
+            // children, the parents, the boxes and where each cell's nodes
+            // begin come to several times what the facts do
+            cell_tree: tree.bytes() as u64,
             // four bytes a node for the table a queue reads in one look; what
             // the heap itself takes goes with the widest run and not with the
             // graph, and is not standing room

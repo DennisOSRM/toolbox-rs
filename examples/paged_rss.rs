@@ -10,7 +10,7 @@
 //! The steps are cumulative: each line is what the process holds once that
 //! step is done, and the difference between two lines is what the step added.
 
-use std::{env::args, path::Path, process, sync::Arc, time::Instant};
+use std::{env::args, path::Path, sync::Arc, time::Instant};
 
 use toolbox_rs::{
     block_map::BlockMap,
@@ -30,15 +30,65 @@ use toolbox_rs::{
 
 const MIB: f64 = (1024 * 1024) as f64;
 
-/// The resident set of this process, in bytes.
+/// What this process is holding, in bytes.
 ///
-/// Read from the operating system rather than added up from what was
-/// allocated: what is wanted is what the machine is holding, which includes
-/// the allocator's own slack and excludes whatever it has handed back.
+/// # Not the resident set
+///
+/// `ps` reports a resident set, and on a Mac that counts pages the process
+/// does not own: the text and constant data of every library it links, which
+/// are file backed and shared with every other process using them, and pages
+/// the allocator has freed but not yet handed back, which the kernel may take
+/// at any time. Measured that way this instance reads at four hundred and
+/// sixty megabytes, of which two hundred and seventeen is shared library and
+/// a hundred and forty is memory nobody is using.
+///
+/// What a budget means is what the process would have to be given if it were
+/// alone, which is the physical footprint: dirty private pages plus its share
+/// of what it compresses to. It is the number a memory limit is enforced
+/// against, and it reads a hundred and thirty six against the same run.
+#[cfg(target_os = "macos")]
+fn resident() -> u64 {
+    // rusage_info_v2 is the first with a footprint in it
+    #[repr(C)]
+    #[derive(Default)]
+    struct RUsageV2 {
+        uuid: [u8; 16],
+        user_time: u64,
+        system_time: u64,
+        pkg_idle_wkups: u64,
+        interrupt_wkups: u64,
+        pageins: u64,
+        wired_size: u64,
+        resident_size: u64,
+        phys_footprint: u64,
+        proc_start_abstime: u64,
+        proc_exit_abstime: u64,
+        child_user_time: u64,
+        child_system_time: u64,
+        child_pkg_idle_wkups: u64,
+        child_interrupt_wkups: u64,
+        child_pageins: u64,
+        child_elapsed_abstime: u64,
+        diskio_bytesread: u64,
+        diskio_byteswritten: u64,
+    }
+
+    let mut held = RUsageV2::default();
+    let got = unsafe {
+        libc::proc_pid_rusage(
+            std::process::id() as i32,
+            2,
+            std::ptr::from_mut(&mut held).cast(),
+        )
+    };
+    if got == 0 { held.phys_footprint } else { 0 }
+}
+
+/// Everywhere else, the resident set out of the operating system.
+#[cfg(not(target_os = "macos"))]
 fn resident() -> u64 {
     #[cfg(target_os = "linux")]
     {
-        // statm is in pages, and the second field is the resident set
         let statm = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
         let pages: u64 = statm
             .split_whitespace()
@@ -48,18 +98,7 @@ fn resident() -> u64 {
         return pages * 4096;
     }
     #[cfg(not(target_os = "linux"))]
-    {
-        // ps reports kibibytes
-        let out = process::Command::new("ps")
-            .args(["-o", "rss=", "-p", &process::id().to_string()])
-            .output();
-        let kib: u64 = out
-            .ok()
-            .and_then(|out| String::from_utf8(out.stdout).ok())
-            .and_then(|text| text.trim().parse().ok())
-            .unwrap_or(0);
-        kib * 1024
-    }
+    0
 }
 
 fn report(step: &str, before: u64) -> u64 {
@@ -184,12 +223,7 @@ fn main() {
             // nothing: the levels ride in the arc blocks
             border_levels: 0,
             block_map: (map.len() * size_of::<toolbox_rs::block_map::BlockEntry>()) as u64,
-            cell_tree: (0..tree.levels())
-                .map(|level| {
-                    (tree.cells_on_level(level) * size_of::<toolbox_rs::cell_tree::CellFacts>())
-                        as u64
-                })
-                .sum(),
+            cell_tree: tree.bytes() as u64,
             // nothing: the queue keeps only what a run touched
             searches: 0,
         };
@@ -301,6 +335,17 @@ fn main() {
         query.bytes() as f64 / MIB
     );
 
+    // A run held open, so that vmmap and heap can be pointed at it: the
+    // resident set says how much there is and neither of those has to be
+    // guessed at afterwards.
+    if let Ok(seconds) = std::env::var("TOOLBOX_HOLD") {
+        let seconds: u64 = seconds.parse().unwrap_or(120);
+        println!("HOLDING pid {} for {seconds}s", std::process::id());
+        use std::io::Write as _;
+        let _ = std::io::stdout().flush();
+        std::thread::sleep(std::time::Duration::from_secs(seconds));
+    }
+
     let faults = paged.faults();
     let tables = paged.pinned_bytes() as u64 + faults.held as u64;
     let pool = paged.pool().faults();
@@ -348,14 +393,18 @@ fn main() {
         "nothing: they ride in the arc blocks",
     );
     line("the block map", map_bytes, "one entry a block");
-    line("the cell tree", tree_bytes, "one entry a cell");
+    line(
+        "the cell tree",
+        tree_bytes,
+        "children, parents, boxes and facts",
+    );
     line("the cell tables", tables, "<- the budget governs this one");
     println!("  {:-<34} {:->13}", "", "");
     let accounted = footing.total() - footing.searches + tables;
     line("accounted for", accounted, "");
-    line("resident", full, "");
+    line("the footprint", full, "");
     println!(
-        "  {:<34} {:>8.1} MiB   the search's arrays, the unpacker's",
+        "  {:<34} {:>8.1} MiB   the search's arrays and what the",
         "the difference",
         (full - accounted.min(full)) as f64 / MIB
     );
