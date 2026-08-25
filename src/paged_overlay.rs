@@ -166,7 +166,7 @@ pub struct Footing {
     /// what the graph costs standing still: all of its arcs where it holds
     /// them, and only what finds a block where it pages them
     pub graph: u64,
-    /// one word a node
+    /// the bits the levels of the partition ask for, a node
     pub partition: u64,
     /// one byte a node
     pub border_levels: u64,
@@ -177,6 +177,12 @@ pub struct Footing {
     pub searches: u64,
 }
 
+/// What a partition would take at a whole word a node, for a caller that has
+/// not got one to ask.
+fn nodes_words(nodes: usize) -> u64 {
+    nodes as u64 * 16
+}
+
 impl Footing {
     /// What an instance over this graph and this store costs before tables.
     ///
@@ -184,12 +190,34 @@ impl Footing {
     /// keeps a table over the nodes of the graph for as long as it lives.
     #[must_use]
     pub fn of<G: Arcs<u32>>(graph: &G, tree: &CellTree, blocks: usize, searches: usize) -> Self {
+        Self::with_partition(
+            graph,
+            nodes_words(graph.number_of_nodes()),
+            tree,
+            blocks,
+            searches,
+        )
+    }
+
+    /// The same, told what the partition actually takes.
+    ///
+    /// A partition is stored in the bits its levels ask for, which is a good
+    /// deal less than a word a node, and only the partition itself knows how
+    /// many that came to.
+    #[must_use]
+    pub fn with_partition<G: Arcs<u32>>(
+        graph: &G,
+        partition_bytes: u64,
+        tree: &CellTree,
+        blocks: usize,
+        searches: usize,
+    ) -> Self {
         let nodes = graph.number_of_nodes() as u64;
         Self {
             // what the graph says it costs standing still, which is all of its
             // arcs where it holds them and only an index where it pages them
             graph: graph.standing() as u64,
-            partition: nodes * 16,
+            partition: partition_bytes,
             border_levels: nodes,
             block_map: blocks as u64 * size_of::<BlockEntry>() as u64,
             cell_tree: (0..tree.levels())
@@ -377,7 +405,13 @@ impl<G: Arcs<u32> + Sync> PagedOverlay<G> {
         borders: BorderLevels,
         budget: Budget,
     ) -> Self {
-        let footing = Footing::of(&graph, store.tree(), store.map().len(), 1);
+        let footing = Footing::with_partition(
+            &graph,
+            partition.bytes() as u64,
+            store.tree(),
+            store.map().len(),
+            1,
+        );
         let pin_from = budget.pin_from(store.tree(), &footing);
         let (_, cache) = budget.split(store.tree(), &footing);
         let levels = store.tree().levels();

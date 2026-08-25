@@ -39,9 +39,79 @@ use crate::{
 /// How many bits a word has to spend, and the most a partition may ask for.
 const BITS: u32 = 128;
 
+/// Room past the last word, so a read of a whole word from the last one does
+/// not run off the end and does not have to be checked for.
+const SPILL: usize = 32;
+
+/// Puts a word down at a bit offset.
+fn write_word(packed: &mut [u8], at: u64, width: u32, value: u128) {
+    let byte = (at / 8) as usize;
+    let shift = (at % 8) as u32;
+    let mask = if width >= BITS {
+        u128::MAX
+    } else {
+        (1_u128 << width) - 1
+    };
+    let value = value & mask;
+
+    // the word straddles at most seventeen bytes, which two overlapping
+    // sixteen byte reads cover
+    let low = u128::from_le_bytes(packed[byte..byte + 16].try_into().expect("sixteen bytes"));
+    let laid = low | (value << shift);
+    packed[byte..byte + 16].copy_from_slice(&laid.to_le_bytes());
+    if shift > 0 {
+        let over = value >> (BITS - shift);
+        if over != 0 {
+            let high = u128::from_le_bytes(
+                packed[byte + 16..byte + 32]
+                    .try_into()
+                    .expect("sixteen bytes"),
+            );
+            packed[byte + 16..byte + 32].copy_from_slice(&(high | over).to_le_bytes());
+        }
+    }
+}
+
+/// Picks a word back up from a bit offset.
+#[inline]
+fn read_word(packed: &[u8], at: u64, width: u32) -> u128 {
+    let byte = (at / 8) as usize;
+    let shift = (at % 8) as u32;
+    let low = u128::from_le_bytes(packed[byte..byte + 16].try_into().expect("sixteen bytes"));
+    let mut held = low >> shift;
+    if shift > 0 {
+        let high = u128::from_le_bytes(
+            packed[byte + 16..byte + 32]
+                .try_into()
+                .expect("sixteen bytes"),
+        );
+        held |= high << (BITS - shift);
+    }
+    if width >= BITS {
+        held
+    } else {
+        held & ((1_u128 << width) - 1)
+    }
+}
+
 /// The cell each node sits in on every level, one word apiece.
+///
+/// # The word is as wide as it needs to be and no wider
+///
+/// A word is read and written as a `u128`, because that is what the shifting
+/// and the exclusive or want it to be. It is *stored* in the bits the levels
+/// actually ask for, which on a continent cut into six is seventy six of the
+/// hundred and twenty eight. Keeping the other fifty two would cost a hundred
+/// and twelve mebibytes of a continent to say nothing at all.
+///
+/// What a caller sees is unchanged: [`word`](Self::word) hands back the same
+/// number it always did, and everything else is written on that.
 pub struct PackedPartition {
-    of_node: Vec<u128>,
+    /// the words, laid end to end at `width` bits apiece
+    packed: Vec<u8>,
+    /// how many bits a word is stored in
+    width: u32,
+    nodes: usize,
     /// where the cell id of each level begins in the word, and one past the
     /// end of the topmost level in the last entry
     begins_at: Vec<u32>,
@@ -93,28 +163,34 @@ impl PackedPartition {
             level_of_bit[bit as usize] = u8::try_from(levels.saturating_sub(1)).unwrap_or(u8::MAX);
         }
 
-        // The cells of a level are read off the level below it rather than
-        // asked of the directory per node, which would walk the parents of
-        // every node once for every level above it.
-        let mut of_node = vec![0_u128; nodes];
-        let mut cell_of_node = (0..nodes)
-            .map(|node| directory.cell_of(node, 0))
-            .collect::<Vec<_>>();
-        for (node, &cell) in cell_of_node.iter().enumerate() {
-            of_node[node] |= u128::from(cell) << begins_at[0];
-        }
-        for (level, &begins) in begins_at.iter().enumerate().take(levels).skip(1) {
-            let parents = directory.parents_on_level(level - 1);
-            for cell in &mut cell_of_node {
-                *cell = parents[*cell as usize];
+        // A word is built and laid down a node at a time, walking the parents
+        // up from the cell it is in at the finest level. The other way round --
+        // a level at a time over every node -- reads better and costs a vector
+        // of whole words the length of the graph to hold what is half built,
+        // which on a continent is more than the packing saves. The parents are
+        // a few hundred thousand entries and stay in cache; the nodes are
+        // millions and are touched once each.
+        let parents: Vec<&[CellId]> = (0..levels.saturating_sub(1))
+            .map(|level| directory.parents_on_level(level))
+            .collect();
+
+        let width = at.max(1);
+        // room to read a whole word past the last one without a bounds check
+        let mut packed = vec![0_u8; (nodes as u64 * u64::from(width)).div_ceil(8) as usize + SPILL];
+        for node in 0..nodes {
+            let mut cell = directory.cell_of(node, 0);
+            let mut word = u128::from(cell) << begins_at[0];
+            for (level, &begins) in begins_at.iter().enumerate().take(levels).skip(1) {
+                cell = parents[level - 1][cell as usize];
+                word |= u128::from(cell) << begins;
             }
-            for (node, &cell) in cell_of_node.iter().enumerate() {
-                of_node[node] |= u128::from(cell) << begins;
-            }
+            write_word(&mut packed, node as u64 * u64::from(width), width, word);
         }
 
         Self {
-            of_node,
+            packed,
+            width,
+            nodes,
             begins_at,
             level_of_bit,
             levels,
@@ -141,7 +217,20 @@ impl PackedPartition {
     /// how many nodes it was built over
     #[must_use]
     pub fn number_of_nodes(&self) -> usize {
-        self.of_node.len()
+        self.nodes
+    }
+
+    /// What the partition takes, which is the bits the levels asked for and
+    /// not a word a node.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        self.packed.capacity() + self.level_of_bit.capacity() + self.begins_at.capacity() * 4
+    }
+
+    /// How many bits a word is stored in.
+    #[must_use]
+    pub fn width(&self) -> u32 {
+        self.width
     }
 
     /// The cells of every level this node sits in, as the one word a caller
@@ -153,7 +242,12 @@ impl PackedPartition {
     #[must_use]
     #[inline]
     pub fn word(&self, node: NodeID) -> u128 {
-        self.of_node[node]
+        assert!(node < self.nodes, "no node {node} in the partition");
+        read_word(
+            &self.packed,
+            node as u64 * u64::from(self.width),
+            self.width,
+        )
     }
 
     /// The cell a node sits in on a level.
@@ -237,6 +331,66 @@ fn bits_for(cells: usize) -> u32 {
 mod tests {
     use super::*;
     use crate::{grid_graph::grid_directory, level_directory::LevelDirectory};
+
+    /// The point of storing at the width the levels ask for: a partition that
+    /// spends a fraction of a word takes a fraction of one.
+    #[test]
+    fn a_partition_takes_the_bits_its_levels_ask_for_and_no_more() {
+        let directory = grid_directory(64);
+        let packed = PackedPartition::of(&directory);
+        let nodes = directory.number_of_nodes();
+
+        let width = packed.width();
+        assert!(width < BITS, "the levels asked for a whole word");
+        assert_eq!(
+            width,
+            *packed.level_layout().last().expect("a layout"),
+            "the width is where the topmost level ends"
+        );
+
+        let whole = nodes * size_of::<u128>();
+        assert!(
+            packed.bytes() < whole,
+            "packed {} bytes against {whole} held whole",
+            packed.bytes()
+        );
+        // and it is about the share of a word the levels actually use
+        let wanted = (nodes as u64 * u64::from(width)).div_ceil(8) as usize;
+        assert!(
+            packed.bytes() >= wanted && packed.bytes() < wanted + SPILL + 4096,
+            "packed {} bytes, wanted about {wanted}",
+            packed.bytes()
+        );
+    }
+
+    /// Every word read back is the word laid down, at every offset a node
+    /// falls on: a width that is not a multiple of eight puts a word across a
+    /// byte boundary in a different place for every node in a run of eight.
+    #[test]
+    fn every_word_reads_back_whatever_the_width_puts_it_across() {
+        for width in [1_u32, 3, 7, 8, 17, 33, 64, 76, 100, 127, 128] {
+            let mask = if width >= BITS {
+                u128::MAX
+            } else {
+                (1_u128 << width) - 1
+            };
+            let words: Vec<u128> = (0..64_u128)
+                .map(|at| (at * 0x9E37_79B9_7F4A_7C15).wrapping_mul(0x1234_5678_9ABC_DEF1) & mask)
+                .collect();
+            let mut packed =
+                vec![0_u8; (words.len() as u64 * u64::from(width)).div_ceil(8) as usize + SPILL];
+            for (at, &word) in words.iter().enumerate() {
+                write_word(&mut packed, at as u64 * u64::from(width), width, word);
+            }
+            for (at, &word) in words.iter().enumerate() {
+                assert_eq!(
+                    read_word(&packed, at as u64 * u64::from(width), width),
+                    word,
+                    "word {at} at width {width}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn a_level_is_given_room_for_the_ids_it_holds() {

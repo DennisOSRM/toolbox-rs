@@ -24,6 +24,7 @@ use toolbox_rs::{
     node_ordering::NodeOrdering,
     overlay::Overlay,
     packed_partition::PackedPartition,
+    paged_graph::PagedGraph,
     paged_overlay::{Budget, Footing, PagedOverlay},
     path_unpacking::Unpacker,
     static_graph::StaticGraph,
@@ -158,7 +159,32 @@ fn main() {
         bytes,
         pinned_share: 0.5,
     };
-    let footing = Footing::of(&graph, &tree, map.len(), 1);
+    // Where a pack of the arcs is at hand, the graph pages too and the footing
+    // stands for its index rather than for its arcs.
+    let arcs = std::env::var("TOOLBOX_ARCS").ok();
+    let paged_arcs = arcs.as_ref().map(|at| {
+        let arc_map: BlockMap = io::read_from_file(&format!("{at}.map"));
+        let first_edges: Vec<u64> = io::read_vec_from_file(&format!("{at}.index"));
+        let room = std::env::var("TOOLBOX_ARC_BUDGET")
+            .ok()
+            .and_then(|mib| mib.parse::<usize>().ok())
+            .unwrap_or(256)
+            * 1024
+            * 1024;
+        let read =
+            PagedGraph::open(Path::new(at), arc_map, &first_edges, room).expect("a graph to open");
+        println!(
+            "the arcs page, holding at most {} MiB",
+            room / (1024 * 1024)
+        );
+        read
+    });
+    at = report("the arcs, if they page", at);
+
+    let footing = match &paged_arcs {
+        Some(read) => Footing::with_partition(read, partition.bytes() as u64, &tree, map.len(), 1),
+        None => Footing::with_partition(&graph, partition.bytes() as u64, &tree, map.len(), 1),
+    };
     let (pinned, cache) = budget.split(&tree, &footing);
     match budget.for_tables(&footing) {
         Ok(left) => println!(
