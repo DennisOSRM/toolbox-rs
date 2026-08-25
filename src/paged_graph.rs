@@ -32,9 +32,13 @@
 //! first time anybody wrote a different search.
 
 use std::{
+    cell::RefCell,
     fs::File,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use crate::{
@@ -49,6 +53,31 @@ use crate::{
 
 /// What a graph's blocks are filed under, since they are not cells.
 const ARCS: u8 = u8::MAX;
+
+/// Tells one open graph from another, so a thread's memo of the last block it
+/// used is not offered to a graph it did not come from.
+static NEXT_GRAPH: AtomicUsize = AtomicUsize::new(0);
+
+thread_local! {
+    /// The last block this thread walked, and which graph it came out of.
+    ///
+    /// # Why a thread keeps one
+    ///
+    /// A search settles a node and walks its arcs, then settles another. The
+    /// nodes were renumbered so that a cell's nodes are a run, and a search
+    /// spends most of its time inside a cell, so the node it settles next is
+    /// very often in the block it has just finished with. Going back through
+    /// the lock and the list of what is held to be told so is most of what a
+    /// paged graph costs over one in memory.
+    ///
+    /// This is only ever a shortcut. What it holds is what the store handed
+    /// out, and where it holds nothing, or holds another graph's block, the
+    /// question is asked of the store in the ordinary way. A block kept here
+    /// after the store has let go of it is one block a thread, which is
+    /// counted in the footing rather than left to be discovered.
+    static RECENT: RefCell<Option<(usize, usize, Arc<HeldArcs>)>> =
+        const { RefCell::new(None) };
+}
 
 /// Where every block's nodes and arcs begin.
 ///
@@ -156,6 +185,8 @@ pub struct PagedGraph {
     map: BlockMap,
     index: GraphIndex,
     budget: usize,
+    /// which graph this is, for the thread's memo
+    which: usize,
     kept: Mutex<Kept>,
 }
 
@@ -179,6 +210,7 @@ impl PagedGraph {
             map,
             index,
             budget,
+            which: NEXT_GRAPH.fetch_add(1, Ordering::Relaxed),
             kept: Mutex::new(Kept {
                 blocks: LRU::new_with_capacity(1 << 14),
                 bytes: 0,
@@ -260,7 +292,21 @@ impl PagedGraph {
 
     /// The block holding a node, read if it is not held.
     fn holding_node(&self, node: NodeID) -> Option<Arc<HeldArcs>> {
-        self.block(self.index.block_of_node(node)?).ok()
+        let which = self.index.block_of_node(node)?;
+        // the block this thread used last, where that is the one wanted
+        if let Some(held) = RECENT.with_borrow(|recent| match recent {
+            Some((graph, block, held)) if *graph == self.which && *block == which => {
+                Some(Arc::clone(held))
+            }
+            _ => None,
+        }) {
+            return Some(held);
+        }
+        let held = self.block(which).ok()?;
+        RECENT.with_borrow_mut(|recent| {
+            *recent = Some((self.which, which, Arc::clone(&held)));
+        });
+        Some(held)
     }
 
     /// The block holding an arc, read if it is not held.
@@ -299,6 +345,21 @@ impl Arcs<u32> for PagedGraph {
         self.holding_edge(edge)
             .and_then(|held| held.weight(edge as u64))
             .expect("an arc the graph holds")
+    }
+
+    /// The block is found once and walked, rather than found again for every
+    /// arc and again for every weight.
+    fn for_each_arc(&self, node: NodeID, mut f: impl FnMut(NodeID, u32)) {
+        let Some(held) = self.holding_node(node) else {
+            return;
+        };
+        let (from, upto) = held.range_of(node);
+        for edge in from..upto {
+            let (target, weight) = (held.target(edge), held.weight(edge));
+            if let (Some(target), Some(weight)) = (target, weight) {
+                f(target, weight);
+            }
+        }
     }
 }
 

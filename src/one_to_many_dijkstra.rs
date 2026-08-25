@@ -138,11 +138,14 @@ impl<S: HeapStats<NodeID>> OneToManySearch<S> {
             // relax outgoing edges, each in one look at the queue: whether
             // the node is on it, what it is held at and whether this is an
             // improvement are the same question asked of the same slot
-            for edge in graph.edge_range(u) {
-                let v = graph.target(edge);
-                let new_distance = distance + graph.weight(edge) as usize;
-                self.queue.insert_or_decrease(v, new_distance, u);
-            }
+            // asked a node at a time rather than an arc at a time, which a
+            // graph in memory does not care about and one on a file does: it
+            // finds the block once here instead of once per arc and once more
+            // per weight
+            let queue = &mut self.queue;
+            graph.for_each_arc(u, |v, weight| {
+                queue.insert_or_decrease(v, distance + weight as usize, u);
+            });
         }
 
         self.reached_target_count == wanted

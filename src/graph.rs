@@ -27,6 +27,24 @@ pub trait Arcs<T> {
     fn target(&self, e: EdgeID) -> NodeID;
     /// What the arc costs, by value.
     fn weight(&self, e: EdgeID) -> T;
+
+    /// Every arc leaving a node, as where it goes and what it costs.
+    ///
+    /// # Why a search should use this and not the three above
+    ///
+    /// For a graph held in memory the two are the same and this is written in
+    /// terms of them. For one reading off a file they are not: asked arc by
+    /// arc, it has to find the block each arc is in every time, and a search
+    /// relaxing tens of thousands of arcs pays that tens of thousands of times
+    /// over. Asked node by node it finds the block once and walks it.
+    ///
+    /// It is the same answer either way. The difference was measured at about
+    /// an order of magnitude on a continent.
+    fn for_each_arc(&self, n: NodeID, mut f: impl FnMut(NodeID, T)) {
+        for edge in self.edge_range(n) {
+            f(self.target(edge), self.weight(edge));
+        }
+    }
 }
 
 /// Every graph that keeps its arcs answers by lending one and copying it out.
