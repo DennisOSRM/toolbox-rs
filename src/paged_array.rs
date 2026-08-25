@@ -168,6 +168,7 @@ impl PagedArray {
             &mut into,
         )?;
         self.reads.fetch_add(1, Ordering::Relaxed);
+        self.pool.note_read();
         let held = Arc::new(into);
         self.pool.put(key, Held::Bytes(Arc::clone(&held)));
         Ok(held)

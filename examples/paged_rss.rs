@@ -16,9 +16,11 @@ use toolbox_rs::{
     block_map::BlockMap,
     block_store::BlockStore,
     cell_tree::CellTree,
+    customization::Customization,
     graph::{Arcs, NodeID},
     io,
-    mld_query::SparseMldQuery,
+    level_directory::LevelDirectory,
+    mld_query::{MldQuery, SparseMldQuery},
     node_ordering::NodeOrdering,
     overlay::Overlay,
     packed_partition::PackedPartition,
@@ -26,6 +28,7 @@ use toolbox_rs::{
     paged_overlay::{Budget, Footing, PagedOverlay},
     path_unpacking::Unpacker,
     pool::Pool,
+    static_graph::StaticGraph,
 };
 
 const MIB: f64 = (1024 * 1024) as f64;
@@ -111,7 +114,7 @@ fn report(step: &str, before: u64) -> u64 {
     now
 }
 
-fn pairs_of(path: &str) -> Vec<(NodeID, NodeID)> {
+fn pairs_of(path: &str) -> Vec<(NodeID, NodeID, u64)> {
     std::fs::read_to_string(path)
         .expect("a file of pairs")
         .lines()
@@ -120,7 +123,11 @@ fn pairs_of(path: &str) -> Vec<(NodeID, NodeID)> {
             let mut fields = line.split(',');
             let source = fields.next()?.trim().parse().ok()?;
             let target = fields.next()?.trim().parse().ok()?;
-            Some((source, target))
+            let rank = fields
+                .next()
+                .and_then(|at| at.trim().parse().ok())
+                .unwrap_or(0);
+            Some((source, target, rank))
         })
         .collect()
 }
@@ -337,20 +344,119 @@ fn main() {
     let mut query = SparseMldQuery::new();
     // the ways go into the same pool the arcs and the tables draw on
     let mut unpacker = Unpacker::sharing(Arc::clone(paged.pool()));
-    if let Some(&(source, target)) = pairs.first() {
+    let mut reads_of = String::new();
+    if let Some(&(source, target, _)) = pairs.first() {
         query.run(&paged, source, &[target]);
     }
     at = report("what a search and an unpacker want", at);
 
+    // A reference to answer against, where one is asked for: the same query
+    // over an instance that holds everything. It costs what an offline
+    // instance was built not to, which is why it is a switch and not the
+    // default -- what it is here for is to say that the answers are the same.
+    let reference = std::env::var("TOOLBOX_VERIFY").ok().map(|at| {
+        let edges = io::read_edges_from_file(&at);
+        let directory: LevelDirectory = io::read_from_file(&_directory_path);
+        println!("a reference instance is being built to answer against");
+        Customization::new(StaticGraph::new(edges), directory)
+    });
+    if let Some(held) = &reference {
+        for level in 0..held.directory().levels() {
+            held.level(level);
+        }
+        println!("the reference is customized");
+    }
+
     let mut ways = 0_usize;
-    for &(source, target) in &pairs {
+    let mut wrong = 0_usize;
+    let mut wrong_way = 0_usize;
+    let mut timings = String::new();
+    let writing = std::env::var("TOOLBOX_TIMINGS").ok();
+    let mut over_memory = MldQuery::new();
+    let mut memory_unpacker = reference
+        .as_ref()
+        .map_or_else(Unpacker::default, Unpacker::for_instance);
+
+    for &(source, target, rank) in &pairs {
+        let before = paged.pool().faults().reads;
         query.clear();
+        let started = Instant::now();
         query.run(&paged, source, &[target]);
+        let offline_nanos = started.elapsed().as_nanos() as u64;
+        let offline = query.distance(target);
+
+        let mut way = None;
+        let started = Instant::now();
         if let Some(packed) = query.retrieve_packed_path(target)
-            && unpacker.unpack(&paged, &packed).is_ok()
+            && let Ok(put_back) = unpacker.unpack(&paged, &packed)
         {
+            way = Some(put_back);
             ways += 1;
         }
+        let unpack_nanos = started.elapsed().as_nanos() as u64;
+        // every read the whole instance made for this pair, of every kind
+        let reads = paged.pool().faults().reads - before;
+
+        if let Some(held) = &reference {
+            over_memory.clear();
+            let started = Instant::now();
+            over_memory.run(held, source, &[target]);
+            let memory_nanos = started.elapsed().as_nanos() as u64;
+            if over_memory.distance(target) != offline {
+                wrong += 1;
+            }
+            // and the way, which has to be the same way and not merely as long
+            if let Some(packed) = over_memory.retrieve_packed_path(target)
+                && let Ok(theirs) = memory_unpacker.unpack(held, &packed)
+                && way.as_ref() != Some(&theirs)
+            {
+                wrong_way += 1;
+            }
+            if writing.is_some() {
+                use std::fmt::Write as _;
+                let _ = writeln!(
+                    timings,
+                    "mld,{source},{target},{rank},{memory_nanos},{}",
+                    over_memory.distance(target)
+                );
+            }
+        }
+        if writing.is_some() {
+            use std::fmt::Write as _;
+            let _ = writeln!(
+                timings,
+                "offline,{source},{target},{rank},{offline_nanos},{offline}"
+            );
+            let _ = writeln!(
+                timings,
+                "offline-unpack,{source},{target},{rank},{unpack_nanos},{offline}"
+            );
+            let _ = writeln!(
+                reads_of,
+                "offline,{source},{target},{rank},{reads},{offline}"
+            );
+        }
+    }
+    if let Some(at) = &writing {
+        use std::io::Write as _;
+        let mut out = std::fs::File::create(format!("{at}.times.csv")).expect("a file");
+        writeln!(out, "engine,source,target,rank,nanos,distance").expect("a header");
+        out.write_all(timings.as_bytes()).expect("the timings");
+        let mut out = std::fs::File::create(format!("{at}.reads.csv")).expect("a file");
+        writeln!(out, "engine,source,target,rank,nanos,distance").expect("a header");
+        out.write_all(reads_of.as_bytes()).expect("the reads");
+        println!("wrote {at}.times.csv and {at}.reads.csv");
+    }
+    if reference.is_some() {
+        println!(
+            "{} pairs answered against a reference: {wrong} wrong distances, {wrong_way} wrong ways",
+            pairs.len()
+        );
+        assert_eq!(
+            wrong, 0,
+            "the offline instance answered a different distance"
+        );
+        assert_eq!(wrong_way, 0, "the offline instance found a different way");
     }
     let full = report("after the queries and the ways", at);
     println!(

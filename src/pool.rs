@@ -90,6 +90,11 @@ pub struct Faults {
     pub hits: usize,
     pub misses: usize,
     pub evicted: usize,
+    /// how many blocks were read off a file, of every kind: arcs, tables, the
+    /// blocks tables come out of, and the fixed-width arrays. Everything that
+    /// reads goes through the pool, so this is what an instance costs in reads
+    /// however many structures it is made of.
+    pub reads: usize,
     /// what the pool is holding, in bytes
     pub held: usize,
     /// the most it has ever held
@@ -220,6 +225,15 @@ impl Pool {
         inside.kept.push(&key, held);
         inside.bytes += cost;
         inside.faults.highest = inside.faults.highest.max(inside.bytes);
+    }
+
+    /// Notes that a block was read off a file.
+    ///
+    /// Called by whatever did the reading rather than by the pool, which never
+    /// reads anything itself: it is asked for a block and told when one had to
+    /// be fetched.
+    pub fn note_read(&self) {
+        self.inside.lock().expect("the pool").faults.reads += 1;
     }
 
     /// Lets go of everything, keeping the room for what comes next.

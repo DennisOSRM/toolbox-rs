@@ -585,6 +585,7 @@ impl<G: Arcs<u32> + Sync, B: Borders + Sync> PagedOverlay<G, B> {
             _ => {
                 let read = Arc::new(self.store.block_at(&entry)?);
                 self.reads.fetch_add(1, Ordering::Relaxed);
+                self.pool.note_read();
                 self.pool.put(key, Held::Block(Arc::clone(&read)));
                 read
             }

@@ -254,6 +254,7 @@ impl PagedGraph {
         let entry = *self.map.entries().get(which).ok_or(NotRead::NotHere)?;
         let held = Arc::new(self.read(&entry)?);
         self.reads.fetch_add(1, Ordering::Relaxed);
+        self.pool.note_read();
         self.pool.put(key, Held::Arcs(Arc::clone(&held)));
         Ok(held)
     }
