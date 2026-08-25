@@ -184,8 +184,16 @@ fn main() {
     }
 
     let map: BlockMap = io::read_from_file(&format!("{blocks_path}.map"));
-    let tree: CellTree = io::read_from_file(&format!("{blocks_path}.tree"));
+    let mut tree: CellTree = io::read_from_file(&format!("{blocks_path}.tree"));
+    // A query asks a tree where a cell's nodes begin and how wide it is, and
+    // nothing else. The children, the parents and the boxes are for building
+    // one and for asking what lies where, and an instance that only answers
+    // routes has no use for them.
+    tree.trim_for_queries();
     at = report("the block map and the cell tree", at);
+    for (part, bytes) in tree.bytes_by_part() {
+        println!("    the tree's {part:<12} {:>7.1} MiB", bytes as f64 / MIB);
+    }
 
     let map_bytes = (map.len() * size_of::<toolbox_rs::block_map::BlockEntry>()) as u64;
     // what every cell of every level would come to unpacked, which is what the

@@ -306,6 +306,10 @@ impl CellTree {
     /// The box a cell's nodes lie in.
     #[must_use]
     pub fn bounds(&self, level: usize, cell: CellId) -> &BoundingBox {
+        assert!(
+            !self.bounds.is_empty(),
+            "the boxes were let go of: this tree was trimmed for queries"
+        );
         &self.bounds[level][cell as usize]
     }
 
@@ -316,6 +320,10 @@ impl CellTree {
         if level == 0 {
             return &[];
         }
+        assert!(
+            !self.children.is_empty(),
+            "the children were let go of: this tree was trimmed for queries"
+        );
         let held = &self.children[level - 1];
         let starts = &self.starts[level - 1];
         let from = starts[cell as usize] as usize;
@@ -354,6 +362,68 @@ impl CellTree {
     #[must_use]
     pub fn nodes_begin(&self, level: usize, cell: CellId) -> u32 {
         self.begins_node[level][cell as usize]
+    }
+
+    /// Lets go of everything only the build wanted.
+    ///
+    /// # What a query asks a tree
+    ///
+    /// Where a cell's nodes begin, and how wide it is. That is all: the store
+    /// reads a table by asking [`facts`](Self::facts) how many border nodes
+    /// the cell has and [`nodes_begin`](Self::nodes_begin) what its first node
+    /// is numbered.
+    ///
+    /// The rest is for building one. The children and the parents lay out the
+    /// hierarchy and give a cell its key, which is what a *packer* needs to
+    /// file a block; the boxes are for asking what lies where, which is a map
+    /// question and not a routing one. On a continent they come to fourteen
+    /// mebibytes against the seven the query half takes.
+    ///
+    /// After this the accessors for them refuse rather than answer wrongly.
+    pub fn trim_for_queries(&mut self) {
+        self.children = Vec::new();
+        self.parents = Vec::new();
+        self.bounds = Vec::new();
+        self.starts = Vec::new();
+    }
+
+    /// Whether this tree still has what only a build wants.
+    #[must_use]
+    pub fn whole(&self) -> bool {
+        !self.parents.is_empty() || self.levels() <= 1
+    }
+
+    /// What each part of the tree takes, so a caller can see which of them a
+    /// query is paying for and which only the build wanted.
+    #[must_use]
+    pub fn bytes_by_part(&self) -> [(&'static str, usize); 7] {
+        let deep = |held: &Vec<Vec<u32>>| held.iter().map(|l| l.capacity() * 4).sum::<usize>();
+        let cells = |held: &Vec<Vec<CellId>>| {
+            held.iter()
+                .map(|l| l.capacity() * size_of::<CellId>())
+                .sum::<usize>()
+        };
+        [
+            ("begins_at", self.begins_at.capacity() * 4),
+            ("starts", deep(&self.starts)),
+            ("children", cells(&self.children)),
+            ("parents", cells(&self.parents)),
+            (
+                "facts",
+                self.facts
+                    .iter()
+                    .map(|l| l.capacity() * size_of::<CellFacts>())
+                    .sum(),
+            ),
+            (
+                "bounds",
+                self.bounds
+                    .iter()
+                    .map(|l| l.capacity() * size_of::<BoundingBox>())
+                    .sum(),
+            ),
+            ("begins_node", deep(&self.begins_node)),
+        ]
     }
 
     /// What the tree takes once read back.
@@ -446,6 +516,10 @@ impl CellTree {
     /// Panics on the topmost level, whose cells have nothing above them.
     #[must_use]
     pub fn parent_of(&self, level: usize, cell: CellId) -> CellId {
+        assert!(
+            !self.parents.is_empty(),
+            "the parents were let go of: this tree was trimmed for queries"
+        );
         self.parents[level][cell as usize]
     }
 
@@ -646,5 +720,60 @@ mod tests {
         let (mut tree, _, _) = tree_of(4);
         tree.version = VERSION + 1;
         assert_eq!(tree.check_version(), Err(VERSION + 1));
+    }
+
+    /// A tree trimmed for queries answers everything a query asks and nothing
+    /// a build does, and takes a fraction of the room.
+    #[test]
+    fn a_trimmed_tree_still_answers_what_a_query_asks() {
+        let (graph, directory, coordinates) = grid(16);
+        let partition = PackedPartition::of(&directory);
+        let whole = CellTree::of(&directory, &partition, &graph, &coordinates);
+
+        let mut trimmed = CellTree::of(&directory, &partition, &graph, &coordinates);
+        trimmed.trim_for_queries();
+        assert!(whole.whole());
+        assert!(!trimmed.whole());
+        assert!(
+            trimmed.bytes() * 2 < whole.bytes(),
+            "trimmed {} bytes against {}",
+            trimmed.bytes(),
+            whole.bytes()
+        );
+
+        // the two a query asks, over every cell of every level
+        assert_eq!(trimmed.levels(), whole.levels());
+        for level in 0..whole.levels() {
+            assert_eq!(trimmed.cells_on_level(level), whole.cells_on_level(level));
+            for cell in 0..whole.cells_on_level(level) as CellId {
+                assert_eq!(trimmed.facts(level, cell), whole.facts(level, cell));
+                assert_eq!(
+                    trimmed.nodes_begin(level, cell),
+                    whole.nodes_begin(level, cell)
+                );
+            }
+            assert_eq!(
+                trimmed.unpacked_bytes(level),
+                whole.unpacked_bytes(level),
+                "level {level}"
+            );
+        }
+        for node in 0..directory.number_of_nodes() {
+            assert_eq!(
+                trimmed.cell_holding_node(0, node),
+                whole.cell_holding_node(0, node)
+            );
+        }
+    }
+
+    /// And refuses what it no longer has, rather than answering wrongly.
+    #[test]
+    #[should_panic(expected = "trimmed for queries")]
+    fn a_trimmed_tree_refuses_what_only_a_build_wanted() {
+        let (graph, directory, coordinates) = grid(16);
+        let partition = PackedPartition::of(&directory);
+        let mut trimmed = CellTree::of(&directory, &partition, &graph, &coordinates);
+        trimmed.trim_for_queries();
+        let _ = trimmed.parent_of(0, 0);
     }
 }
