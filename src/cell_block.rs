@@ -106,11 +106,20 @@ impl CellBlock {
                 cell.wide * cell.wide,
                 "a table is square"
             );
-            assert_eq!(
-                cell.places.is_empty(),
-                border_leads,
-                "a cell says one thing about its border and the block another"
-            );
+            // one place per border node, and none at all where the border
+            // nodes lead the run or where the cell has no border to speak of
+            if border_leads {
+                assert!(
+                    cell.places.is_empty(),
+                    "a block whose border nodes lead was given places anyway"
+                );
+            } else {
+                assert_eq!(
+                    cell.places.len(),
+                    cell.wide,
+                    "a place is wanted for each border node"
+                );
+            }
             let widest = cell
                 .matrix
                 .iter()

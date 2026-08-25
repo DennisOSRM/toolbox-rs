@@ -59,6 +59,25 @@ decades_over <- function(values) {
   values <- values[is.finite(values) & values > 0]
   10^(floor(log10(min(values))):ceiling(log10(max(values))))
 }
+
+# The lower panel is a ratio, and a ratio worth reading is usually within a
+# factor of a few, where decades give one tick and say nothing. These are the
+# multiples a reader looks for, kept to the ones the data reaches, and one is
+# always among them because one is where the two engines cost the same.
+ratios_over <- function(values) {
+  values <- values[is.finite(values) & values > 0]
+  wanted <- c(
+    0.1, 0.125, 0.15, 0.2, 0.25, 0.33, 0.5, 0.6, 0.7, 0.8, 0.9,
+    1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 7.5, 10, 15, 20, 30, 50, 100
+  )
+  kept <- wanted[wanted >= min(values) * 0.98 & wanted <= max(values) * 1.02]
+  sort(unique(c(kept, 1)))
+}
+
+# 1.5 rather than 1.50, and with the sign a reader expects on a multiple
+as_multiple <- function(values) {
+  paste0(formatC(values, format = "fg", drop0trailing = TRUE), "\u00d7")
+}
 plainly <- function(values) formatC(values, format = "fg", drop0trailing = TRUE)
 
 # a bucket holding a handful of samples is drawn like the rest and marked, so
@@ -128,16 +147,23 @@ if (denominator %in% engines && length(engines) > 1) {
   ratios <- sapply(against, function(engine) medians[, engine] / medians[, denominator])
   ratios <- matrix(ratios, nrow = length(exponents), dimnames = list(NULL, against))
   ylim <- range(c(ratios, 1), na.rm = TRUE)
+  # named after the one engine being divided, where there is only one, so the
+  # axis says what is being read rather than "other"
+  measured <- if (length(against) == 1) name_of(against) else "other"
   plot(NA,
     xlim = range(exponents), ylim = ylim, log = "y", xaxt = "n", yaxt = "n",
-    xlab = "Dijkstra rank", ylab = sprintf("other / %s", name_of(denominator))
+    xlab = "Dijkstra rank",
+    ylab = sprintf("%s / %s", measured, name_of(denominator))
   )
+  axis(1, at = exponents, labels = parse(text = sprintf("2^%d", exponents)))
+  ticks <- ratios_over(c(ratios, 1))
+  axis(2, at = ticks, labels = as_multiple(ticks))
+  # a line at each tick, so a point can be read across to the axis rather than
+  # guessed at between two decades
+  abline(h = ticks, col = "#00000014")
   for (engine in against) {
     lines(exponents, ratios[, engine], type = "b", pch = 19, col = colour_of[engine])
   }
-  axis(1, at = exponents, labels = parse(text = sprintf("2^%d", exponents)))
-  ticks <- decades_over(c(ratios, 1))
-  axis(2, at = ticks, labels = plainly(ticks))
   # at one the two cost the same; below it the cells are not paying for
   # themselves, and it should climb as more of them can be stepped over. A
   # curve that does not climb is the thing to look for: every level is sound to
@@ -148,9 +174,11 @@ if (denominator %in% engines && length(engines) > 1) {
   # it, so that nothing is written over the curves. They start low on the left
   # and end high on the right, so the top left corner is the empty one — the
   # bottom right has the line at one running through it.
+  # the largest the ratio gets and where, which is the best of a speedup and
+  # the worst of a slowdown; either way it is the number to look at
   best_of <- sapply(against, function(engine) {
     best <- which.max(ratios[, engine])
-    sprintf("%s / %s (best %.0fx at 2^%d)", name_of(engine), name_of(denominator),
+    sprintf("%s / %s (up to %.2f\u00d7 at 2^%d)", name_of(engine), name_of(denominator),
             ratios[best, engine], exponents[best])
   })
   legend("topleft", legend = best_of, col = colour_of[against],
