@@ -36,7 +36,7 @@ use std::{
     fs::File,
     path::Path,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicUsize, Ordering},
     },
 };
@@ -49,7 +49,7 @@ use crate::{
     cell_tree::CellTree,
     graph::{Arcs, EdgeID, Graph, NodeID},
     graph_block::{GraphBlock, HeldArcs},
-    lru::LRU,
+    pool::{Held, Key, Pool},
 };
 
 /// What a graph's blocks are filed under, since they are not cells.
@@ -163,32 +163,17 @@ impl GraphIndex {
     }
 }
 
-/// What the blocks held cost and how often they were wanted.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ArcFaults {
-    pub hits: usize,
-    pub misses: usize,
-    pub evicted: usize,
-    pub reads: usize,
-    /// what the blocks held come to, unpacked
-    pub held: usize,
-}
-
-struct Kept {
-    blocks: LRU<usize, Arc<HeldArcs>>,
-    bytes: usize,
-    faults: ArcFaults,
-}
-
 /// A graph whose arcs are read off a file as they are wanted.
 pub struct PagedGraph {
     arcs: File,
     map: BlockMap,
     index: GraphIndex,
-    budget: usize,
+    /// the one cache, shared with the tables and the ways
+    pool: Arc<Pool>,
     /// which graph this is, for the thread's memo
     which: usize,
-    kept: Mutex<Kept>,
+    /// how many blocks were read off the file
+    reads: AtomicUsize,
 }
 
 impl PagedGraph {
@@ -203,20 +188,16 @@ impl PagedGraph {
         arcs: &Path,
         map: BlockMap,
         first_edges: &[u64],
-        budget: usize,
+        pool: Arc<Pool>,
     ) -> std::io::Result<Self> {
         let index = GraphIndex::of(&map, first_edges);
         Ok(Self {
             arcs: File::open(arcs)?,
             map,
             index,
-            budget,
+            pool,
             which: NEXT_GRAPH.fetch_add(1, Ordering::Relaxed),
-            kept: Mutex::new(Kept {
-                blocks: LRU::new_with_capacity(1 << 14),
-                bytes: 0,
-                faults: ArcFaults::default(),
-            }),
+            reads: AtomicUsize::new(0),
         })
     }
 
@@ -225,21 +206,16 @@ impl PagedGraph {
         &self.index
     }
 
-    /// How the blocks held have been faring.
+    /// How many blocks of arcs were read off the file.
     #[must_use]
-    pub fn faults(&self) -> ArcFaults {
-        let kept = self.kept.lock().expect("the blocks held");
-        ArcFaults {
-            held: kept.bytes,
-            ..kept.faults
-        }
+    pub fn reads(&self) -> usize {
+        self.reads.load(Ordering::Relaxed)
     }
 
-    /// Lets go of every block held.
-    pub fn forget(&self) {
-        let mut kept = self.kept.lock().expect("the blocks held");
-        kept.blocks.clear();
-        kept.bytes = 0;
+    /// The cache it shares with everything else that reads.
+    #[must_use]
+    pub fn pool(&self) -> &Arc<Pool> {
+        &self.pool
     }
 
     /// Reads a block off the file and unpacks it.
@@ -260,34 +236,16 @@ impl PagedGraph {
         Ok(held)
     }
 
-    /// The block at an ordinal, read if it is not held.
+    /// The block at an ordinal, read if the pool is not holding it.
     fn block(&self, which: usize) -> Result<Arc<HeldArcs>, NotRead> {
-        {
-            let mut kept = self.kept.lock().expect("the blocks held");
-            if let Some(held) = kept.blocks.get(&which) {
-                let held = Arc::clone(held);
-                kept.faults.hits += 1;
-                return Ok(held);
-            }
-            kept.faults.misses += 1;
+        let key = Key::Arcs(u32::try_from(which).map_err(|_| NotRead::NotHere)?);
+        if let Some(Held::Arcs(held)) = self.pool.get(&key) {
+            return Ok(held);
         }
-
         let entry = *self.map.entries().get(which).ok_or(NotRead::NotHere)?;
         let held = Arc::new(self.read(&entry)?);
-        let cost = held.bytes();
-
-        let mut kept = self.kept.lock().expect("the blocks held");
-        kept.faults.reads += 1;
-        // room is made before the block is put down, so the budget bounds what
-        // is held rather than what was held a moment ago
-        while kept.bytes + cost > self.budget
-            && let Some((_, gone)) = kept.blocks.pop_lru()
-        {
-            kept.bytes -= gone.bytes();
-            kept.faults.evicted += 1;
-        }
-        kept.blocks.push(&which, Arc::clone(&held));
-        kept.bytes += cost;
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        self.pool.put(key, Held::Arcs(Arc::clone(&held)));
         Ok(held)
     }
 
@@ -689,7 +647,8 @@ mod tests {
             3,
         )
         .expect("a graph to pack");
-        let read = PagedGraph::open(&path, map, &first_edges, budget).expect("a graph to open");
+        let read =
+            PagedGraph::open(&path, map, &first_edges, Pool::of(budget)).expect("a graph to open");
         (held, read)
     }
 
@@ -720,7 +679,7 @@ mod tests {
                 );
             }
         }
-        let faults = read.faults();
+        let faults = read.pool().faults();
         assert!(faults.evicted > 0, "the budget was never binding");
         assert!(faults.held <= 16 * 1024, "the budget was exceeded");
     }
@@ -736,10 +695,9 @@ mod tests {
                 }
             }
         }
-        let faults = read.faults();
-        assert_eq!(faults.evicted, 0, "nothing was let go of");
+        assert_eq!(read.pool().faults().evicted, 0, "nothing was let go of");
         assert_eq!(
-            faults.reads,
+            read.reads(),
             read.index().blocks(),
             "a block was read more than once"
         );
@@ -849,7 +807,10 @@ mod tests {
             }
         }
         assert!(asked > 100, "the sweep is worth running");
-        assert!(read.faults().evicted > 0, "the budget was never binding");
+        assert!(
+            read.pool().faults().evicted > 0,
+            "the budget was never binding"
+        );
     }
 
     /// The blocks of arcs go into a store keyed the way the cell tables are, so
@@ -899,7 +860,8 @@ mod tests {
         }
 
         // and it still answers as the graph does
-        let read = PagedGraph::open(&path, map, &first_edges, 1 << 20).expect("a graph to open");
+        let read =
+            PagedGraph::open(&path, map, &first_edges, Pool::of(1 << 20)).expect("a graph to open");
         for node in Graph::node_range(&graph) {
             assert_eq!(
                 Arcs::edge_range(&read, node),

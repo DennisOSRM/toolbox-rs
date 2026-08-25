@@ -41,6 +41,8 @@
 
 use std::{cmp::Reverse, collections::BinaryHeap};
 
+use std::sync::Arc;
+
 use rustc_hash::FxHashMap;
 
 use crate::{
@@ -48,7 +50,17 @@ use crate::{
     level_directory::CellId,
     lru::LRU,
     overlay::{CellTable, Overlay},
+    pool::{Held, Key, Pool},
 };
+
+/// A step across a cell, as the pool names it.
+fn way_key(key: (NodeID, NodeID, usize)) -> Key {
+    Key::Way(
+        u32::try_from(key.0).unwrap_or(u32::MAX),
+        u32::try_from(key.1).unwrap_or(u32::MAX),
+        u8::try_from(key.2).unwrap_or(u8::MAX),
+    )
+}
 
 /// What a held way costs beyond its nodes: the key it is filed under, the
 /// vector heading its nodes, and what the cache and its list keep per entry.
@@ -139,6 +151,14 @@ pub fn unpack<O: Overlay>(overlay: &O, packed: &[NodeID]) -> Result<Vec<NodeID>,
 /// what it has crossed, and a caller that wants the room back asks for it with
 /// [`clear`](Self::clear).
 pub struct Unpacker {
+    /// Where the ways go when the unpacker is drawing on the one cache an
+    /// instance keeps, rather than on a budget of its own.
+    ///
+    /// A way put back is worth keeping for exactly the same reason a block of
+    /// arcs is, and given its own budget it takes room the arcs may want more.
+    /// So an instance with a budget for the whole of it hands the same pool to
+    /// the graph, the tables and this.
+    pool: Option<Arc<Pool>>,
     ways: LRU<(NodeID, NodeID, usize), Vec<NodeID>>,
     /// what the ways held come to, kept as they go in and out rather than
     /// walked, since it is asked after every insert
@@ -147,6 +167,17 @@ pub struct Unpacker {
     hits: usize,
     misses: usize,
     evicted: usize,
+}
+
+impl Unpacker {
+    /// An unpacker that keeps its ways in the pool everything else reads from.
+    #[must_use]
+    pub fn sharing(pool: Arc<Pool>) -> Self {
+        Self {
+            pool: Some(pool),
+            ..Self::with_budget(0)
+        }
+    }
 }
 
 impl Default for Unpacker {
@@ -188,6 +219,7 @@ impl Unpacker {
         // is the room that binds and not this.
         let entries = (bytes / (PER_WAY + 2 * size_of::<NodeID>())).max(1);
         Self {
+            pool: None,
             ways: LRU::new_with_capacity(entries),
             bytes: 0,
             budget: bytes,
@@ -247,7 +279,37 @@ impl Unpacker {
 
     /// Files a way, letting go of whatever was used longest ago until what is
     /// held is back inside the room it was given.
+    /// The way already put back for this step, where anything has it.
+    fn held(&mut self, key: (NodeID, NodeID, usize)) -> Option<Vec<NodeID>> {
+        if let Some(pool) = &self.pool {
+            return match pool.get(&way_key(key)) {
+                Some(Held::Way(way)) => {
+                    self.hits += 1;
+                    Some(way.as_ref().clone())
+                }
+                _ => {
+                    self.misses += 1;
+                    None
+                }
+            };
+        }
+        match self.ways.get(&key) {
+            Some(held) => {
+                self.hits += 1;
+                Some(held.clone())
+            }
+            None => {
+                self.misses += 1;
+                None
+            }
+        }
+    }
+
     fn keep(&mut self, key: (NodeID, NodeID, usize), way: &[NodeID]) {
+        if let Some(pool) = &self.pool {
+            pool.put(way_key(key), Held::Way(Arc::new(way.to_vec())));
+            return;
+        }
         let cost = PER_WAY + size_of_val(way);
         if cost > self.budget {
             // a way that would not leave room for itself is not worth holding
@@ -327,11 +389,9 @@ impl Unpacker {
         to: NodeID,
         level: usize,
     ) -> Result<Vec<NodeID>, Unpacking> {
-        if let Some(held) = self.ways.get(&(from, to, level)) {
-            self.hits += 1;
-            return Ok(held.clone());
+        if let Some(held) = self.held((from, to, level)) {
+            return Ok(held);
         }
-        self.misses += 1;
         let partition = overlay.partition();
         let cell = partition.cell_of(from, level);
         let found = within_cell(overlay, from, to, level, cell).ok_or(Unpacking::NoWayAcross {

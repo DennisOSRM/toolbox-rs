@@ -23,7 +23,7 @@ use toolbox_rs::{
     node_ordering::NodeOrdering,
     overlay::Overlay,
     packed_partition::PackedPartition,
-    paged_graph::PagedGraph,
+    paged_graph::{GraphIndex, PagedGraph},
     paged_overlay::{Budget, Footing, PagedOverlay},
     path_unpacking::Unpacker,
 };
@@ -169,31 +169,44 @@ fn main() {
     let arcs = std::env::var("TOOLBOX_ARCS").unwrap_or_else(|_| {
         panic!("set TOOLBOX_ARCS to a pack of arcs; this measures an instance that pages both")
     });
-    let paged_arcs = {
+    let (paged_arcs, pool, footing) = {
         let at = &arcs;
         let arc_map: BlockMap = io::read_from_file(&format!("{at}.map"));
         let first_edges: Vec<u64> = io::read_vec_from_file(&format!("{at}.index"));
-        let room = std::env::var("TOOLBOX_ARC_BUDGET")
-            .ok()
-            .and_then(|mib| mib.parse::<usize>().ok())
-            .unwrap_or(256)
-            * 1024
-            * 1024;
-        let read =
-            PagedGraph::open(Path::new(at), arc_map, &first_edges, room).expect("a graph to open");
+        // The pool is sized before anything is opened, because everything that
+        // reads draws on the same one: the arcs, the tables and the ways an
+        // unpacker keeps. Its size is the budget less what stands whatever
+        // happens, and the index is what the graph stands for.
+        let index = GraphIndex::of(&arc_map, &first_edges);
+        let footing = Footing {
+            graph: index.bytes() as u64,
+            partition: partition.bytes() as u64,
+            // nothing: the levels ride in the arc blocks
+            border_levels: 0,
+            block_map: (map.len() * size_of::<toolbox_rs::block_map::BlockEntry>()) as u64,
+            cell_tree: (0..tree.levels())
+                .map(|level| {
+                    (tree.cells_on_level(level) * size_of::<toolbox_rs::cell_tree::CellFacts>())
+                        as u64
+                })
+                .sum(),
+            // nothing: the queue keeps only what a run touched
+            searches: 0,
+        };
+        let pool = budget.pool_for(&tree, &footing);
         println!(
-            "the arcs page, holding at most {} MiB",
-            room / (1024 * 1024)
+            "one pool of {:.1} MiB for the arcs, the tables and the ways alike",
+            pool.budget() as f64 / MIB
         );
-        read
+        let read = PagedGraph::open(Path::new(at), arc_map, &first_edges, Arc::clone(&pool))
+            .expect("a graph to open");
+        (read, pool, footing)
     };
     at = report("the arcs, which page too", at);
 
     // the sparse queue, since an array over the nodes of a continent is more
     // than half of a hundred and twenty eight megabyte budget standing still
-    let footing =
-        Footing::with_partition(&paged_arcs, partition.bytes() as u64, &tree, map.len(), 1)
-            .with_sparse_searches();
+
     let (pinned, cache) = budget.split(&tree, &footing);
     match budget.for_tables(&footing) {
         Ok(left) => println!(
@@ -242,12 +255,13 @@ fn main() {
     // arcs they belong to, so the graph is what answers for them and the same
     // handle serves as both.
     let held = Arc::new(paged_arcs);
-    let paged = PagedOverlay::within(
+    let paged = PagedOverlay::sharing(
         store,
         Arc::clone(&held),
         partition,
         Arc::clone(&held),
         budget,
+        pool,
     );
     let open = opening.elapsed();
     at = report("the held levels, read and unpacked", at);
@@ -255,7 +269,8 @@ fn main() {
     // the arrays a search wants, which go with the nodes of the graph and not
     // with the budget: one query is run to make it allocate them
     let mut query = SparseMldQuery::new();
-    let mut unpacker = Unpacker::for_instance(&paged);
+    // the ways go into the same pool the arcs and the tables draw on
+    let mut unpacker = Unpacker::sharing(Arc::clone(paged.pool()));
     if let Some(&(source, target)) = pairs.first() {
         query.run(&paged, source, &[target]);
     }
@@ -272,9 +287,21 @@ fn main() {
         }
     }
     let full = report("after the queries and the ways", at);
+    println!(
+        "  the queue came to {:.1} MiB, which no budget bounds",
+        query.bytes() as f64 / MIB
+    );
 
     let faults = paged.faults();
     let tables = paged.pinned_bytes() as u64 + faults.held as u64;
+    let pool = paged.pool().faults();
+    println!(
+        "\nthe pool: {:.1} MiB of {:.1} MiB held, most ever {:.1} MiB, {} let go of",
+        pool.held as f64 / MIB,
+        paged.pool().budget() as f64 / MIB,
+        pool.highest as f64 / MIB,
+        pool.evicted,
+    );
     println!();
     println!(
         "budget {:.0} MiB: {:.1} MiB held outright, {:.1} MiB for the cache, opened in {open:.1?}",

@@ -28,31 +28,28 @@
 //! depending on which ones a search happened to want.
 
 use rayon::prelude::*;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 /// How many blocks are kept in hand while their cells are unpacked.
 ///
-/// A block is wanted only while the cells around it are being read; a few is
-/// enough to keep a search walking cells side by side from reading the same
-/// block twice, and more would be room better given to the tables.
-const BLOCKS_IN_HAND: usize = 8;
-
 use crate::{
     block_map::BlockEntry,
     block_store::{BlockStore, NotRead},
     border_levels::{BorderLevels, Borders},
-    cell_block::CellBlock,
     cell_tree::{CellFacts, CellTree},
     graph::{Arcs, NodeID},
     level_directory::CellId,
-    lru::LRU,
     overlay::{CellTable, Overlay},
     packed_partition::PackedPartition,
+    pool::{Held, Key, Pool},
     static_graph::StaticGraph,
 };
 
 /// One cell's table, as it is once read off the file.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct HeldTable {
     /// the table, row by row
     matrix: Vec<u32>,
@@ -333,6 +330,16 @@ impl Budget {
         from
     }
 
+    /// The pool a budget leaves room for, once the footing and the levels held
+    /// outright are paid for.
+    ///
+    /// A caller that pages its arcs makes this first and hands it to the graph
+    /// and to the overlay alike.
+    #[must_use]
+    pub fn pool_for(&self, tree: &CellTree, footing: &Footing) -> Arc<Pool> {
+        Pool::of(self.split(tree, footing).1)
+    }
+
     /// What the held levels come to, and what is left for the cache.
     ///
     /// Both are out of what the tables were left, so the two and the footing
@@ -357,29 +364,16 @@ pub struct PagedOverlay<G = StaticGraph<u32>, B = BorderLevels> {
     graph: G,
     partition: PackedPartition,
     borders: B,
-    kept: Mutex<Kept>,
-    budget: usize,
+    /// the one cache, shared with the arcs and the ways
+    pool: Arc<Pool>,
+    /// how many blocks were read off the file, and how many tables came out of
+    /// a block already in the pool
+    reads: AtomicUsize,
+    unpacked: AtomicUsize,
     /// the lowest level held outright, and the level count when none is
     pin_from: usize,
     /// the held levels, from `pin_from` up, and nothing for a cell with no table
     pinned: Vec<Vec<Option<Arc<HeldTable>>>>,
-}
-
-struct Kept {
-    tables: LRU<(u8, CellId), Arc<HeldTable>>,
-    bytes: usize,
-    /// The blocks a table was last unpacked out of.
-    ///
-    /// A read is of a block and a table is of a cell, and a block holds many
-    /// cells. Without this, two cells of one block are two reads of that block
-    /// and two passes of the codec over it, which for a search walking cells
-    /// side by side is nearly every read it makes.
-    ///
-    /// Held apart from the tables and given a fixed few, since a block is
-    /// wanted only while the cells around it are being unpacked and a table is
-    /// wanted for as long as the search keeps coming back to it.
-    blocks: LRU<(u8, CellId), Arc<CellBlock>>,
-    faults: Faults,
 }
 
 impl<G: Arcs<u32> + Sync, B: Borders + Sync> PagedOverlay<G, B> {
@@ -390,24 +384,18 @@ impl<G: Arcs<u32> + Sync, B: Borders + Sync> PagedOverlay<G, B> {
         graph: G,
         partition: PackedPartition,
         borders: B,
-        budget: usize,
+        pool: Arc<Pool>,
     ) -> Self {
         Self {
             store,
             graph,
             partition,
             borders,
-            // room for the entries, which the budget in bytes bounds; the
-            // count is only what the map is made large enough for
             pin_from: usize::MAX,
             pinned: Vec::new(),
-            kept: Mutex::new(Kept {
-                tables: LRU::new_with_capacity(1 << 16),
-                bytes: 0,
-                blocks: LRU::new_with_capacity(BLOCKS_IN_HAND),
-                faults: Faults::default(),
-            }),
-            budget,
+            pool,
+            reads: AtomicUsize::new(0),
+            unpacked: AtomicUsize::new(0),
         }
     }
 
@@ -429,6 +417,35 @@ impl<G: Arcs<u32> + Sync, B: Borders + Sync> PagedOverlay<G, B> {
         borders: B,
         budget: Budget,
     ) -> Self {
+        let cache = {
+            let footing = Footing::with_partition(
+                &graph,
+                partition.bytes() as u64,
+                store.tree(),
+                store.map().len(),
+                1,
+            );
+            budget.split(store.tree(), &footing).1
+        };
+        Self::sharing(store, graph, partition, borders, budget, Pool::of(cache))
+    }
+
+    /// The same, over a pool that something else is drawing on too.
+    ///
+    /// This is what an instance whose arcs also page uses: the graph is opened
+    /// over the pool, the overlay is opened over the same one, and the ways an
+    /// unpacker keeps go into it as well, so one number bounds the lot. Given
+    /// a pool apiece they would each respect their own and together respect
+    /// nothing.
+    #[must_use]
+    pub fn sharing(
+        store: BlockStore,
+        graph: G,
+        partition: PackedPartition,
+        borders: B,
+        budget: Budget,
+        pool: Arc<Pool>,
+    ) -> Self {
         let footing = Footing::with_partition(
             &graph,
             partition.bytes() as u64,
@@ -437,10 +454,9 @@ impl<G: Arcs<u32> + Sync, B: Borders + Sync> PagedOverlay<G, B> {
             1,
         );
         let pin_from = budget.pin_from(store.tree(), &footing);
-        let (_, cache) = budget.split(store.tree(), &footing);
         let levels = store.tree().levels();
 
-        let mut held = Self::new(store, graph, partition, borders, cache);
+        let mut held = Self::new(store, graph, partition, borders, pool);
         held.pinned = (pin_from..levels)
             .map(|level| {
                 (0..held.store.tree().cells_on_level(level) as CellId)
@@ -482,11 +498,21 @@ impl<G: Arcs<u32> + Sync, B: Borders + Sync> PagedOverlay<G, B> {
     /// Panics if another thread failed while holding the cache.
     #[must_use]
     pub fn faults(&self) -> Faults {
-        let kept = self.kept.lock().expect("the cache is poisoned");
+        let pool = self.pool.faults();
         Faults {
-            held: kept.bytes,
-            ..kept.faults
+            hits: pool.hits as u64,
+            misses: pool.misses as u64,
+            evicted: pool.evicted as u64,
+            reads: self.reads.load(Ordering::Relaxed) as u64,
+            unpacked: self.unpacked.load(Ordering::Relaxed) as u64,
+            held: pool.held,
         }
+    }
+
+    /// The cache it shares with everything else that reads.
+    #[must_use]
+    pub fn pool(&self) -> &Arc<Pool> {
+        &self.pool
     }
 
     /// Throws everything away, which a run that measures a cold store wants.
@@ -495,9 +521,7 @@ impl<G: Arcs<u32> + Sync, B: Borders + Sync> PagedOverlay<G, B> {
     ///
     /// Panics if another thread failed while holding the cache.
     pub fn forget(&self) {
-        let mut kept = self.kept.lock().expect("the cache is poisoned");
-        kept.tables.clear();
-        kept.bytes = 0;
+        self.pool.forget();
     }
 
     /// Reads a cell off the file, or hands back the one already held.
@@ -521,32 +545,12 @@ impl<G: Arcs<u32> + Sync, B: Borders + Sync> PagedOverlay<G, B> {
                 .ok_or(NotRead::NotHere);
         }
 
-        let key = (u8::try_from(level).map_err(|_| NotRead::NotHere)?, cell);
-        {
-            let mut kept = self.kept.lock().expect("the cache is poisoned");
-            if let Some(held) = kept.tables.get(&key) {
-                let held = held.clone();
-                kept.faults.hits += 1;
-                return Ok(held);
-            }
+        let key = Key::Table(u8::try_from(level).map_err(|_| NotRead::NotHere)?, cell);
+        if let Some(Held::Table(held)) = self.pool.get(&key) {
+            return Ok(held);
         }
-
         let held = self.read(level, cell)?;
-
-        let mut kept = self.kept.lock().expect("the cache is poisoned");
-        kept.faults.misses += 1;
-        kept.bytes += held.bytes();
-        if let Some((_, was)) = kept.tables.push(&key, held.clone()) {
-            kept.bytes -= was.bytes();
-        }
-        // and then down to the budget, oldest first
-        while kept.bytes > self.budget && kept.tables.len() > 1 {
-            let Some((_, was)) = kept.tables.pop_lru() else {
-                break;
-            };
-            kept.bytes -= was.bytes();
-            kept.faults.evicted += 1;
-        }
+        self.pool.put(key, Held::Table(Arc::clone(&held)));
         Ok(held)
     }
 
@@ -556,30 +560,24 @@ impl<G: Arcs<u32> + Sync, B: Borders + Sync> PagedOverlay<G, B> {
     /// through it would stop every other thread.
     fn read(&self, level: usize, cell: CellId) -> Result<Arc<HeldTable>, NotRead> {
         let entry = self.store.entry_of(level, cell).ok_or(NotRead::NotHere)?;
-        let key = (
+        let key = Key::Block(
             u8::try_from(level).map_err(|_| NotRead::NotHere)?,
             entry.first_cell,
         );
 
-        // the block this cell is in, off the file or out of the few in hand
-        let block = {
-            let mut kept = self.kept.lock().expect("the cache is poisoned");
-            kept.blocks.get(&key).cloned()
-        };
-        let block = match block {
-            Some(block) => {
-                self.kept
-                    .lock()
-                    .expect("the cache is poisoned")
-                    .faults
-                    .unpacked += 1;
+        // the block this cell is in, off the file or out of the pool: a read
+        // is of a block and a table is of a cell, and a block holds many, so
+        // two cells of one block would otherwise be two reads and two passes
+        // of the codec
+        let block = match self.pool.get(&key) {
+            Some(Held::Block(block)) => {
+                self.unpacked.fetch_add(1, Ordering::Relaxed);
                 block
             }
-            None => {
+            _ => {
                 let read = Arc::new(self.store.block_at(&entry)?);
-                let mut kept = self.kept.lock().expect("the cache is poisoned");
-                kept.faults.reads += 1;
-                kept.blocks.push(&key, read.clone());
+                self.reads.fetch_add(1, Ordering::Relaxed);
+                self.pool.put(key, Held::Block(Arc::clone(&read)));
                 read
             }
         };
@@ -816,7 +814,7 @@ mod tests {
             PackedPartition::of(&directory),
             BorderLevels::of(&graph, &partition),
             // deliberately small, so that tables are thrown away and read again
-            8 * 1024,
+            Pool::of(8 * 1024),
         );
 
         let mut over_memory = MldQuery::new();
@@ -947,8 +945,8 @@ mod tests {
 
         // both under budgets too small to hold what they are for, so both are
         // reading throughout rather than reading once and running in memory
-        let paged_graph =
-            PagedGraph::open(&arcs, arc_map, &first_edges, 8 * 1024).expect("a graph to open");
+        let paged_graph = PagedGraph::open(&arcs, arc_map, &first_edges, Pool::of(8 * 1024))
+            .expect("a graph to open");
         let footing = Footing::of(&paged_graph, &tree, 4, 1);
         assert!(
             footing.graph < (crate::graph::Graph::number_of_edges(&graph) * 8) as u64 / 4,
@@ -988,7 +986,7 @@ mod tests {
         }
         assert!(asked > 100, "the sweep is worth running");
         assert!(
-            paged.graph().faults().reads > 0,
+            paged.graph().reads() > 0,
             "the arcs were never read off the file"
         );
     }
@@ -1143,7 +1141,7 @@ mod tests {
             StaticGraph::new(edges),
             PackedPartition::of(&directory),
             BorderLevels::of(&graph, &partition),
-            1 << 20,
+            Pool::of(1 << 20),
         );
         assert!(paged.distances_of(0, 0).is_none());
     }
