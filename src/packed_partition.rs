@@ -31,6 +31,11 @@
 //! actually are. This is what OSRM's `MultiLevelPartition` does with a
 //! `GetHighestDifferentLevel` over sixty four bits.
 
+use std::{
+    cell::Cell,
+    sync::atomic::{AtomicUsize, Ordering},
+};
+
 use crate::{
     graph::NodeID,
     level_directory::{CellId, LevelDirectory},
@@ -39,79 +44,97 @@ use crate::{
 /// How many bits a word has to spend, and the most a partition may ask for.
 const BITS: u32 = 128;
 
-/// Room past the last word, so a read of a whole word from the last one does
-/// not run off the end and does not have to be checked for.
-const SPILL: usize = 32;
+/// Tells one partition from another, so a thread's memo of the last run it
+/// wanted is not offered to a partition it did not come from.
+static NEXT_PARTITION: AtomicUsize = AtomicUsize::new(0);
 
-/// Puts a word down at a bit offset.
-fn write_word(packed: &mut [u8], at: u64, width: u32, value: u128) {
-    let byte = (at / 8) as usize;
-    let shift = (at % 8) as u32;
-    let mask = if width >= BITS {
-        u128::MAX
-    } else {
-        (1_u128 << width) - 1
-    };
-    let value = value & mask;
-
-    // the word straddles at most seventeen bytes, which two overlapping
-    // sixteen byte reads cover
-    let low = u128::from_le_bytes(packed[byte..byte + 16].try_into().expect("sixteen bytes"));
-    let laid = low | (value << shift);
-    packed[byte..byte + 16].copy_from_slice(&laid.to_le_bytes());
-    if shift > 0 {
-        let over = value >> (BITS - shift);
-        if over != 0 {
-            let high = u128::from_le_bytes(
-                packed[byte + 16..byte + 32]
-                    .try_into()
-                    .expect("sixteen bytes"),
-            );
-            packed[byte + 16..byte + 32].copy_from_slice(&(high | over).to_le_bytes());
-        }
-    }
+thread_local! {
+    /// The last run this thread wanted, and whose partition it belongs to.
+    ///
+    /// A search settles a node and then another, and the nodes of a cell are a
+    /// run, so the two are usually in the same one. This is only a shortcut:
+    /// where it holds nothing, or another partition's run, the search is done.
+    static RECENT: Cell<Option<(usize, u32, u32, u128)>> = const { Cell::new(None) };
 }
 
-/// Picks a word back up from a bit offset.
-#[inline]
-fn read_word(packed: &[u8], at: u64, width: u32) -> u128 {
-    let byte = (at / 8) as usize;
-    let shift = (at % 8) as u32;
-    let low = u128::from_le_bytes(packed[byte..byte + 16].try_into().expect("sixteen bytes"));
-    let mut held = low >> shift;
-    if shift > 0 {
-        let high = u128::from_le_bytes(
-            packed[byte + 16..byte + 32]
-                .try_into()
-                .expect("sixteen bytes"),
-        );
-        held |= high << (BITS - shift);
+/// Writes a sorted run of entries down in Eytzinger order.
+///
+/// Walked in order, `k`, `2k`, `2k + 1` visits the entries smallest first, so
+/// filling them in that order puts each where a search will look for it.
+fn lay_out(
+    k: usize,
+    runs: usize,
+    at: &mut usize,
+    from: &[(u32, u32, u128)],
+    begins: &mut [u32],
+    ends: &mut [u32],
+    words: &mut [u128],
+) {
+    if k > runs {
+        return;
     }
-    if width >= BITS {
-        held
-    } else {
-        held & ((1_u128 << width) - 1)
-    }
+    lay_out(2 * k, runs, at, from, begins, ends, words);
+    let (first, upto, word) = from[*at];
+    begins[k] = first;
+    ends[k] = upto;
+    words[k] = word;
+    *at += 1;
+    lay_out(2 * k + 1, runs, at, from, begins, ends, words);
 }
 
-/// The cell each node sits in on every level, one word apiece.
+/// The cell each node sits in on every level.
 ///
-/// # The word is as wide as it needs to be and no wider
+/// # One entry a cell, not a word a node
 ///
-/// A word is read and written as a `u128`, because that is what the shifting
-/// and the exclusive or want it to be. It is *stored* in the bits the levels
-/// actually ask for, which on a continent cut into six is seventy six of the
-/// hundred and twenty eight. Keeping the other fifty two would cost a hundred
-/// and twelve mebibytes of a continent to say nothing at all.
+/// Every node of a cell of the finest level is in that cell, and so in its
+/// parent, and in its parent's parent: the whole word is the same for all of
+/// them. The nodes were renumbered so that a cell's nodes are a run, which is
+/// what let a cell table be found by a range and a block of arcs be keyed by
+/// one. It does the same thing here: the words come in runs, and a run is
+/// worth storing once.
 ///
-/// What a caller sees is unchanged: [`word`](Self::word) hands back the same
-/// number it always did, and everything else is written on that.
+/// On a continent that is six hundred thousand runs against eighteen million
+/// nodes. A partition that took a hundred and sixty three mebibytes takes
+/// fourteen.
+///
+/// Where the numbering is *not* in cell order this still holds -- a run is
+/// ended wherever the word changes, and in the worst case there is one a node,
+/// which is what the old layout was. It costs correctness nothing and saves
+/// nothing.
+///
+/// # Why the runs are laid out the way they are
+///
+/// A node is turned back into its run by looking for the last run that begins
+/// at or before it, which is a binary search. Laid out in order, that search
+/// touches a different cache line at every step and the last few steps are the
+/// only ones that were ever going to be near each other.
+///
+/// So they are laid out in Eytzinger order instead: the array is the binary
+/// search tree written down breadth first, so the root is first, its two
+/// children next to each other after it, their four children after those. The
+/// steps a search takes are `k`, `2k`, `4k` -- reads that walk forward through
+/// memory rather than halving their way across it, and the first several steps
+/// share a cache line.
+///
+/// # And most searches do not happen
+///
+/// A search settles a node and then another, and the nodes of a cell are a
+/// run, so the next node is very often in the run just used. Each thread keeps
+/// the last run it wanted, which turns the common case into two comparisons.
 pub struct PackedPartition {
-    /// the words, laid end to end at `width` bits apiece
-    packed: Vec<u8>,
-    /// how many bits a word is stored in
-    width: u32,
+    /// where each run begins and ends, and the word every node of it has, all
+    /// three in Eytzinger order and all three one based: entry zero is unused
+    /// so that the children of `k` are `2k` and `2k + 1`
+    begins: Vec<u32>,
+    ends: Vec<u32>,
+    words: Vec<u128>,
+    /// how many runs there are
+    runs: usize,
     nodes: usize,
+    /// how many bits of a word the levels asked for
+    width: u32,
+    /// which partition this is, for the thread's memo
+    which: usize,
     /// where the cell id of each level begins in the word, and one past the
     /// end of the topmost level in the last entry
     begins_at: Vec<u32>,
@@ -163,34 +186,59 @@ impl PackedPartition {
             level_of_bit[bit as usize] = u8::try_from(levels.saturating_sub(1)).unwrap_or(u8::MAX);
         }
 
-        // A word is built and laid down a node at a time, walking the parents
-        // up from the cell it is in at the finest level. The other way round --
-        // a level at a time over every node -- reads better and costs a vector
-        // of whole words the length of the graph to hold what is half built,
-        // which on a continent is more than the packing saves. The parents are
-        // a few hundred thousand entries and stay in cache; the nodes are
-        // millions and are touched once each.
+        // A word is built a node at a time, walking the parents up from the
+        // cell it is in at the finest level, and kept only where it differs
+        // from the one before: every node of a cell has the same word, so what
+        // this writes down is a run a cell rather than a word a node.
         let parents: Vec<&[CellId]> = (0..levels.saturating_sub(1))
             .map(|level| directory.parents_on_level(level))
             .collect();
 
-        let width = at.max(1);
-        // room to read a whole word past the last one without a bounds check
-        let mut packed = vec![0_u8; (nodes as u64 * u64::from(width)).div_ceil(8) as usize + SPILL];
-        for node in 0..nodes {
+        let word_of = |node: NodeID| -> u128 {
             let mut cell = directory.cell_of(node, 0);
             let mut word = u128::from(cell) << begins_at[0];
             for (level, &begins) in begins_at.iter().enumerate().take(levels).skip(1) {
                 cell = parents[level - 1][cell as usize];
                 word |= u128::from(cell) << begins;
             }
-            write_word(&mut packed, node as u64 * u64::from(width), width, word);
+            word
+        };
+
+        let mut sorted: Vec<(u32, u32, u128)> = Vec::new();
+        for node in 0..nodes {
+            let word = word_of(node);
+            let at = u32::try_from(node).expect("a node in four bytes");
+            match sorted.last_mut() {
+                Some((_, upto, held)) if *held == word => *upto = at + 1,
+                _ => sorted.push((at, at + 1, word)),
+            }
         }
 
+        let runs = sorted.len();
+        let mut begins = vec![0_u32; runs + 1];
+        let mut ends = vec![0_u32; runs + 1];
+        let mut words = vec![0_u128; runs + 1];
+        let mut placed = 0;
+        lay_out(
+            1,
+            runs,
+            &mut placed,
+            &sorted,
+            &mut begins,
+            &mut ends,
+            &mut words,
+        );
+        debug_assert_eq!(placed, runs, "a run was not laid out");
+        drop(sorted);
+
         Self {
-            packed,
-            width,
+            begins,
+            ends,
+            words,
+            runs,
             nodes,
+            width: at.max(1),
+            which: NEXT_PARTITION.fetch_add(1, Ordering::Relaxed),
             begins_at,
             level_of_bit,
             levels,
@@ -224,7 +272,11 @@ impl PackedPartition {
     /// not a word a node.
     #[must_use]
     pub fn bytes(&self) -> usize {
-        self.packed.capacity() + self.level_of_bit.capacity() + self.begins_at.capacity() * 4
+        self.begins.capacity() * size_of::<u32>()
+            + self.ends.capacity() * size_of::<u32>()
+            + self.words.capacity() * size_of::<u128>()
+            + self.level_of_bit.capacity()
+            + self.begins_at.capacity() * size_of::<u32>()
     }
 
     /// How many bits a word is stored in.
@@ -243,11 +295,47 @@ impl PackedPartition {
     #[inline]
     pub fn word(&self, node: NodeID) -> u128 {
         assert!(node < self.nodes, "no node {node} in the partition");
-        read_word(
-            &self.packed,
-            node as u64 * u64::from(self.width),
-            self.width,
-        )
+        let node = node as u32;
+
+        // the run this thread wanted last, where the node is in it too
+        if let Some((which, first, upto, word)) = RECENT.get()
+            && which == self.which
+            && node >= first
+            && node < upto
+        {
+            return word;
+        }
+
+        // Eytzinger: the tree is walked from its root, going right where a run
+        // begins at or before the node and left where it begins after, and the
+        // last one gone right at is the run wanted
+        let mut k = 1;
+        let mut found = 0;
+        while k <= self.runs {
+            if self.begins[k] <= node {
+                found = k;
+                k = 2 * k + 1;
+            } else {
+                k *= 2;
+            }
+        }
+        assert!(found > 0, "no run holds node {node}");
+        RECENT.set(Some((
+            self.which,
+            self.begins[found],
+            self.ends[found],
+            self.words[found],
+        )));
+        self.words[found]
+    }
+
+    /// How many runs the partition came to.
+    ///
+    /// One a cell of the finest level where the nodes are numbered in cell
+    /// order, and one a node at worst.
+    #[must_use]
+    pub fn runs(&self) -> usize {
+        self.runs
     }
 
     /// The cell a node sits in on a level.
@@ -332,61 +420,62 @@ mod tests {
     use super::*;
     use crate::{grid_graph::grid_directory, level_directory::LevelDirectory};
 
-    /// The point of storing at the width the levels ask for: a partition that
-    /// spends a fraction of a word takes a fraction of one.
+    /// The point of the runs: a node of a cell has the word every other node
+    /// of that cell has, so the partition is a run a cell and not a word a
+    /// node.
     #[test]
-    fn a_partition_takes_the_bits_its_levels_ask_for_and_no_more() {
+    fn a_partition_is_a_run_a_cell_and_not_a_word_a_node() {
         let directory = grid_directory(64);
         let packed = PackedPartition::of(&directory);
         let nodes = directory.number_of_nodes();
 
-        let width = packed.width();
-        assert!(width < BITS, "the levels asked for a whole word");
-        assert_eq!(
-            width,
-            *packed.level_layout().last().expect("a layout"),
-            "the width is where the topmost level ends"
+        assert!(
+            packed.runs() < nodes,
+            "{} runs against {nodes} nodes",
+            packed.runs()
         );
-
         let whole = nodes * size_of::<u128>();
         assert!(
             packed.bytes() < whole,
-            "packed {} bytes against {whole} held whole",
+            "{} bytes against {whole} at a word a node",
             packed.bytes()
         );
-        // and it is about the share of a word the levels actually use
-        let wanted = (nodes as u64 * u64::from(width)).div_ceil(8) as usize;
-        assert!(
-            packed.bytes() >= wanted && packed.bytes() < wanted + SPILL + 4096,
-            "packed {} bytes, wanted about {wanted}",
-            packed.bytes()
-        );
+
+        // and every node still reads back the word its own cells make
+        for node in 0..nodes {
+            for level in 0..directory.levels() {
+                assert_eq!(
+                    packed.cell_of(node, level),
+                    directory.cell_of(node, level),
+                    "node {node} on level {level}"
+                );
+            }
+        }
     }
 
-    /// Every word read back is the word laid down, at every offset a node
-    /// falls on: a width that is not a multiple of eight puts a word across a
-    /// byte boundary in a different place for every node in a run of eight.
+    /// The search has to find the run whatever order the words come in, and a
+    /// numbering that is not in cell order is the case that makes runs of one.
     #[test]
-    fn every_word_reads_back_whatever_the_width_puts_it_across() {
-        for width in [1_u32, 3, 7, 8, 17, 33, 64, 76, 100, 127, 128] {
-            let mask = if width >= BITS {
-                u128::MAX
-            } else {
-                (1_u128 << width) - 1
-            };
-            let words: Vec<u128> = (0..64_u128)
-                .map(|at| (at * 0x9E37_79B9_7F4A_7C15).wrapping_mul(0x1234_5678_9ABC_DEF1) & mask)
-                .collect();
-            let mut packed =
-                vec![0_u8; (words.len() as u64 * u64::from(width)).div_ceil(8) as usize + SPILL];
-            for (at, &word) in words.iter().enumerate() {
-                write_word(&mut packed, at as u64 * u64::from(width), width, word);
-            }
-            for (at, &word) in words.iter().enumerate() {
+    fn every_node_finds_its_run_however_the_words_run() {
+        for side in [4_usize, 8, 16, 32] {
+            let directory = grid_directory(side);
+            let packed = PackedPartition::of(&directory);
+            let nodes = directory.number_of_nodes();
+            assert!(packed.runs() >= 1);
+
+            // asked out of order and twice over, so the thread's memo is both
+            // used and missed rather than only ever walked forward through
+            for node in (0..nodes).rev().chain(0..nodes) {
                 assert_eq!(
-                    read_word(&packed, at as u64 * u64::from(width), width),
-                    word,
-                    "word {at} at width {width}"
+                    packed.word(node),
+                    packed
+                        .level_layout()
+                        .iter()
+                        .take(directory.levels())
+                        .enumerate()
+                        .fold(0_u128, |word, (level, &begins)| word
+                            | (u128::from(directory.cell_of(node, level)) << begins)),
+                    "node {node} of a grid of {side}"
                 );
             }
         }

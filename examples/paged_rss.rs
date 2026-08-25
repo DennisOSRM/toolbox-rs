@@ -17,7 +17,7 @@ use toolbox_rs::{
     block_store::BlockStore,
     border_levels::BorderLevels,
     cell_tree::CellTree,
-    graph::{Graph, NodeID},
+    graph::{Arcs, NodeID},
     io,
     level_directory::LevelDirectory,
     mld_query::MldQuery,
@@ -122,7 +122,12 @@ fn main() {
         PackedPartition::of(&directory)
     };
     at = report("the partition, directory dropped", at);
-    let border_levels = BorderLevels::of(&graph, &partition);
+    println!(
+        "  the partition is {} runs over {} nodes, {:.1} MiB",
+        partition.runs(),
+        partition.number_of_nodes(),
+        partition.bytes() as f64 / MIB
+    );
     at = report("the border levels", at);
 
     // The pairs are translated here rather than later, and what translates them
@@ -161,8 +166,11 @@ fn main() {
     };
     // Where a pack of the arcs is at hand, the graph pages too and the footing
     // stands for its index rather than for its arcs.
-    let arcs = std::env::var("TOOLBOX_ARCS").ok();
-    let paged_arcs = arcs.as_ref().map(|at| {
+    let arcs = std::env::var("TOOLBOX_ARCS").unwrap_or_else(|_| {
+        panic!("set TOOLBOX_ARCS to a pack of arcs; this measures an instance that pages both")
+    });
+    let paged_arcs = {
+        let at = &arcs;
         let arc_map: BlockMap = io::read_from_file(&format!("{at}.map"));
         let first_edges: Vec<u64> = io::read_vec_from_file(&format!("{at}.index"));
         let room = std::env::var("TOOLBOX_ARC_BUDGET")
@@ -178,13 +186,11 @@ fn main() {
             room / (1024 * 1024)
         );
         read
-    });
-    at = report("the arcs, if they page", at);
-
-    let footing = match &paged_arcs {
-        Some(read) => Footing::with_partition(read, partition.bytes() as u64, &tree, map.len(), 1),
-        None => Footing::with_partition(&graph, partition.bytes() as u64, &tree, map.len(), 1),
     };
+    at = report("the arcs, which page too", at);
+
+    let footing =
+        Footing::with_partition(&paged_arcs, partition.bytes() as u64, &tree, map.len(), 1);
     let (pinned, cache) = budget.split(&tree, &footing);
     match budget.for_tables(&footing) {
         Ok(left) => println!(
@@ -229,7 +235,8 @@ fn main() {
     }
     let store = BlockStore::open(Path::new(&blocks_path), map, tree).expect("a store");
     let opening = Instant::now();
-    let paged = PagedOverlay::within(store, graph, partition, border_levels, budget);
+    let border_levels = BorderLevels::of(&graph, &partition);
+    let paged = PagedOverlay::within(store, paged_arcs, partition, border_levels, budget);
     let open = opening.elapsed();
     at = report("the held levels, read and unpacked", at);
 
@@ -281,18 +288,18 @@ fn main() {
     // now and both are still resident.
     let nodes = paged.graph().number_of_nodes() as u64;
     let arcs = paged.graph().number_of_edges() as u64;
+    line("the graph", footing.graph, "8 bytes an arc, 4 a node");
     line(
-        "the graph",
-        arcs * 8 + nodes * 4,
-        "8 bytes an arc, 4 a node",
+        "the partition",
+        footing.partition,
+        "a run a cell, not a word a node",
     );
-    line("the partition", nodes * 16, "one u128 a node");
     line("the border levels", nodes, "one byte a node");
     line("the block map", map_bytes, "one entry a block");
     line("the cell tree", tree_bytes, "one entry a cell");
     line("the cell tables", tables, "<- the budget governs this one");
     println!("  {:-<34} {:->13}", "", "");
-    let accounted = arcs * 8 + nodes * 21 + map_bytes + tree_bytes + tables;
+    let accounted = footing.total() - footing.searches + tables;
     line("accounted for", accounted, "");
     line("resident", full, "");
     println!(
@@ -313,8 +320,13 @@ fn main() {
         100.0 * tables as f64 / full as f64,
     );
     println!(
-        "The graph and the partition alone are {:.1} MiB, and no budget reaches them.",
-        (arcs * 8 + nodes * 20) as f64 / MIB
+        "The whole instance -- graph, partition and all -- stands in {:.1} MiB before tables.",
+        footing.total() as f64 / MIB
+    );
+    println!(
+        "It would be {:.1} MiB with the arcs held and a word a node: the arcs alone are {:.1}.",
+        (footing.total() + arcs * 8 + nodes * 4 + nodes * 16 - footing.partition) as f64 / MIB,
+        (arcs * 8 + nodes * 4) as f64 / MIB,
     );
     println!(
         "Every cell table of every level would be {:.1} MiB unpacked, so the budget holds {:.0}%.",
