@@ -179,6 +179,34 @@ impl PagedArray {
         held.get(at..at + N)?.try_into().ok()
     }
 
+    /// The entry at a number, copied into a buffer, and false past the end.
+    ///
+    /// The width is the array's own rather than a constant the caller names,
+    /// which is what an entry whose size is known at run time needs: a caller
+    /// indexing a shape this crate does not know about cannot write its width
+    /// into a turbofish.
+    ///
+    /// # Panics
+    ///
+    /// Panics for a buffer shorter than an entry.
+    pub fn get_into(&self, index: usize, into: &mut [u8]) -> bool {
+        assert!(
+            into.len() >= self.wide,
+            "a buffer of {} bytes for an entry of {}",
+            into.len(),
+            self.wide
+        );
+        if index >= self.entries {
+            return false;
+        }
+        let Ok(held) = self.block(index / self.apiece) else {
+            return false;
+        };
+        let at = (index % self.apiece) * self.wide;
+        into[..self.wide].copy_from_slice(&held[at..at + self.wide]);
+        true
+    }
+
     /// The block at an ordinal, read if the pool is not holding it.
     fn block(&self, which: usize) -> Result<Arc<Vec<u8>>, NotRead> {
         let key = Key::Array(
