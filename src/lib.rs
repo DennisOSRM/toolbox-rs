@@ -78,7 +78,6 @@ pub mod path_unpacking;
 pub mod polyline;
 pub mod pool;
 pub mod prim_complete_graph;
-pub mod r_tree;
 pub mod rdx_sort;
 pub mod renumbering_table;
 pub mod run_iterator;

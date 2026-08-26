@@ -1,22 +1,19 @@
 //! The nearest node, or the nearest piece of road, to a place on the map.
 //!
-//! # What this is, beside [`RTree`](crate::r_tree::RTree)
+//! # What became of the other R-tree
 //!
-//! There is already an R-tree here, and it already browses by distance. What
-//! it does not do is page: it holds a vector of nodes and a vector of leaves,
-//! which is the thing an offline instance cannot afford. This is the same walk
-//! over a tree that is either held or read, the way
-//! [`PackedPartition`](crate::packed_partition::PackedPartition) and
-//! [`CellTree`](crate::cell_tree::CellTree) are, so one implementation answers
-//! for both.
+//! There was a second one here, `r_tree`, which browsed by distance over a
+//! tree of `Vec`s. It could not page, which is the thing an offline instance
+//! most needs, and it was used by nothing. What it had that this did not --
+//! asking what lies in a patch of the map rather than what is nearest a point
+//! -- is [`intersecting`](NearestIndex::intersecting), and what it had that
+//! was worth more, the [`Metric`](crate::metric::Metric) abstraction, this now
+//! measures through. There is one tree here.
 //!
-//! It also measures differently, and for a reason. `RTree` is generic over a
-//! [`Metric`](crate::metric::Metric), whose default is great-circle, and whose
-//! own documentation records that its bound on a box is a flat rectangle's and
-//! so can read too long -- which is exactly the contract a browse rests on.
-//! Here everything is measured in one scaled plane, boxes and segments alike,
-//! so the bound holds by construction. The two are worth reconciling; they are
-//! not reconciled yet.
+//! That abstraction recorded a mismatch it could not fix: its great-circle
+//! bound on a box is a flat rectangle's, and can read too long, which is
+//! exactly the contract a browse rests on. [`Scaled`] is the measure that does
+//! satisfy it, and is what this uses.
 //!
 //! # Distance browsing
 //!
@@ -77,8 +74,9 @@ use rkyv::{Archive, Deserialize, Serialize};
 use crate::{
     block_store::read_at,
     bounding_box::BoundingBox,
-    geometry::{FPCoordinate, Point2D, Segment, distance_to_segment_2d},
+    geometry::FPCoordinate,
     graph::Arcs,
+    metric::{Metric, Scaled},
     paged_array::PagedArray,
     pool::Pool,
 };
@@ -92,13 +90,6 @@ pub const VERSION: u16 = 1;
 /// Thirty two keeps the tree five deep over a continent and a box's children
 /// inside one read of the array they are in.
 pub const FAN: usize = 32;
-
-/// How many fixed-point degrees make a degree, which is what the coordinates
-/// are in.
-const FIXED: f64 = 1_000_000.0;
-
-/// Roughly how many metres a degree of latitude is.
-const METRES_A_DEGREE: f64 = 111_320.0;
 
 /// What the index is over.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
@@ -172,8 +163,8 @@ pub struct NearestIndex {
     counts: Vec<u32>,
     boxes: Boxes,
     items: Items,
-    /// longitude times this is the plane everything is measured in
-    lon_scale: f64,
+    /// the plane everything is measured in
+    plane: Scaled,
 }
 
 impl NearestIndex {
@@ -233,10 +224,9 @@ impl NearestIndex {
                 .flat_map(|item| [item.from, item.to])
                 .collect::<Vec<_>>(),
         );
-        let middle = whole.center();
-        let lon_scale = (f64::from(middle.lat) / FIXED).to_radians().cos();
+        let plane = Scaled::about(&whole);
 
-        sort_tile_recursive(&mut items, lon_scale);
+        sort_tile_recursive(&mut items, plane.lon_scale);
 
         // the bottom row of boxes, one over every FAN things, and then a row
         // over every FAN of those until one is left
@@ -278,7 +268,7 @@ impl NearestIndex {
             counts,
             boxes: Boxes::Held(boxes),
             items: Items::Held(items),
-            lon_scale,
+            plane,
         }
     }
 
@@ -362,7 +352,7 @@ impl NearestIndex {
             for which in 0..self.counts[top] as usize {
                 let box_at = self.box_at(top, which);
                 queue.push(Nearer {
-                    away: scaled_min_distance(&box_at, at, self.lon_scale),
+                    away: self.plane.min_distance(&box_at, &at),
                     what: Step::Boxes(top, which),
                 });
             }
@@ -371,6 +361,34 @@ impl NearestIndex {
             over: self,
             at,
             queue,
+        }
+    }
+
+    /// Every thing whose own box meets the given one, in no particular order.
+    ///
+    /// This is the other question a tree of boxes answers, and the one
+    /// [`RTree`](crate::r_tree::RTree) called `intersecting`: what lies in
+    /// this patch of the map, rather than what is nearest to this point. It
+    /// walks the same implicit tree, keeping whatever meets the box and
+    /// dropping whole subtrees that do not.
+    ///
+    /// A thing is handed out when the box round it meets the query, which for
+    /// a segment is the box round its two ends: a road may be kept whose line
+    /// misses the query even though the box round it does not.
+    #[must_use]
+    pub fn intersecting(&self, within: BoundingBox) -> Intersecting<'_> {
+        let mut stack = Vec::new();
+        if self.objects > 0 {
+            let top = self.counts.len() - 1;
+            for which in (0..self.counts[top] as usize).rev() {
+                stack.push((top, which));
+            }
+        }
+        Intersecting {
+            over: self,
+            within,
+            stack,
+            things: Vec::new(),
         }
     }
 
@@ -397,7 +415,7 @@ impl NearestIndex {
             fan: u32::try_from(self.fan).expect("a fan in four bytes"),
             objects: self.objects as u64,
             counts: self.counts.clone(),
-            lon_scale: self.lon_scale,
+            lon_scale: self.plane.lon_scale,
         };
         let head = rkyv::to_bytes::<rkyv::rancor::Error>(&head)
             .map_err(|why| std::io::Error::other(format!("an index will not serialize: {why}")))?;
@@ -477,7 +495,9 @@ impl NearestIndex {
                 ITEM_BYTES,
                 Arc::clone(pool),
             )?),
-            lon_scale: head.lon_scale,
+            plane: Scaled {
+                lon_scale: head.lon_scale,
+            },
         })
     }
 }
@@ -485,29 +505,6 @@ impl NearestIndex {
 /// Four bytes of a written coordinate.
 fn word(held: &[u8]) -> i32 {
     i32::from_le_bytes(held.try_into().expect("four bytes"))
-}
-
-/// A place in the plane everything is measured in.
-fn flat(place: FPCoordinate, lon_scale: f64) -> Point2D {
-    Point2D {
-        x: f64::from(place.lon) * lon_scale,
-        y: f64::from(place.lat),
-    }
-}
-
-/// How far a box is, in that plane, and nothing where the query is inside it.
-fn scaled_min_distance(held: &BoundingBox, at: FPCoordinate, lon_scale: f64) -> f64 {
-    let near = held.nearest_point(&at);
-    let (a, b) = (flat(near, lon_scale), flat(at, lon_scale));
-    ((a.x - b.x).powi(2) + (a.y - b.y).powi(2)).sqrt()
-}
-
-/// How far a thing is, in that plane, and where on it the near point is.
-fn scaled_item_distance(item: &Item, at: FPCoordinate, lon_scale: f64) -> (f64, Point2D) {
-    distance_to_segment_2d(
-        &flat(at, lon_scale),
-        &Segment(flat(item.from, lon_scale), flat(item.to, lon_scale)),
-    )
 }
 
 /// What is on the queue: a row of boxes, or a thing.
@@ -576,7 +573,7 @@ impl Iterator for Browsing<'_> {
                     return Some(Found {
                         what: item.what,
                         at: FPCoordinate::new(lat, lon),
-                        away: away * METRES_A_DEGREE / FIXED,
+                        away: self.over.plane.metres(away),
                     });
                 }
                 Step::Boxes(level, which) => {
@@ -586,15 +583,13 @@ impl Iterator for Browsing<'_> {
                         let upto = (first + self.over.fan).min(self.over.objects);
                         for at in first..upto {
                             let item = self.over.item_at(at);
-                            let (away, near) =
-                                scaled_item_distance(&item, self.at, self.over.lon_scale);
+                            let (away, near) = self
+                                .over
+                                .plane
+                                .distance_to_segment(&self.at, &item.from, &item.to);
                             self.queue.push(Nearer {
                                 away,
-                                what: Step::Thing(
-                                    at,
-                                    near.y as i32,
-                                    (near.x / self.over.lon_scale) as i32,
-                                ),
+                                what: Step::Thing(at, near.lat, near.lon),
                             });
                         }
                     } else {
@@ -604,7 +599,7 @@ impl Iterator for Browsing<'_> {
                         for child in first..upto {
                             let held = self.over.box_at(level - 1, child);
                             self.queue.push(Nearer {
-                                away: scaled_min_distance(&held, self.at, self.over.lon_scale),
+                                away: self.over.plane.min_distance(&held, &self.at),
                                 what: Step::Boxes(level - 1, child),
                             });
                         }
@@ -651,12 +646,12 @@ fn sort_tile_recursive(items: &mut [Item], lon_scale: f64) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{edge::InputEdge, static_graph::StaticGraph};
 
     /// Places spread over a patch of Europe, at a spacing a road network has.
-    fn places(side: usize) -> Vec<FPCoordinate> {
+    pub(crate) fn places(side: usize) -> Vec<FPCoordinate> {
         let mut held = Vec::new();
         for row in 0..side {
             for column in 0..side {
@@ -669,7 +664,7 @@ mod tests {
         held
     }
 
-    fn grid_graph(side: usize) -> StaticGraph<u32> {
+    pub(crate) fn grid_graph(side: usize) -> StaticGraph<u32> {
         let mut edges = Vec::new();
         for row in 0..side {
             for column in 0..side {
@@ -692,7 +687,7 @@ mod tests {
     fn by_hand(index: &NearestIndex, items: &[Item], at: FPCoordinate) -> f64 {
         items
             .iter()
-            .map(|item| scaled_item_distance(item, at, index.lon_scale).0)
+            .map(|item| index.plane.distance_to_segment(&at, &item.from, &item.to).0)
             .fold(f64::INFINITY, f64::min)
     }
 
@@ -722,7 +717,7 @@ mod tests {
             let at = asked(which);
             let found = index.nearest(at).expect("a node");
             let wanted = by_hand(&index, &items, at);
-            let away = found.away * FIXED / METRES_A_DEGREE;
+            let away = found.away / index.plane.metres(1.0);
             assert!(
                 (away - wanted).abs() < 1e-6,
                 "asked {which}: found {away}, nearest is {wanted}"
@@ -748,7 +743,7 @@ mod tests {
             let at = asked(which);
             let found = index.nearest(at).expect("a segment");
             let wanted = by_hand(&index, &items, at);
-            let away = found.away * FIXED / METRES_A_DEGREE;
+            let away = found.away / index.plane.metres(1.0);
             assert!(
                 (away - wanted).abs() < 1e-6,
                 "asked {which}: found {away}, nearest is {wanted}"
@@ -802,7 +797,7 @@ mod tests {
         ] {
             let found = index.nearest(at).expect("a node");
             let wanted = by_hand(&index, &items, at);
-            assert!((found.away * FIXED / METRES_A_DEGREE - wanted).abs() < 1e-6);
+            assert!((found.away / index.plane.metres(1.0) - wanted).abs() < 1e-6);
         }
     }
 
@@ -888,8 +883,7 @@ mod tests {
             let at = asked(which);
             for level in 0..index.levels() {
                 for node in 0..index.counts[level] as usize {
-                    let floor =
-                        scaled_min_distance(&index.box_at(level, node), at, index.lon_scale);
+                    let floor = index.plane.min_distance(&index.box_at(level, node), &at);
                     // everything under this box, walked down to the things
                     let mut wide = vec![node];
                     for below in (0..level).rev() {
@@ -903,14 +897,139 @@ mod tests {
                     }
                     for &page in &wide {
                         for at_item in page * FAN..((page + 1) * FAN).min(index.len()) {
-                            let away =
-                                scaled_item_distance(&index.item_at(at_item), at, index.lon_scale)
-                                    .0;
+                            let item = index.item_at(at_item);
+                            let away = index.plane.distance_to_segment(&at, &item.from, &item.to).0;
                             assert!(
                                 floor <= away + 1e-9,
                                 "a box at level {level} says {floor} and holds {away}"
                             );
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Every thing of an index whose box meets a given one.
+pub struct Intersecting<'a> {
+    over: &'a NearestIndex,
+    within: BoundingBox,
+    /// boxes still to look at, as a row and a place in it
+    stack: Vec<(usize, usize)>,
+    /// things found under the box last opened, still to hand out
+    things: Vec<Item>,
+}
+
+impl Iterator for Intersecting<'_> {
+    type Item = Item;
+
+    fn next(&mut self) -> Option<Item> {
+        loop {
+            if let Some(item) = self.things.pop() {
+                return Some(item);
+            }
+            let (level, which) = self.stack.pop()?;
+            if !self.over.box_at(level, which).intersects(&self.within) {
+                continue;
+            }
+            if level == 0 {
+                let first = which * self.over.fan;
+                let upto = (first + self.over.fan).min(self.over.objects);
+                for at in first..upto {
+                    let item = self.over.item_at(at);
+                    if BoundingBox::from_coordinates(&[item.from, item.to]).intersects(&self.within)
+                    {
+                        self.things.push(item);
+                    }
+                }
+            } else {
+                let first = which * self.over.fan;
+                let upto = (first + self.over.fan).min(self.over.counts[level - 1] as usize);
+                for child in first..upto {
+                    self.stack.push((level - 1, child));
+                }
+            }
+        }
+    }
+}
+
+/// What the tree answers besides "what is nearest": the box query the other
+/// R-tree had, and the measure that makes both of them right.
+#[cfg(test)]
+mod asking {
+    use super::{tests::*, *};
+
+    /// Everything in a patch of the map, and nothing outside it.
+    #[test]
+    fn asking_what_lies_in_a_box_finds_what_lies_in_it() {
+        let side = 32;
+        let index = NearestIndex::over_nodes(&places(side));
+        let items: Vec<Item> = (0..index.len()).map(|at| index.item_at(at)).collect();
+
+        for (low, high) in [
+            ((48_050_000, 9_050_000), (48_150_000, 9_150_000)),
+            ((0, 0), (90_000_000, 90_000_000)),
+            ((47_000_000, 8_000_000), (47_100_000, 8_100_000)),
+        ] {
+            let within = BoundingBox::from_coordinates(&[
+                FPCoordinate::new(low.0, low.1),
+                FPCoordinate::new(high.0, high.1),
+            ]);
+            let mut found: Vec<u32> = index.intersecting(within).map(|item| item.what).collect();
+            found.sort_unstable();
+            let mut wanted: Vec<u32> = items
+                .iter()
+                .filter(|item| within.contains(&item.from))
+                .map(|item| item.what)
+                .collect();
+            wanted.sort_unstable();
+            assert_eq!(found, wanted, "the box {low:?}..{high:?}");
+        }
+    }
+
+    /// And it answers the same read off a file as held.
+    #[test]
+    fn a_box_query_answers_the_same_off_a_file() {
+        let held = tempfile::tempdir().expect("a directory to write in");
+        let path = held.path().join("index");
+        let whole = NearestIndex::over_segments(&grid_graph(24), &places(24));
+        whole.save(&path).expect("an index to write");
+        let read = NearestIndex::open(&path, &Pool::of(2 * crate::paged_array::BLOCK_BYTES))
+            .expect("an index to read");
+
+        let within = BoundingBox::from_coordinates(&[
+            FPCoordinate::new(48_030_000, 9_030_000),
+            FPCoordinate::new(48_090_000, 9_090_000),
+        ]);
+        let mut one: Vec<u32> = whole.intersecting(within).map(|item| item.what).collect();
+        let mut other: Vec<u32> = read.intersecting(within).map(|item| item.what).collect();
+        one.sort_unstable();
+        other.sort_unstable();
+        assert!(!one.is_empty(), "the box holds nothing to compare");
+        assert_eq!(one, other);
+    }
+
+    /// The measure a browse rests on: the scaled plane's bound on a box is
+    /// never longer than the distance to a point of that box.
+    #[test]
+    fn the_scaled_plane_bounds_a_box_from_below() {
+        let plane = Scaled::about_latitude(48_000_000);
+        let held = BoundingBox::from_coordinates(&[
+            FPCoordinate::new(48_000_000, 9_000_000),
+            FPCoordinate::new(48_500_000, 10_000_000),
+        ]);
+        for lat in [47_000_000, 48_200_000, 49_500_000] {
+            for lon in [8_000_000, 9_500_000, 11_000_000] {
+                let at = FPCoordinate::new(lat, lon);
+                let bound = plane.min_distance(&held, &at);
+                for corner_lat in [48_000_000, 48_250_000, 48_500_000] {
+                    for corner_lon in [9_000_000, 9_500_000, 10_000_000] {
+                        let inside = FPCoordinate::new(corner_lat, corner_lon);
+                        assert!(
+                            bound <= plane.distance(&at, &inside) + 1e-9,
+                            "the bound {bound} is longer than a point of the box"
+                        );
                     }
                 }
             }
