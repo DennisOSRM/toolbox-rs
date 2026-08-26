@@ -7,6 +7,18 @@ pub struct BoundingBox {
 }
 
 impl BoundingBox {
+    /// A box between two corners, for a caller that has them already.
+    #[must_use]
+    pub const fn between(min: FPCoordinate, max: FPCoordinate) -> Self {
+        Self { min, max }
+    }
+
+    /// The two corners, for writing a box down and reading it back.
+    #[must_use]
+    pub const fn corners(&self) -> (FPCoordinate, FPCoordinate) {
+        (self.min, self.max)
+    }
+
     pub fn from_coordinates(coordinates: &[FPCoordinate]) -> BoundingBox {
         debug_assert!(!coordinates.is_empty());
         let mut min_coordinate = FPCoordinate::max();

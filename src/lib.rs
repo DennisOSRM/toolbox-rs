@@ -62,6 +62,7 @@ pub mod metis;
 pub mod metric;
 pub mod mld_query;
 pub mod mvt;
+pub mod nearest;
 pub mod node_ordering;
 pub mod one_iterator;
 pub mod one_to_many_dijkstra;
