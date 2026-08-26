@@ -29,6 +29,10 @@ output <- if (length(args) >= 2) args[2] else "ranks.png"
 denominator <- if (length(args) >= 3) args[3] else "mld"
 # what the rows are timings of; only the wording changes with it
 measuring <- if (length(args) >= 4) args[4] else "query time"
+# What the `nanos` column actually holds. Times are the usual case and are
+# drawn in milliseconds; a count -- blocks read for a query, say -- is drawn as
+# it stands, since there is no unit to convert it into.
+counting <- length(args) >= 5 && args[5] == "count"
 
 timings <- read.csv(input, stringsAsFactors = FALSE)
 for (column in c("engine", "rank", "nanos")) {
@@ -44,7 +48,10 @@ if (nrow(timings) == 0) {
 
 # milliseconds read better than nanoseconds, and the rank axis is drawn at the
 # exponent so the ticks say 2^10 rather than 1024
-timings$millis <- timings$nanos / 1e6
+# A query that read nothing is a real answer and a log axis has nowhere to put
+# it, so counts are floored at a half: everything drawn at the bottom of the
+# axis read nothing at all.
+timings$millis <- if (counting) pmax(timings$nanos, 0.5) else timings$nanos / 1e6
 timings$exponent <- round(log2(timings$rank))
 engines <- sort(unique(timings$engine))
 exponents <- sort(unique(timings$exponent))
@@ -65,6 +72,12 @@ name_of <- function(engine) ifelse(engine %in% names(display), display[engine], 
 decades_over <- function(values) {
   values <- values[is.finite(values) & values > 0]
   10^(floor(log10(min(values))):ceiling(log10(max(values))))
+}
+
+# a count reads better in ones and tens than in powers of ten alone
+counts_over <- function(values) {
+  wanted <- c(0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000)
+  wanted[wanted >= min(values) * 0.9 & wanted <= max(values) * 1.1]
 }
 
 # The lower panel is a ratio, and a ratio worth reading is usually within a
@@ -93,12 +106,24 @@ THIN <- 5
 counts <- table(timings$exponent)
 thin <- as.integer(names(counts)[counts < THIN * length(engines)])
 
-palette <- c("#3060c0", "#c05030", "#309050", "#9050b0")
+# enough for a sweep of block sizes with the engine they are measured against
+palette <- c(
+  "#3060c0", "#c05030", "#309050", "#9050b0",
+  "#c09030", "#30909c", "#a03060", "#606060"
+)
 colour_of <- setNames(palette[seq_along(engines)], engines)
 
 png(output, width = 1400, height = 1000, res = 130)
-layout(matrix(c(1, 2), nrow = 2), heights = c(2, 1))
-par(mar = c(1.5, 4.5, 2.5, 1), las = 1)
+# The lower panel is a ratio, and there is no ratio to draw where only one
+# engine wrote to the file: it gets the whole device instead of two thirds of
+# it and a line of apology.
+ratio_panel <- length(engines) > 1 && denominator %in% engines
+if (ratio_panel) {
+  layout(matrix(c(1, 2), nrow = 2), heights = c(2, 1))
+  par(mar = c(1.5, 4.5, 2.5, 1), las = 1)
+} else {
+  par(mar = c(4.5, 4.5, 2.5, 1), las = 1)
+}
 
 # what each engine costs, as a box per bucket
 groups <- list()
@@ -117,13 +142,18 @@ for (index in seq_along(exponents)) {
 
 boxplot(groups,
   at = at, boxwex = width * 0.9, col = fill, log = "y",
-  xaxt = "n", yaxt = "n", xlab = "", ylab = "milliseconds",
+  xaxt = "n", yaxt = "n", xlab = "",
+  ylab = if (counting) measuring else "milliseconds",
   main = sprintf("%s by Dijkstra rank (%s)", measuring, basename(input)),
   outcex = 0.3, whisklty = 1, staplewex = 0.5
 )
 axis(1, at = exponents, labels = parse(text = sprintf("2^%d", exponents)))
-ticks <- decades_over(timings$millis)
-axis(2, at = ticks, labels = plainly(ticks))
+ticks <- if (counting) counts_over(timings$millis) else decades_over(timings$millis)
+axis(2, at = ticks, labels = if (counting) {
+  ifelse(ticks < 1, "none", formatC(ticks, format = "d", big.mark = ","))
+} else {
+  plainly(ticks)
+})
 abline(v = exponents[-1] - 0.5, col = "#00000012")
 # the searches climb from left to right, so the top left corner is the one
 # nothing is drawn in
@@ -135,6 +165,16 @@ if (length(thin) > 0) {
 }
 
 # and what one is worth against another, which is the curve to read
+if (!ratio_panel) {
+  mtext("Dijkstra rank", side = 1, line = 3.2)
+  invisible(dev.off())
+  cat(sprintf(
+    "wrote %s: %d timings, %d engines, ranks 2^%d to 2^%d\n",
+    output, nrow(timings), length(engines), min(exponents), max(exponents)
+  ))
+  quit(status = 0)
+}
+
 par(mar = c(4.5, 4.5, 1, 1))
 medians <- sapply(engines, function(engine) {
   sapply(exponents, function(exponent) {

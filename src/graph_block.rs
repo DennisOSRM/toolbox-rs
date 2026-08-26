@@ -413,6 +413,44 @@ impl HeldArcs {
             .then(|| usize::from(self.borders[(edge - self.first_edge) as usize]) > level)
     }
 
+    /// How much room it is holding that nothing is in, which is what makes a
+    /// recycled buffer worth having.
+    #[cfg(test)]
+    #[must_use]
+    pub fn spare(&self) -> usize {
+        self.targets.capacity() - self.targets.len()
+    }
+
+    /// Fills it with nothing in particular, for a test that wants a block of a
+    /// size rather than a block of anything.
+    #[cfg(test)]
+    pub fn pretend(&mut self, edges: usize) {
+        self.starts.clear();
+        self.starts.push(0);
+        self.targets.clear();
+        self.weights.clear();
+        self.borders.clear();
+        for at in 0..edges {
+            self.targets.push(at as u32);
+            self.weights.push(1);
+            self.borders.push(0);
+        }
+        self.starts.push(edges as u32);
+    }
+
+    /// Empties it, keeping the room, so it can be filled again.
+    ///
+    /// This is what makes a block read cheap the second time round: the
+    /// vectors are the same vectors, and nothing is asked of the allocator.
+    pub fn empty(&mut self) {
+        self.starts.clear();
+        self.targets.clear();
+        self.weights.clear();
+        self.borders.clear();
+        self.first_node = 0;
+        self.first_edge = 0;
+    }
+
     /// What this takes.
     #[must_use]
     pub fn bytes(&self) -> usize {

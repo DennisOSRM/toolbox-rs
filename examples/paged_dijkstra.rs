@@ -26,6 +26,7 @@ use toolbox_rs::{
     one_to_many_dijkstra::OneToManyDijkstra,
     packed_partition::PackedPartition,
     paged_graph::{PagedGraph, pack},
+    pool::Pool,
     static_graph::StaticGraph,
 };
 
@@ -129,6 +130,22 @@ fn main() {
         );
         io::write_to_file(&format!("{arcs_path}.map"), &map);
         io::write_vec_to_file(&index_path, &first_edges);
+        // the level information, settled once here so that opening an instance
+        // never reads a directory it is going to throw away
+        partition
+            .save(Path::new(&format!("{arcs_path}.partition")))
+            .expect("a partition to write");
+        // and the query half of the cell tree, so that opening an instance
+        // never reads the build half to throw it away
+        let mut trimmed = tree.clone();
+        trimmed.trim_for_queries();
+        io::write_to_file(&format!("{arcs_path}.tree"), &trimmed);
+        // and the two arrays a query asks of a tree, so an instance reads them
+        // a block at a time rather than keeping one entry a cell
+        trimmed
+            .save_cells(Path::new(&format!("{arcs_path}.cells")))
+            .expect("the cells to write");
+        println!("wrote the partition, the trimmed tree and its cells beside the arcs");
         (map, first_edges)
     };
 
@@ -148,8 +165,8 @@ fn main() {
         "budget", "median", "p95", "reads/q", "hit rate", "vs memory"
     );
     for &bytes in &budgets {
-        let read =
-            PagedGraph::open(path, map.clone(), &first_edges, bytes).expect("a graph to open");
+        let read = PagedGraph::open(path, map.clone(), &first_edges, Pool::of(bytes))
+            .expect("a graph to open");
 
         let mut over_memory = OneToManyDijkstra::new();
         let mut over_file = OneToManyDijkstra::new();
@@ -164,7 +181,8 @@ fn main() {
         let mut took = Vec::with_capacity(pairs.len());
         let mut memory_took = Vec::with_capacity(pairs.len());
         let mut wrong = 0_u64;
-        let before = read.faults();
+        let before = read.pool().faults();
+        let before_reads = read.reads();
         let mut timings = String::new();
         let writing = std::env::var("TOOLBOX_TIMINGS").ok();
         for &(source, target, rank) in &pairs {
@@ -207,7 +225,7 @@ fn main() {
 
         took.sort_unstable();
         memory_took.sort_unstable();
-        let faults = read.faults();
+        let faults = read.pool().faults();
         let asked = faults.hits + faults.misses - before.hits - before.misses;
         let median = took[took.len() / 2] as f64 / 1000.0;
         let in_memory = memory_took[memory_took.len() / 2] as f64 / 1000.0;
@@ -218,7 +236,7 @@ fn main() {
             format!("{:.0}us", took[took.len() * 95 / 100] as f64 / 1000.0),
             format!(
                 "{:.1}",
-                (faults.reads - before.reads) as f64 / pairs.len() as f64
+                (read.reads() - before_reads) as f64 / pairs.len() as f64
             ),
             format!(
                 "{:.1}%",

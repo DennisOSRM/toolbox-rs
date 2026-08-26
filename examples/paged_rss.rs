@@ -10,35 +10,88 @@
 //! The steps are cumulative: each line is what the process holds once that
 //! step is done, and the difference between two lines is what the step added.
 
-use std::{env::args, path::Path, process, sync::Arc, time::Instant};
+use std::{env::args, path::Path, sync::Arc, time::Instant};
 
 use toolbox_rs::{
     block_map::BlockMap,
     block_store::BlockStore,
     cell_tree::CellTree,
+    customization::Customization,
     graph::{Arcs, NodeID},
     io,
     level_directory::LevelDirectory,
-    mld_query::SparseMldQuery,
+    mld_query::{MldQuery, SparseMldQuery},
     node_ordering::NodeOrdering,
     overlay::Overlay,
     packed_partition::PackedPartition,
-    paged_graph::PagedGraph,
+    paged_graph::{GraphIndex, PagedGraph},
     paged_overlay::{Budget, Footing, PagedOverlay},
     path_unpacking::Unpacker,
+    pool::Pool,
+    static_graph::StaticGraph,
 };
 
 const MIB: f64 = (1024 * 1024) as f64;
 
-/// The resident set of this process, in bytes.
+/// What this process is holding, in bytes.
 ///
-/// Read from the operating system rather than added up from what was
-/// allocated: what is wanted is what the machine is holding, which includes
-/// the allocator's own slack and excludes whatever it has handed back.
+/// # Not the resident set
+///
+/// `ps` reports a resident set, and on a Mac that counts pages the process
+/// does not own: the text and constant data of every library it links, which
+/// are file backed and shared with every other process using them, and pages
+/// the allocator has freed but not yet handed back, which the kernel may take
+/// at any time. Measured that way this instance reads at four hundred and
+/// sixty megabytes, of which two hundred and seventeen is shared library and
+/// a hundred and forty is memory nobody is using.
+///
+/// What a budget means is what the process would have to be given if it were
+/// alone, which is the physical footprint: dirty private pages plus its share
+/// of what it compresses to. It is the number a memory limit is enforced
+/// against, and it reads a hundred and thirty six against the same run.
+#[cfg(target_os = "macos")]
+fn resident() -> u64 {
+    // rusage_info_v2 is the first with a footprint in it
+    #[repr(C)]
+    #[derive(Default)]
+    struct RUsageV2 {
+        uuid: [u8; 16],
+        user_time: u64,
+        system_time: u64,
+        pkg_idle_wkups: u64,
+        interrupt_wkups: u64,
+        pageins: u64,
+        wired_size: u64,
+        resident_size: u64,
+        phys_footprint: u64,
+        proc_start_abstime: u64,
+        proc_exit_abstime: u64,
+        child_user_time: u64,
+        child_system_time: u64,
+        child_pkg_idle_wkups: u64,
+        child_interrupt_wkups: u64,
+        child_pageins: u64,
+        child_elapsed_abstime: u64,
+        diskio_bytesread: u64,
+        diskio_byteswritten: u64,
+    }
+
+    let mut held = RUsageV2::default();
+    let got = unsafe {
+        libc::proc_pid_rusage(
+            std::process::id() as i32,
+            2,
+            std::ptr::from_mut(&mut held).cast(),
+        )
+    };
+    if got == 0 { held.phys_footprint } else { 0 }
+}
+
+/// Everywhere else, the resident set out of the operating system.
+#[cfg(not(target_os = "macos"))]
 fn resident() -> u64 {
     #[cfg(target_os = "linux")]
     {
-        // statm is in pages, and the second field is the resident set
         let statm = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
         let pages: u64 = statm
             .split_whitespace()
@@ -48,18 +101,7 @@ fn resident() -> u64 {
         return pages * 4096;
     }
     #[cfg(not(target_os = "linux"))]
-    {
-        // ps reports kibibytes
-        let out = process::Command::new("ps")
-            .args(["-o", "rss=", "-p", &process::id().to_string()])
-            .output();
-        let kib: u64 = out
-            .ok()
-            .and_then(|out| String::from_utf8(out.stdout).ok())
-            .and_then(|text| text.trim().parse().ok())
-            .unwrap_or(0);
-        kib * 1024
-    }
+    0
 }
 
 fn report(step: &str, before: u64) -> u64 {
@@ -72,7 +114,7 @@ fn report(step: &str, before: u64) -> u64 {
     now
 }
 
-fn pairs_of(path: &str) -> Vec<(NodeID, NodeID)> {
+fn pairs_of(path: &str) -> Vec<(NodeID, NodeID, u64)> {
     std::fs::read_to_string(path)
         .expect("a file of pairs")
         .lines()
@@ -81,7 +123,11 @@ fn pairs_of(path: &str) -> Vec<(NodeID, NodeID)> {
             let mut fields = line.split(',');
             let source = fields.next()?.trim().parse().ok()?;
             let target = fields.next()?.trim().parse().ok()?;
-            Some((source, target))
+            let rank = fields
+                .next()
+                .and_then(|at| at.trim().parse().ok())
+                .unwrap_or(0);
+            Some((source, target, rank))
         })
         .collect()
 }
@@ -94,7 +140,7 @@ fn main() {
         })
     };
     let _graph_path = next("graph");
-    let directory_path = next("directory");
+    let _directory_path = next("directory");
     let pairs_path = next("pairs");
     let blocks_path = next("blocks");
     let bytes = argv
@@ -112,16 +158,24 @@ fn main() {
     // else an instance does wants every arc at once.
     let mut at = report("no graph is read", start);
 
-    // The directory is what the partition and the border levels are built out
-    // of, and neither keeps it, so an offline instance drops it here. It is
-    // counted anyway, since a process that opens a store has to hold it for as
-    // long as it takes to build the two.
-    let partition = {
-        let directory: LevelDirectory = io::read_from_file(&directory_path);
-        at = report("  ... and the level directory", at);
-        PackedPartition::of(&directory)
-    };
-    at = report("the partition, directory dropped", at);
+    // No directory is read either. The partition was settled when the store
+    // was packed, and building it from a directory means reading seventy one
+    // mebibytes of one to throw it away again -- which puts the high-water
+    // mark of the process above anything it goes on to hold.
+    // One pool, made before anything is opened, because everything draws on
+    // it: the arcs, the tables, the ways, and the partition and tree arrays
+    // that are pinned into it. What stands outside it is the footing, which is
+    // a third of a mebibyte, so the budget less a mebibyte is the pool's.
+    let early = Pool::of(bytes.saturating_sub(MIB as usize));
+    let partition = PackedPartition::open(
+        Path::new(&format!(
+            "{}.partition",
+            std::env::var("TOOLBOX_ARCS").unwrap_or_default()
+        )),
+        &early,
+    )
+    .expect("a partition beside the arcs");
+    at = report("the partition, read not built", at);
     println!(
         "  the partition is {} runs over {} nodes, {:.1} MiB",
         partition.runs(),
@@ -145,8 +199,22 @@ fn main() {
     }
 
     let map: BlockMap = io::read_from_file(&format!("{blocks_path}.map"));
-    let tree: CellTree = io::read_from_file(&format!("{blocks_path}.tree"));
+    // The tree written beside the arcs is already the query half: reading the
+    // whole one to throw the build half away would put twenty two mebibytes
+    // through the process on the way to holding seven.
+    let arcs = std::env::var("TOOLBOX_ARCS").unwrap_or_else(|_| {
+        panic!("set TOOLBOX_ARCS to a pack of arcs; this measures an instance that pages both")
+    });
+    let mut tree: CellTree = io::read_from_file(&format!("{arcs}.tree"));
+    assert!(!tree.whole(), "the tree beside the arcs was not trimmed");
+    // the two arrays a query asks of a tree are read as well, so what stands
+    // in their place is an offset a level rather than an entry a cell
+    tree.open_cells(Path::new(&format!("{arcs}.cells")), &early)
+        .expect("the cells beside the arcs");
     at = report("the block map and the cell tree", at);
+    for (part, bytes) in tree.bytes_by_part() {
+        println!("    the tree's {part:<12} {:>7.1} MiB", bytes as f64 / MIB);
+    }
 
     let map_bytes = (map.len() * size_of::<toolbox_rs::block_map::BlockEntry>()) as u64;
     // what every cell of every level would come to unpacked, which is what the
@@ -162,38 +230,54 @@ fn main() {
 
     let budget = Budget {
         bytes,
-        pinned_share: 0.5,
+        // levels held outright are read at open and never let go of, so a run
+        // that must never exceed its budget while starting up may want none
+        // Nothing is held outside the pool by default: a level held outright
+        // is room the pool does not have, and the pool is where the pinning
+        // that matters now happens.
+        pinned_share: std::env::var("TOOLBOX_PIN_SHARE")
+            .ok()
+            .and_then(|share| share.parse().ok())
+            .unwrap_or(0.0),
     };
     // Where a pack of the arcs is at hand, the graph pages too and the footing
     // stands for its index rather than for its arcs.
     let arcs = std::env::var("TOOLBOX_ARCS").unwrap_or_else(|_| {
         panic!("set TOOLBOX_ARCS to a pack of arcs; this measures an instance that pages both")
     });
-    let paged_arcs = {
+    let (paged_arcs, pool, footing) = {
         let at = &arcs;
         let arc_map: BlockMap = io::read_from_file(&format!("{at}.map"));
         let first_edges: Vec<u64> = io::read_vec_from_file(&format!("{at}.index"));
-        let room = std::env::var("TOOLBOX_ARC_BUDGET")
-            .ok()
-            .and_then(|mib| mib.parse::<usize>().ok())
-            .unwrap_or(256)
-            * 1024
-            * 1024;
-        let read =
-            PagedGraph::open(Path::new(at), arc_map, &first_edges, room).expect("a graph to open");
+        // The pool is sized before anything is opened, because everything that
+        // reads draws on the same one: the arcs, the tables and the ways an
+        // unpacker keeps. Its size is the budget less what stands whatever
+        // happens, and the index is what the graph stands for.
+        let index = GraphIndex::of(&arc_map, &first_edges);
+        let footing = Footing {
+            graph: index.bytes() as u64,
+            partition: partition.bytes() as u64,
+            // nothing: the levels ride in the arc blocks
+            border_levels: 0,
+            block_map: (map.len() * size_of::<toolbox_rs::block_map::BlockEntry>()) as u64,
+            cell_tree: tree.bytes() as u64,
+            // nothing: the queue keeps only what a run touched
+            searches: 0,
+        };
+        let pool = Arc::clone(&early);
         println!(
-            "the arcs page, holding at most {} MiB",
-            room / (1024 * 1024)
+            "one pool of {:.1} MiB for the arcs, the tables, the ways and the pins",
+            pool.budget() as f64 / MIB
         );
-        read
+        let read = PagedGraph::open(Path::new(at), arc_map, &first_edges, Arc::clone(&pool))
+            .expect("a graph to open");
+        (read, pool, footing)
     };
     at = report("the arcs, which page too", at);
 
     // the sparse queue, since an array over the nodes of a continent is more
     // than half of a hundred and twenty eight megabyte budget standing still
-    let footing =
-        Footing::with_partition(&paged_arcs, partition.bytes() as u64, &tree, map.len(), 1)
-            .with_sparse_searches();
+
     let (pinned, cache) = budget.split(&tree, &footing);
     match budget.for_tables(&footing) {
         Ok(left) => println!(
@@ -242,39 +326,176 @@ fn main() {
     // arcs they belong to, so the graph is what answers for them and the same
     // handle serves as both.
     let held = Arc::new(paged_arcs);
-    let paged = PagedOverlay::within(
+    let paged = PagedOverlay::sharing(
         store,
         Arc::clone(&held),
         partition,
         Arc::clone(&held),
         budget,
+        pool,
     );
     let open = opening.elapsed();
     at = report("the held levels, read and unpacked", at);
 
     // the arrays a search wants, which go with the nodes of the graph and not
     // with the budget: one query is run to make it allocate them
+    // every Nth pair, so a run can be made shorter without losing the spread
+    // of ranks: what RSS does against the number of queries is what says
+    // whether something is growing with the run or standing still
+    if let Ok(stride) = std::env::var("TOOLBOX_PAIR_STRIDE") {
+        let stride: usize = stride.parse().expect("a stride");
+        pairs = pairs.into_iter().step_by(stride.max(1)).collect();
+        println!("every {stride} pairs kept, leaving {}", pairs.len());
+    }
+
     let mut query = SparseMldQuery::new();
-    let mut unpacker = Unpacker::for_instance(&paged);
-    if let Some(&(source, target)) = pairs.first() {
+    // the ways go into the same pool the arcs and the tables draw on
+    let mut unpacker = Unpacker::sharing(Arc::clone(paged.pool()));
+    let mut reads_of = String::new();
+    if let Some(&(source, target, _)) = pairs.first() {
         query.run(&paged, source, &[target]);
     }
     at = report("what a search and an unpacker want", at);
 
+    // A reference to answer against, where one is asked for: the same query
+    // over an instance that holds everything. It costs what an offline
+    // instance was built not to, which is why it is a switch and not the
+    // default -- what it is here for is to say that the answers are the same.
+    let reference = std::env::var("TOOLBOX_VERIFY").ok().map(|at| {
+        let edges = io::read_edges_from_file(&at);
+        let directory: LevelDirectory = io::read_from_file(&_directory_path);
+        println!("a reference instance is being built to answer against");
+        Customization::new(StaticGraph::new(edges), directory)
+    });
+    if let Some(held) = &reference {
+        for level in 0..held.directory().levels() {
+            held.level(level);
+        }
+        println!("the reference is customized");
+    }
+
     let mut ways = 0_usize;
-    for &(source, target) in &pairs {
+    let mut wrong = 0_usize;
+    let mut wrong_way = 0_usize;
+    let mut timings = String::new();
+    let writing = std::env::var("TOOLBOX_TIMINGS").ok();
+    let mut over_memory = MldQuery::new();
+    let mut memory_unpacker = reference
+        .as_ref()
+        .map_or_else(Unpacker::default, Unpacker::for_instance);
+
+    for &(source, target, rank) in &pairs {
+        let before = paged.pool().faults().reads;
         query.clear();
+        let started = Instant::now();
         query.run(&paged, source, &[target]);
+        let offline_nanos = started.elapsed().as_nanos() as u64;
+        let offline = query.distance(target);
+
+        let mut way = None;
+        let started = Instant::now();
         if let Some(packed) = query.retrieve_packed_path(target)
-            && unpacker.unpack(&paged, &packed).is_ok()
+            && let Ok(put_back) = unpacker.unpack(&paged, &packed)
         {
+            way = Some(put_back);
             ways += 1;
         }
+        let unpack_nanos = started.elapsed().as_nanos() as u64;
+        // every read the whole instance made for this pair, of every kind
+        let reads = paged.pool().faults().reads - before;
+
+        if let Some(held) = &reference {
+            over_memory.clear();
+            let started = Instant::now();
+            over_memory.run(held, source, &[target]);
+            let memory_nanos = started.elapsed().as_nanos() as u64;
+            if over_memory.distance(target) != offline {
+                wrong += 1;
+            }
+            // and the way, which has to be the same way and not merely as long
+            if let Some(packed) = over_memory.retrieve_packed_path(target)
+                && let Ok(theirs) = memory_unpacker.unpack(held, &packed)
+                && way.as_ref() != Some(&theirs)
+            {
+                wrong_way += 1;
+            }
+            if writing.is_some() {
+                use std::fmt::Write as _;
+                let _ = writeln!(
+                    timings,
+                    "mld,{source},{target},{rank},{memory_nanos},{}",
+                    over_memory.distance(target)
+                );
+            }
+        }
+        if writing.is_some() {
+            use std::fmt::Write as _;
+            let _ = writeln!(
+                timings,
+                "offline,{source},{target},{rank},{offline_nanos},{offline}"
+            );
+            let _ = writeln!(
+                timings,
+                "offline-unpack,{source},{target},{rank},{unpack_nanos},{offline}"
+            );
+            let _ = writeln!(
+                reads_of,
+                "offline,{source},{target},{rank},{reads},{offline}"
+            );
+        }
+    }
+    if let Some(at) = &writing {
+        use std::io::Write as _;
+        let mut out = std::fs::File::create(format!("{at}.times.csv")).expect("a file");
+        writeln!(out, "engine,source,target,rank,nanos,distance").expect("a header");
+        out.write_all(timings.as_bytes()).expect("the timings");
+        let mut out = std::fs::File::create(format!("{at}.reads.csv")).expect("a file");
+        writeln!(out, "engine,source,target,rank,nanos,distance").expect("a header");
+        out.write_all(reads_of.as_bytes()).expect("the reads");
+        println!("wrote {at}.times.csv and {at}.reads.csv");
+    }
+    if reference.is_some() {
+        println!(
+            "{} pairs answered against a reference: {wrong} wrong distances, {wrong_way} wrong ways",
+            pairs.len()
+        );
+        assert_eq!(
+            wrong, 0,
+            "the offline instance answered a different distance"
+        );
+        assert_eq!(wrong_way, 0, "the offline instance found a different way");
     }
     let full = report("after the queries and the ways", at);
+    println!(
+        "  the queue came to {:.1} MiB, which no budget bounds",
+        query.bytes() as f64 / MIB
+    );
 
+    // A run held open, so that vmmap and heap can be pointed at it: the
+    // resident set says how much there is and neither of those has to be
+    // guessed at afterwards.
+    if let Ok(seconds) = std::env::var("TOOLBOX_HOLD") {
+        let seconds: u64 = seconds.parse().unwrap_or(120);
+        println!("HOLDING pid {} for {seconds}s", std::process::id());
+        use std::io::Write as _;
+        let _ = std::io::stdout().flush();
+        std::thread::sleep(std::time::Duration::from_secs(seconds));
+    }
+
+    println!(
+        "  of the pool, {:.1} MiB is pinned: the partition and the tree arrays",
+        paged.pool().pinned() as f64 / MIB
+    );
     let faults = paged.faults();
     let tables = paged.pinned_bytes() as u64 + faults.held as u64;
+    let pool = paged.pool().faults();
+    println!(
+        "\nthe pool: {:.1} MiB of {:.1} MiB held, most ever {:.1} MiB, {} let go of",
+        pool.held as f64 / MIB,
+        paged.pool().budget() as f64 / MIB,
+        pool.highest as f64 / MIB,
+        pool.evicted,
+    );
     println!();
     println!(
         "budget {:.0} MiB: {:.1} MiB held outright, {:.1} MiB for the cache, opened in {open:.1?}",
@@ -283,8 +504,9 @@ fn main() {
         cache as f64 / MIB,
     );
     println!(
-        "{} pairs asked, {ways} ways put back, {} blocks read",
+        "{} pairs asked, {ways} ways put back, {} blocks read in all ({} of them tables)",
         pairs.len(),
+        paged.pool().faults().reads,
         faults.reads
     );
 
@@ -312,14 +534,18 @@ fn main() {
         "nothing: they ride in the arc blocks",
     );
     line("the block map", map_bytes, "one entry a block");
-    line("the cell tree", tree_bytes, "one entry a cell");
+    line(
+        "the cell tree",
+        tree_bytes,
+        "children, parents, boxes and facts",
+    );
     line("the cell tables", tables, "<- the budget governs this one");
     println!("  {:-<34} {:->13}", "", "");
     let accounted = footing.total() - footing.searches + tables;
     line("accounted for", accounted, "");
-    line("resident", full, "");
+    line("the footprint", full, "");
     println!(
-        "  {:<34} {:>8.1} MiB   the search's arrays, the unpacker's",
+        "  {:<34} {:>8.1} MiB   the search's arrays and what the",
         "the difference",
         (full - accounted.min(full)) as f64 / MIB
     );

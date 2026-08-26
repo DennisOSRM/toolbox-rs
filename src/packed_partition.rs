@@ -33,16 +33,127 @@
 
 use std::{
     cell::Cell,
-    sync::atomic::{AtomicUsize, Ordering},
+    fs::File,
+    io::{BufWriter, Write},
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
+use rkyv::{Archive, Deserialize, Serialize};
+
 use crate::{
+    block_store::read_at,
     graph::NodeID,
     level_directory::{CellId, LevelDirectory},
+    paged_array::PagedArray,
+    pool::Pool,
 };
 
 /// How many bits a word has to spend, and the most a partition may ask for.
 const BITS: u32 = 128;
+
+/// The version a written partition is under.
+pub const VERSION: u16 = 1;
+
+/// What a written partition says about itself before its runs.
+#[derive(Archive, Serialize, Deserialize)]
+struct Head {
+    version: u16,
+    nodes: u64,
+    runs: u64,
+    width: u32,
+    shift: u32,
+    levels: u32,
+    begins_at: Vec<u32>,
+    level_of_bit: Vec<u8>,
+}
+
+/// Where a partition's runs live.
+///
+/// Kept, which is what a build makes and what a server with room wants, or
+/// read off a file a block at a time, which is what an instance with a budget
+/// for the whole of it wants: read, the runs cost it a file handle apiece and
+/// a share of the pool, whatever the graph.
+enum Runs {
+    Held {
+        /// where each run begins, in order, with one past the last node on the
+        /// end so that a run is `begins[r]..begins[r + 1]`
+        begins: Vec<u32>,
+        /// the word of each run, laid end to end at `width` bits apiece
+        words: Vec<u8>,
+        /// which run was current where each block of `1 << shift` nodes began
+        buckets: Vec<u32>,
+    },
+    Paged {
+        /// the same three, read rather than kept. A word takes a whole sixteen
+        /// bytes here rather than the bits its levels ask for: the packing was
+        /// to save room in memory, and a run that is not in memory has none to
+        /// save, while a fixed width is what lets an entry's place be worked
+        /// out instead of looked up.
+        begins: PagedArray,
+        words: PagedArray,
+        buckets: PagedArray,
+    },
+}
+
+impl Runs {
+    /// Where a run begins.
+    #[inline]
+    fn begins(&self, at: usize) -> u32 {
+        match self {
+            Self::Held { begins, .. } => begins[at],
+            Self::Paged { begins, .. } => {
+                u32::from_le_bytes(begins.get::<4>(at).expect("a run the partition has"))
+            }
+        }
+    }
+
+    /// Which run was current where a block of nodes began.
+    #[inline]
+    fn bucket(&self, at: usize) -> u32 {
+        match self {
+            Self::Held { buckets, .. } => buckets[at],
+            Self::Paged { buckets, .. } => {
+                u32::from_le_bytes(buckets.get::<4>(at).expect("a bucket the partition has"))
+            }
+        }
+    }
+
+    /// The word every node of a run has.
+    #[inline]
+    fn word(&self, run: usize, width: u32) -> u128 {
+        match self {
+            Self::Held { words, .. } => read_word(words, run as u64 * u64::from(width), width),
+            Self::Paged { words, .. } => {
+                u128::from_le_bytes(words.get::<16>(run).expect("a run the partition has"))
+            }
+        }
+    }
+
+    /// What the runs cost standing still.
+    fn bytes(&self) -> usize {
+        match self {
+            Self::Held {
+                begins,
+                words,
+                buckets,
+            } => {
+                begins.capacity() * size_of::<u32>()
+                    + words.capacity()
+                    + buckets.capacity() * size_of::<u32>()
+            }
+            // a handle and four numbers apiece, whatever they hold
+            Self::Paged {
+                begins,
+                words,
+                buckets,
+            } => begins.bytes() + words.bytes() + buckets.bytes(),
+        }
+    }
+}
 
 /// Tells one partition from another, so a thread's memo of the last run it
 /// wanted is not offered to a partition it did not come from.
@@ -168,13 +279,8 @@ fn read_word(packed: &[u8], at: u64, width: u32) -> u128 {
 /// run, so the next node is very often in the run just used. Each thread keeps
 /// the last run it wanted, which turns the common case into two comparisons.
 pub struct PackedPartition {
-    /// where each run begins, in order, with one past the last node on the end
-    /// so that a run is `begins[r]..begins[r + 1]`
-    begins: Vec<u32>,
-    /// the word of each run, laid end to end at `width` bits apiece
-    words: Vec<u8>,
-    /// which run was current where each block of `1 << shift` nodes began
-    buckets: Vec<u32>,
+    /// the runs, kept or read
+    runs_held: Runs,
     /// how wide a block of nodes a bucket stands for, as a power of two
     shift: u32,
     /// how many runs there are
@@ -296,9 +402,11 @@ impl PackedPartition {
         }
 
         Self {
-            begins,
-            words,
-            buckets,
+            runs_held: Runs::Held {
+                begins,
+                words,
+                buckets,
+            },
             shift,
             runs,
             nodes,
@@ -337,9 +445,7 @@ impl PackedPartition {
     /// not a word a node.
     #[must_use]
     pub fn bytes(&self) -> usize {
-        self.begins.capacity() * size_of::<u32>()
-            + self.words.capacity()
-            + self.buckets.capacity() * size_of::<u32>()
+        self.runs_held.bytes()
             + self.level_of_bit.capacity()
             + self.begins_at.capacity() * size_of::<u32>()
     }
@@ -379,18 +485,140 @@ impl PackedPartition {
 
         // otherwise the bucket this node's block of nodes falls in, and then
         // forward over whichever runs began inside that block
-        let mut run = self.buckets[(node >> self.shift) as usize] as usize;
-        while run + 1 < self.runs && self.begins[run + 1] <= node {
+        let mut run = self.runs_held.bucket((node >> self.shift) as usize) as usize;
+        while run + 1 < self.runs && self.runs_held.begins(run + 1) <= node {
             run += 1;
         }
-        let word = read_word(&self.words, run as u64 * u64::from(self.width), self.width);
+        let word = self.runs_held.word(run, self.width);
         RECENT.set(Some((
             self.which,
-            self.begins[run],
-            self.begins[run + 1],
+            self.runs_held.begins(run),
+            self.runs_held.begins(run + 1),
             word,
         )));
         word
+    }
+
+    /// Writes the partition out for [`open`](Self::open) to read.
+    ///
+    /// # What preprocessing this is for
+    ///
+    /// A partition is worked out from a [`LevelDirectory`], and a directory of
+    /// a continent is seventy one mebibytes. An instance that builds its
+    /// partition at startup reads all of that, keeps it long enough to walk
+    /// the parents, and throws it away -- which puts the high-water mark of
+    /// the process well above anything it goes on to hold. A budget that is
+    /// only met once the startup is over is not met.
+    ///
+    /// So the partition is settled when the store is packed and read back
+    /// whole. Nothing about it depends on the query, and it cannot change
+    /// without the store changing.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever went wrong writing it.
+    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        let Runs::Held {
+            begins,
+            words,
+            buckets,
+        } = &self.runs_held
+        else {
+            return Err(std::io::Error::other(
+                "this partition is read off a file and cannot be written back",
+            ));
+        };
+
+        let head = Head {
+            version: VERSION,
+            nodes: self.nodes as u64,
+            runs: self.runs as u64,
+            width: self.width,
+            shift: self.shift,
+            levels: self.levels as u32,
+            begins_at: self.begins_at.clone(),
+            level_of_bit: self.level_of_bit.clone(),
+        };
+        let head = rkyv::to_bytes::<rkyv::rancor::Error>(&head).map_err(|why| {
+            std::io::Error::other(format!("a partition will not serialize: {why}"))
+        })?;
+
+        let mut out = BufWriter::new(File::create(path)?);
+        out.write_all(&(head.len() as u64).to_le_bytes())?;
+        out.write_all(&head)?;
+        // the three runs, one after another, each entry a fixed width so that
+        // where it sits is worked out rather than looked up
+        for &begins in &begins[..=self.runs] {
+            out.write_all(&begins.to_le_bytes())?;
+        }
+        for run in 0..self.runs {
+            let word = read_word(words, run as u64 * u64::from(self.width), self.width);
+            out.write_all(&word.to_le_bytes())?;
+        }
+        for &bucket in buckets {
+            out.write_all(&bucket.to_le_bytes())?;
+        }
+        out.flush()
+    }
+
+    /// Reads a partition back, holding none of it.
+    ///
+    /// What stands is the head -- a few numbers and a byte a bit of a word --
+    /// and three file handles. The runs themselves come out of the pool as
+    /// they are asked for, so what this costs is the same for a town and a
+    /// continent.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever went wrong reading it, and refuses a partition written
+    /// under a version this does not know.
+    pub fn open(path: &Path, pool: &Arc<Pool>) -> std::io::Result<Self> {
+        // only the head, and not the file it is at the front of: reading the
+        // whole thing to parse a few hundred bytes would put ten mebibytes of
+        // a continent's partition through the process on the way to holding
+        // none of it
+        let file = File::open(path)?;
+        let mut length = [0_u8; 8];
+        read_at(&file, 0, &mut length)?;
+        let length = u64::from_le_bytes(length) as usize;
+        let mut head = vec![0_u8; length];
+        read_at(&file, 8, &mut head)?;
+        let head: Head = rkyv::from_bytes::<Head, rkyv::rancor::Error>(&head)
+            .map_err(|why| std::io::Error::other(format!("a partition will not read: {why}")))?;
+        if head.version != VERSION {
+            return Err(std::io::Error::other(format!(
+                "a partition written under version {}",
+                head.version
+            )));
+        }
+        let runs = head.runs as usize;
+        let at = 8 + length as u64;
+        let begins = PagedArray::open_pinned(path, at, runs + 1, 4, Arc::clone(pool))?;
+        let words =
+            PagedArray::open_pinned(path, at + (runs as u64 + 1) * 4, runs, 16, Arc::clone(pool))?;
+        let buckets = PagedArray::open_pinned(
+            path,
+            at + (runs as u64 + 1) * 4 + runs as u64 * 16,
+            (head.nodes as usize >> head.shift) + 2,
+            4,
+            Arc::clone(pool),
+        )?;
+
+        Ok(Self {
+            runs_held: Runs::Paged {
+                begins,
+                words,
+                buckets,
+            },
+            shift: head.shift,
+            runs,
+            nodes: head.nodes as usize,
+            width: head.width,
+            which: NEXT_PARTITION.fetch_add(1, Ordering::Relaxed),
+            begins_at: head.begins_at,
+            level_of_bit: head.level_of_bit,
+            levels: head.levels as usize,
+        })
     }
 
     /// How many runs the partition came to.
@@ -685,5 +913,95 @@ mod tests {
                 assert_eq!(packed.cell_of(node, level), directory.cell_of(node, level));
             }
         }
+    }
+
+    /// The one that matters: a partition written and read back answers what it
+    /// answered, and costs the same whatever it holds.
+    #[test]
+    fn a_partition_read_off_a_file_answers_what_the_one_it_came_from_does() {
+        let held = tempfile::tempdir().expect("a directory to write in");
+        for side in [8_usize, 16, 32] {
+            let path = held.path().join(format!("partition{side}"));
+            let directory = grid_directory(side);
+            let whole = PackedPartition::of(&directory);
+            whole.save(&path).expect("a partition to write");
+
+            let pool = Pool::of(4 * crate::paged_array::BLOCK_BYTES);
+            let read = PackedPartition::open(&path, &pool).expect("a partition to read");
+
+            assert_eq!(read.number_of_nodes(), whole.number_of_nodes());
+            assert_eq!(read.levels(), whole.levels());
+            assert_eq!(read.runs(), whole.runs());
+            assert_eq!(read.level_layout(), whole.level_layout());
+
+            // asked out of order and twice over, so the thread's memo is both
+            // used and missed
+            let nodes = directory.number_of_nodes();
+            for node in (0..nodes).rev().chain(0..nodes) {
+                assert_eq!(read.word(node), whole.word(node), "node {node} of {side}");
+                for level in 0..directory.levels() {
+                    assert_eq!(
+                        read.cell_of(node, level),
+                        whole.cell_of(node, level),
+                        "node {node} on level {level} of {side}"
+                    );
+                }
+            }
+            // and the questions a query actually asks, over pairs
+            for first in (0..nodes).step_by(3) {
+                for second in (0..nodes).step_by(5) {
+                    assert_eq!(
+                        read.highest_different_level(read.word(first), read.word(second)),
+                        whole.highest_different_level(whole.word(first), whole.word(second)),
+                    );
+                }
+            }
+        }
+    }
+
+    /// What the whole thing is for: a partition that is read costs a handful
+    /// of bytes however many nodes it is over.
+    #[test]
+    fn a_partition_read_off_a_file_costs_the_same_however_large_it_is() {
+        let held = tempfile::tempdir().expect("a directory to write in");
+        let pool = Pool::of(1 << 20);
+        let mut sizes = Vec::new();
+        for side in [16_usize, 64] {
+            let path = held.path().join(format!("partition{side}"));
+            PackedPartition::of(&grid_directory(side))
+                .save(&path)
+                .expect("a partition to write");
+            let read = PackedPartition::open(&path, &pool).expect("a partition to read");
+            sizes.push((read.number_of_nodes(), read.bytes()));
+        }
+        assert!(sizes[1].0 > sizes[0].0 * 8, "the two are the same size");
+        // Not equal to the byte: the head carries a level's worth of layout
+        // and a byte for each bit of a word, so it grows with the levels --
+        // which is the logarithm of the nodes, and a deeper hierarchy over
+        // sixteen times the graph is a few dozen bytes more. What it must not
+        // do is grow with the nodes.
+        for &(nodes, bytes) in &sizes {
+            assert!(
+                bytes < 1024,
+                "a partition over {nodes} nodes costs {bytes} bytes standing still"
+            );
+        }
+        assert!(
+            sizes[1].1 < sizes[0].1 + 128,
+            "{} bytes against {} for sixteen times the graph",
+            sizes[1].1,
+            sizes[0].1
+        );
+    }
+
+    #[test]
+    fn a_partition_that_is_read_cannot_be_written_back() {
+        let held = tempfile::tempdir().expect("a directory to write in");
+        let path = held.path().join("partition");
+        PackedPartition::of(&grid_directory(8))
+            .save(&path)
+            .expect("a partition to write");
+        let read = PackedPartition::open(&path, &Pool::of(1 << 20)).expect("a partition to read");
+        assert!(read.save(&held.path().join("again")).is_err());
     }
 }
