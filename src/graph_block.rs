@@ -75,7 +75,9 @@ pub struct GraphBlock {
     degree_bits: u32,
     step_bits: u32,
     weight_bits: u32,
-    /// the degrees, then the zigzagged steps, then the weights
+    border_bits: u32,
+    /// the degrees, then the zigzagged steps, then the weights, then the
+    /// levels at which each arc leaves the cell of its source
     packed: Vec<u8>,
 }
 
@@ -83,14 +85,22 @@ impl GraphBlock {
     /// Packs the arcs of a run of nodes.
     ///
     /// `arcs` is one entry a node, in node order, each the arcs of that node as
-    /// (target, weight).
+    /// (target, weight, border level).
+    ///
+    /// The border level is one past the highest level at which the arc leaves
+    /// the cell of its source, and zero for one that leaves none -- the same
+    /// byte [`BorderLevels`](crate::border_levels::BorderLevels) holds. It
+    /// rides with the arc because that is what it is a property of, and
+    /// because a search wants it at exactly the moment it has the arc: kept
+    /// apart it is a byte an arc standing resident, which on a continent is
+    /// forty megabytes to say what three bits an arc say here.
     ///
     /// # Panics
     ///
     /// Panics where a step does not fit in sixty three bits, which no graph
     /// this crate can hold produces.
     #[must_use]
-    pub fn of(first_node: u32, first_edge: u64, arcs: &[Vec<(u32, u32)>]) -> Self {
+    pub fn of(first_node: u32, first_edge: u64, arcs: &[Vec<(u32, u32, u8)>]) -> Self {
         let edges: usize = arcs.iter().map(Vec::len).sum();
         let widest_degree = arcs.iter().map(Vec::len).max().unwrap_or(0);
         let widest_step = arcs
@@ -99,21 +109,28 @@ impl GraphBlock {
             .flat_map(|(at, out)| {
                 let source = i64::from(first_node) + at as i64;
                 out.iter()
-                    .map(move |&(target, _)| zigzag(i64::from(target) - source))
+                    .map(move |&(target, _, _)| zigzag(i64::from(target) - source))
             })
             .max()
             .unwrap_or(0);
         let widest_weight = arcs
             .iter()
-            .flat_map(|out| out.iter().map(|&(_, weight)| weight))
+            .flat_map(|out| out.iter().map(|&(_, weight, _)| weight))
+            .max()
+            .unwrap_or(0);
+        let widest_border = arcs
+            .iter()
+            .flat_map(|out| out.iter().map(|&(_, _, border)| u32::from(border)))
             .max()
             .unwrap_or(0);
 
         let degree_bits = bits_for(u32::try_from(widest_degree).expect("a degree in four bytes"));
         let step_bits = bits_for_wide(widest_step);
         let weight_bits = bits_for(widest_weight);
+        let border_bits = bits_for(widest_border);
 
-        let bits = arcs.len() * degree_bits as usize + edges * (step_bits + weight_bits) as usize;
+        let bits = arcs.len() * degree_bits as usize
+            + edges * (step_bits + weight_bits + border_bits) as usize;
         let mut packed = vec![0_u8; bits.div_ceil(8) + 8];
 
         let mut at = 0;
@@ -128,7 +145,7 @@ impl GraphBlock {
         }
         for (index, out) in arcs.iter().enumerate() {
             let source = i64::from(first_node) + index as i64;
-            for &(target, _) in out {
+            for &(target, _, _) in out {
                 write_wide(
                     &mut packed,
                     at,
@@ -139,9 +156,15 @@ impl GraphBlock {
             }
         }
         for out in arcs {
-            for &(_, weight) in out {
+            for &(_, weight, _) in out {
                 write_at(&mut packed, at, weight_bits, weight);
                 at += weight_bits as usize;
+            }
+        }
+        for out in arcs {
+            for &(_, _, border) in out {
+                write_at(&mut packed, at, border_bits, u32::from(border));
+                at += border_bits as usize;
             }
         }
 
@@ -154,6 +177,7 @@ impl GraphBlock {
             degree_bits,
             step_bits,
             weight_bits,
+            border_bits,
             packed,
         }
     }
@@ -238,6 +262,20 @@ impl GraphBlock {
                 self.weight_bits,
             ));
         }
+
+        held.borders.clear();
+        held.borders.reserve(self.edges as usize);
+        let borders_at = weights_at + self.edges as usize * self.weight_bits as usize;
+        for place in 0..self.edges as usize {
+            held.borders.push(
+                u8::try_from(read_at(
+                    &self.packed,
+                    borders_at + place * self.border_bits as usize,
+                    self.border_bits,
+                ))
+                .expect("a level in a byte"),
+            );
+        }
     }
 
     /// What the block takes once read back.
@@ -302,6 +340,9 @@ pub struct HeldArcs {
     starts: Vec<u32>,
     targets: Vec<u32>,
     weights: Vec<u32>,
+    /// one past the highest level each arc leaves its source's cell at, and
+    /// zero for one that leaves none
+    borders: Vec<u8>,
 }
 
 impl HeldArcs {
@@ -362,6 +403,16 @@ impl HeldArcs {
             .then(|| self.weights[(edge - self.first_edge) as usize])
     }
 
+    /// Whether an arc leaves the cell its source sits in at this level.
+    ///
+    /// Cells nest, so an arc parting at some level parts at every level below
+    /// it and one comparison answers for the level asked about.
+    #[must_use]
+    pub fn leaves_cell(&self, edge: u64, level: usize) -> Option<bool> {
+        self.holds_edge(edge)
+            .then(|| usize::from(self.borders[(edge - self.first_edge) as usize]) > level)
+    }
+
     /// What this takes.
     #[must_use]
     pub fn bytes(&self) -> usize {
@@ -369,6 +420,7 @@ impl HeldArcs {
             + self.starts.capacity() * size_of::<u32>()
             + self.targets.capacity() * size_of::<u32>()
             + self.weights.capacity() * size_of::<u32>()
+            + self.borders.capacity()
     }
 }
 
@@ -378,17 +430,22 @@ mod tests {
 
     /// Arcs with steps both ways and a wide spread, since the whole of the
     /// packing rests on a step being small and it has to hold when one is not.
-    fn arcs(first_node: u32, nodes: usize) -> Vec<Vec<(u32, u32)>> {
+    fn arcs(first_node: u32, nodes: usize) -> Vec<Vec<(u32, u32, u8)>> {
         (0..nodes)
             .map(|at| {
                 let source = first_node + at as u32;
+                // a border level apiece, some staying inside and some not
                 let mut out = vec![
-                    (source + 1, 10 + at as u32),
-                    (source.saturating_sub(1), 20 + at as u32),
+                    (source + 1, 10 + at as u32, (at % 4) as u8),
+                    (
+                        source.saturating_sub(1),
+                        20 + at as u32,
+                        ((at + 1) % 3) as u8,
+                    ),
                 ];
                 // one arc a long way off, which is what sets the block's width
                 if at == nodes / 2 {
-                    out.push((source + 100_000, 7));
+                    out.push((source + 100_000, 7, 5));
                 }
                 // and a node with nothing leaving it
                 if at == 1 {
@@ -426,9 +483,18 @@ mod tests {
             let (from, upto) = held.range_of(node);
             assert_eq!(from, edge, "node {node} begins elsewhere");
             assert_eq!((upto - from) as usize, wanted.len(), "node {node} degree");
-            for &(target, weight) in wanted {
+            for &(target, weight, border) in wanted {
                 assert_eq!(held.target(edge), Some(target as NodeID));
                 assert_eq!(held.weight(edge), Some(weight));
+                // the level rides with the arc: it parts at every level under
+                // the one it was given, and at none from there up
+                for level in 0..8 {
+                    assert_eq!(
+                        held.leaves_cell(edge, level),
+                        Some(usize::from(border) > level),
+                        "arc {edge} at level {level}"
+                    );
+                }
                 edge += 1;
             }
         }
@@ -448,7 +514,7 @@ mod tests {
 
     #[test]
     fn a_run_of_nothing_packs_and_reads_back_as_nothing() {
-        let block = GraphBlock::of(7, 21, &vec![Vec::new(); 4]);
+        let block = GraphBlock::of(7, 21, &vec![Vec::<(u32, u32, u8)>::new(); 4]);
         let mut held = HeldArcs::default();
         block.unpack_into(&mut held);
         assert_eq!(held.nodes(), 4);
@@ -462,11 +528,16 @@ mod tests {
     /// fewer bits than the node numbers themselves want.
     #[test]
     fn arcs_that_stay_near_home_pack_smaller_than_their_node_numbers() {
-        let near: Vec<Vec<(u32, u32)>> = (0..256)
-            .map(|at| vec![(9_000_000 + at + 1, 5), (9_000_000 + at + 2, 5)])
+        let near: Vec<Vec<(u32, u32, u8)>> = (0..256)
+            .map(|at| vec![(9_000_000 + at + 1, 5, 1), (9_000_000 + at + 2, 5, 1)])
             .collect();
-        let far: Vec<Vec<(u32, u32)>> = (0..256)
-            .map(|at| vec![(at * 70_001 % 17_000_000, 5), (at * 31 % 17_000_000, 5)])
+        let far: Vec<Vec<(u32, u32, u8)>> = (0..256)
+            .map(|at| {
+                vec![
+                    (at * 70_001 % 17_000_000, 5, 1),
+                    (at * 31 % 17_000_000, 5, 1),
+                ]
+            })
             .collect();
         let near = GraphBlock::of(9_000_000, 0, &near);
         let far = GraphBlock::of(9_000_000, 0, &far);

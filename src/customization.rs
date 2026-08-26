@@ -1073,8 +1073,9 @@ impl Overlay for Customization {
         Customization::partition(self)
     }
 
-    #[inline]
-    fn border_levels(&self) -> &BorderLevels {
+    type Borders = BorderLevels;
+
+    fn borders(&self) -> &Self::Borders {
         Customization::border_levels(self)
     }
 

@@ -16,6 +16,7 @@ use std::{env::args, fs::File, io::Write, path::Path, time::Instant};
 use toolbox_rs::{
     block_codec::Codec,
     block_map::BlockMap,
+    border_levels::BorderLevels,
     cell_tree::CellTree,
     geometry::FPCoordinate,
     graph::{Graph, NodeID},
@@ -108,8 +109,18 @@ fn main() {
         (map, first_edges)
     } else {
         let started = Instant::now();
-        let (map, first_edges) = pack(&graph, Some(&tree), path, arcs_in_a_block, Codec::Lz4, 3)
-            .expect("a graph to pack");
+        // the border levels ride in the blocks with the arcs they belong to
+        let walked = BorderLevels::of(&graph, &partition);
+        let (map, first_edges) = pack(
+            &graph,
+            &walked,
+            Some(&tree),
+            path,
+            arcs_in_a_block,
+            Codec::Lz4,
+            3,
+        )
+        .expect("a graph to pack");
         println!(
             "packed {} arcs into {} blocks of about {kib} KiB in {:.1?}",
             Graph::number_of_edges(&graph),

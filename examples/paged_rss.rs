@@ -10,23 +10,22 @@
 //! The steps are cumulative: each line is what the process holds once that
 //! step is done, and the difference between two lines is what the step added.
 
-use std::{env::args, path::Path, process, time::Instant};
+use std::{env::args, path::Path, process, sync::Arc, time::Instant};
 
 use toolbox_rs::{
     block_map::BlockMap,
     block_store::BlockStore,
-    border_levels::BorderLevels,
     cell_tree::CellTree,
-    graph::{Graph, NodeID},
+    graph::{Arcs, NodeID},
     io,
     level_directory::LevelDirectory,
-    mld_query::MldQuery,
+    mld_query::SparseMldQuery,
     node_ordering::NodeOrdering,
     overlay::Overlay,
     packed_partition::PackedPartition,
+    paged_graph::PagedGraph,
     paged_overlay::{Budget, Footing, PagedOverlay},
     path_unpacking::Unpacker,
-    static_graph::StaticGraph,
 };
 
 const MIB: f64 = (1024 * 1024) as f64;
@@ -94,7 +93,7 @@ fn main() {
             panic!("usage: paged_rss <graph> <directory> <pairs> <blocks> [MiB]: missing {what}")
         })
     };
-    let graph_path = next("graph");
+    let _graph_path = next("graph");
     let directory_path = next("directory");
     let pairs_path = next("pairs");
     let blocks_path = next("blocks");
@@ -108,8 +107,10 @@ fn main() {
     let start = resident();
     println!("{:<38} {:>9.1} MiB", "an empty process", start as f64 / MIB);
 
-    let graph = StaticGraph::new(io::read_edges_from_file(&graph_path));
-    let mut at = report("the graph", start);
+    // No graph is read at all. It was here for the border levels, which are
+    // now written down when the store is packed and read back, and nothing
+    // else an instance does wants every arc at once.
+    let mut at = report("no graph is read", start);
 
     // The directory is what the partition and the border levels are built out
     // of, and neither keeps it, so an offline instance drops it here. It is
@@ -121,7 +122,12 @@ fn main() {
         PackedPartition::of(&directory)
     };
     at = report("the partition, directory dropped", at);
-    let border_levels = BorderLevels::of(&graph, &partition);
+    println!(
+        "  the partition is {} runs over {} nodes, {:.1} MiB",
+        partition.runs(),
+        partition.number_of_nodes(),
+        partition.bytes() as f64 / MIB
+    );
     at = report("the border levels", at);
 
     // The pairs are translated here rather than later, and what translates them
@@ -158,7 +164,36 @@ fn main() {
         bytes,
         pinned_share: 0.5,
     };
-    let footing = Footing::of(&graph, &tree, map.len(), 1);
+    // Where a pack of the arcs is at hand, the graph pages too and the footing
+    // stands for its index rather than for its arcs.
+    let arcs = std::env::var("TOOLBOX_ARCS").unwrap_or_else(|_| {
+        panic!("set TOOLBOX_ARCS to a pack of arcs; this measures an instance that pages both")
+    });
+    let paged_arcs = {
+        let at = &arcs;
+        let arc_map: BlockMap = io::read_from_file(&format!("{at}.map"));
+        let first_edges: Vec<u64> = io::read_vec_from_file(&format!("{at}.index"));
+        let room = std::env::var("TOOLBOX_ARC_BUDGET")
+            .ok()
+            .and_then(|mib| mib.parse::<usize>().ok())
+            .unwrap_or(256)
+            * 1024
+            * 1024;
+        let read =
+            PagedGraph::open(Path::new(at), arc_map, &first_edges, room).expect("a graph to open");
+        println!(
+            "the arcs page, holding at most {} MiB",
+            room / (1024 * 1024)
+        );
+        read
+    };
+    at = report("the arcs, which page too", at);
+
+    // the sparse queue, since an array over the nodes of a continent is more
+    // than half of a hundred and twenty eight megabyte budget standing still
+    let footing =
+        Footing::with_partition(&paged_arcs, partition.bytes() as u64, &tree, map.len(), 1)
+            .with_sparse_searches();
     let (pinned, cache) = budget.split(&tree, &footing);
     match budget.for_tables(&footing) {
         Ok(left) => println!(
@@ -203,13 +238,23 @@ fn main() {
     }
     let store = BlockStore::open(Path::new(&blocks_path), map, tree).expect("a store");
     let opening = Instant::now();
-    let paged = PagedOverlay::within(store, graph, partition, border_levels, budget);
+    // Nothing is read for the border levels: they ride in the blocks with the
+    // arcs they belong to, so the graph is what answers for them and the same
+    // handle serves as both.
+    let held = Arc::new(paged_arcs);
+    let paged = PagedOverlay::within(
+        store,
+        Arc::clone(&held),
+        partition,
+        Arc::clone(&held),
+        budget,
+    );
     let open = opening.elapsed();
     at = report("the held levels, read and unpacked", at);
 
     // the arrays a search wants, which go with the nodes of the graph and not
     // with the budget: one query is run to make it allocate them
-    let mut query = MldQuery::new();
+    let mut query = SparseMldQuery::new();
     let mut unpacker = Unpacker::for_instance(&paged);
     if let Some(&(source, target)) = pairs.first() {
         query.run(&paged, source, &[target]);
@@ -255,18 +300,22 @@ fn main() {
     // now and both are still resident.
     let nodes = paged.graph().number_of_nodes() as u64;
     let arcs = paged.graph().number_of_edges() as u64;
+    line("the graph", footing.graph, "8 bytes an arc, 4 a node");
     line(
-        "the graph",
-        arcs * 8 + nodes * 4,
-        "8 bytes an arc, 4 a node",
+        "the partition",
+        footing.partition,
+        "a run a cell, not a word a node",
     );
-    line("the partition", nodes * 16, "one u128 a node");
-    line("the border levels", nodes, "one byte a node");
+    line(
+        "the border levels",
+        footing.border_levels,
+        "nothing: they ride in the arc blocks",
+    );
     line("the block map", map_bytes, "one entry a block");
     line("the cell tree", tree_bytes, "one entry a cell");
     line("the cell tables", tables, "<- the budget governs this one");
     println!("  {:-<34} {:->13}", "", "");
-    let accounted = arcs * 8 + nodes * 21 + map_bytes + tree_bytes + tables;
+    let accounted = footing.total() - footing.searches + tables;
     line("accounted for", accounted, "");
     line("resident", full, "");
     println!(
@@ -287,8 +336,13 @@ fn main() {
         100.0 * tables as f64 / full as f64,
     );
     println!(
-        "The graph and the partition alone are {:.1} MiB, and no budget reaches them.",
-        (arcs * 8 + nodes * 20) as f64 / MIB
+        "The whole instance -- graph, partition and all -- stands in {:.1} MiB before tables.",
+        footing.total() as f64 / MIB
+    );
+    println!(
+        "It would be {:.1} MiB with the arcs held and a word a node: the arcs alone are {:.1}.",
+        (footing.total() + arcs * 8 + nodes * 4 + nodes * 16 - footing.partition) as f64 / MIB,
+        (arcs * 8 + nodes * 4) as f64 / MIB,
     );
     println!(
         "Every cell table of every level would be {:.1} MiB unpacked, so the budget holds {:.0}%.",

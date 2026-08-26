@@ -215,6 +215,37 @@ const NOWHERE: u32 = MISSING;
 /// holding a plain table, with nothing for the compiler to see through. Whether
 /// that is worth the loss of tidiness is a question for a measurement, not for
 /// an opinion -- see the note on the two queues below.
+/// What a search asks of its queue.
+///
+/// # Why there is a choice at all
+///
+/// The two queues below differ in one thing: where a node's place and weight
+/// are kept. An array over the nodes of the graph answers in one look and
+/// costs four bytes a node whether the run reaches it or not; a map costs a
+/// hash on every look and only room for what the run touched.
+///
+/// On a continent that is sixty eight mebibytes standing whether anybody is
+/// searching or not, against a few for what a query actually walks. A server
+/// with room to spare should take the array. An instance on a device with a
+/// budget for the whole of it cannot, and this is what lets the same search
+/// run over either.
+pub trait Queue<S: HeapStats<NodeID>> {
+    fn new() -> Self;
+    fn stats(&self) -> &S;
+    fn bytes(&self) -> usize;
+    fn clear(&mut self);
+    fn is_empty(&self) -> bool;
+    fn inserted_len(&self) -> usize;
+    fn inserted(&self, node: NodeID) -> bool;
+    fn contains(&self, node: NodeID) -> bool;
+    fn weight(&self, node: NodeID) -> usize;
+    fn data(&self, node: NodeID) -> NodeID;
+    fn insert(&mut self, node: NodeID, weight: usize, data: NodeID);
+    fn insert_or_decrease(&mut self, node: NodeID, weight: usize, data: NodeID) -> bool;
+    fn min_weight(&self) -> usize;
+    fn delete_min(&mut self) -> NodeID;
+}
+
 macro_rules! query_heap {
     ($name:ident, $table:ty, $what:literal) => {
         #[doc = $what]
@@ -477,6 +508,56 @@ macro_rules! query_heap {
     };
 }
 
+/// Answers [`Queue`] with what the queue already has.
+macro_rules! queue_impl {
+    ($name:ident) => {
+        impl<S: HeapStats<NodeID>> Queue<S> for $name<S> {
+            fn new() -> Self {
+                Self::new()
+            }
+            fn stats(&self) -> &S {
+                Self::stats(self)
+            }
+            fn bytes(&self) -> usize {
+                Self::bytes(self)
+            }
+            fn clear(&mut self) {
+                Self::clear(self);
+            }
+            fn is_empty(&self) -> bool {
+                Self::is_empty(self)
+            }
+            fn inserted_len(&self) -> usize {
+                Self::inserted_len(self)
+            }
+            fn inserted(&self, node: NodeID) -> bool {
+                Self::inserted(self, node)
+            }
+            fn contains(&self, node: NodeID) -> bool {
+                Self::contains(self, node)
+            }
+            fn weight(&self, node: NodeID) -> usize {
+                Self::weight(self, node)
+            }
+            fn data(&self, node: NodeID) -> NodeID {
+                Self::data(self, node)
+            }
+            fn insert(&mut self, node: NodeID, weight: usize, data: NodeID) {
+                Self::insert(self, node, weight, data);
+            }
+            fn insert_or_decrease(&mut self, node: NodeID, weight: usize, data: NodeID) -> bool {
+                Self::insert_or_decrease(self, node, weight, data)
+            }
+            fn min_weight(&self) -> usize {
+                Self::min_weight(self)
+            }
+            fn delete_min(&mut self) -> NodeID {
+                Self::delete_min(self)
+            }
+        }
+    };
+}
+
 query_heap!(
     DenseHeap,
     ByArray,
@@ -489,6 +570,9 @@ query_heap!(
     "A queue that finds a node in a map, at the price of a hash on every look \
      and only room for what a run reached."
 );
+
+queue_impl!(DenseHeap);
+queue_impl!(HashHeap);
 
 #[cfg(test)]
 mod tests {

@@ -39,6 +39,24 @@ use crate::{
     packed_partition::PackedPartition,
 };
 
+/// What a search asks about an arc's cell.
+///
+/// # Why this is a trait
+///
+/// An instance holding its graph keeps a byte an arc beside it. One that pages
+/// its arcs does not: the level rides in the block with the arc it belongs to
+/// and is read when the arc is, because a byte an arc standing resident is
+/// forty megabytes of a continent to say what three bits an arc say there.
+///
+/// A search should not care which it is talking to, and the backward side of a
+/// bidirectional search has its own -- the arcs of a network turned around
+/// leave the same cells but are numbered differently -- so it is asked for
+/// alongside the graph rather than taken off the overlay.
+pub trait Borders {
+    /// Whether this arc leaves the cell its source sits in at this level.
+    fn leaves_cell(&self, edge: EdgeID, level: usize) -> bool;
+}
+
 /// An arc whose ends never part, which leaves no cell on any level.
 const STAYS_INSIDE: u8 = 0;
 
@@ -103,6 +121,29 @@ impl BorderLevels {
         usize::from(self.of_edge[edge]) > level
     }
 
+    /// The bytes themselves, one an arc, for writing into a store.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.of_edge
+    }
+
+    /// Takes back what [`as_bytes`](Self::as_bytes) wrote.
+    ///
+    /// This is what an instance does instead of working the levels out: they
+    /// are settled once when the store is packed and do not change again, and
+    /// working them out means walking every arc of the graph, which is the one
+    /// thing a store that pages its arcs was built not to do.
+    #[must_use]
+    pub fn of_bytes(of_edge: Vec<u8>) -> Self {
+        Self { of_edge }
+    }
+
+    /// What this takes: a byte an arc.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        self.of_edge.capacity()
+    }
+
     /// The highest level at which the arc leaves a cell, and `None` for one
     /// whose ends sit in the same cell on every level.
     ///
@@ -115,6 +156,13 @@ impl BorderLevels {
             STAYS_INSIDE => None,
             held => Some(usize::from(held) - 1),
         }
+    }
+}
+
+impl Borders for BorderLevels {
+    #[inline]
+    fn leaves_cell(&self, edge: EdgeID, level: usize) -> bool {
+        BorderLevels::leaves_cell(self, edge, level)
     }
 }
 

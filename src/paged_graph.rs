@@ -45,6 +45,7 @@ use crate::{
     block_codec::Codec,
     block_map::{BlockEntry, BlockMap},
     block_store::{BlockWriter, NotRead, read_at},
+    border_levels::{BorderLevels, Borders},
     cell_tree::CellTree,
     graph::{Arcs, EdgeID, Graph, NodeID},
     graph_block::{GraphBlock, HeldArcs},
@@ -449,6 +450,72 @@ impl ArcWriter {
     }
 }
 
+/// What the border levels are filed under, since they are neither cells nor
+/// runs of arcs.
+const BORDERS: u8 = u8::MAX - 1;
+
+/// Writes the border levels out as blocks, one for each block of arcs.
+///
+/// A border level is a byte an arc saying the highest level at which the arc
+/// leaves the cell of its source. It is settled when the store is packed and
+/// does not change, and working it out means walking every arc of the graph --
+/// which is the one thing a store that pages its arcs was built not to do. So
+/// it is written down instead, through the same [`BlockWriter`] and the same
+/// codec as everything else, cut on the same block boundaries as the arcs.
+///
+/// # Errors
+///
+/// Returns whatever went wrong writing the file.
+pub fn pack_borders(
+    levels: &[u8],
+    first_edges: &[u64],
+    path: &Path,
+    codec: Codec,
+    effort: i32,
+) -> std::io::Result<BlockMap> {
+    let mut writer = BlockWriter::create(path)?;
+    for (block, span) in first_edges.windows(2).enumerate() {
+        let (from, upto) = (span[0] as usize, span[1] as usize);
+        writer.push_bytes(
+            &levels[from..upto],
+            BORDERS,
+            (from as u128, upto.saturating_sub(1) as u128),
+            (
+                u32::try_from(block).expect("a block count in four bytes"),
+                1,
+            ),
+            (
+                u32::try_from(from).expect("an arc in four bytes"),
+                u32::try_from(upto - from).expect("a run of arcs in four bytes"),
+            ),
+            codec,
+            effort,
+        )?;
+    }
+    writer.finish()
+}
+
+/// Reads back what [`pack_borders`] wrote, in one run a byte an arc.
+///
+/// # Errors
+///
+/// Returns whatever went wrong reading it.
+pub fn read_borders(path: &Path, map: &BlockMap) -> Result<Vec<u8>, NotRead> {
+    let file = File::open(path)?;
+    let mut levels = Vec::new();
+    for entry in map.entries() {
+        let mut stored = vec![0_u8; entry.stored as usize];
+        read_at(&file, entry.at, &mut stored)?;
+        let codec = Codec::of(entry.codec).map_err(|_| NotRead::UnknownCodec(entry.codec))?;
+        levels.extend_from_slice(
+            &codec
+                .decode(&stored, entry.unpacked as usize)
+                .map_err(NotRead::Corrupt)?,
+        );
+    }
+    Ok(levels)
+}
+
 /// Packs a graph into blocks of about so many arcs apiece.
 ///
 /// `arcs_in_a_block` sets how much a read brings back: eight bytes an arc
@@ -461,6 +528,7 @@ impl ArcWriter {
 /// Returns whatever went wrong writing the file.
 pub fn pack<G: Graph<u32>>(
     graph: &G,
+    borders: &BorderLevels,
     tree: Option<&CellTree>,
     path: &Path,
     arcs_in_a_block: usize,
@@ -483,18 +551,23 @@ pub fn pack<G: Graph<u32>>(
         }
     };
     let mut writer = ArcWriter::create(path)?;
-    let mut run: Vec<Vec<(u32, u32)>> = Vec::new();
+    let mut run: Vec<Vec<(u32, u32, u8)>> = Vec::new();
     let mut first_node = 0_u32;
     let mut first_edge = 0_u64;
     let mut in_run = 0_usize;
 
     for node in graph.node_range() {
-        let out: Vec<(u32, u32)> = graph
+        let out: Vec<(u32, u32, u8)> = graph
             .edge_range(node)
             .map(|edge| {
                 (
                     u32::try_from(graph.target(edge)).expect("a node in four bytes"),
                     *graph.data(edge),
+                    // the level the arc leaves its source's cell at rides with
+                    // it, rather than standing in a byte an arc of its own
+                    borders.highest_of(edge).map_or(0, |level| {
+                        u8::try_from(level + 1).expect("a level in a byte")
+                    }),
                 )
             })
             .collect();
@@ -520,6 +593,54 @@ pub fn pack<G: Graph<u32>>(
     writer.finish()
 }
 
+/// The levels ride in the blocks with the arcs, so the graph is what answers
+/// for them: nothing stands resident and a level is read when its arc is.
+impl Borders for PagedGraph {
+    #[inline]
+    fn leaves_cell(&self, edge: EdgeID, level: usize) -> bool {
+        self.holding_edge(edge)
+            .and_then(|held| held.leaves_cell(edge as u64, level))
+            .unwrap_or(false)
+    }
+}
+
+/// A graph is often wanted twice over -- as the arcs and as what says which of
+/// them leave a cell -- and one behind a count is the way to have it both ways
+/// without holding it twice.
+impl Arcs<u32> for Arc<PagedGraph> {
+    fn node_range(&self) -> std::ops::Range<NodeID> {
+        (**self).node_range()
+    }
+    fn edge_range(&self, node: NodeID) -> std::ops::Range<EdgeID> {
+        (**self).edge_range(node)
+    }
+    fn number_of_nodes(&self) -> usize {
+        (**self).number_of_nodes()
+    }
+    fn number_of_edges(&self) -> usize {
+        (**self).number_of_edges()
+    }
+    fn target(&self, edge: EdgeID) -> NodeID {
+        (**self).target(edge)
+    }
+    fn weight(&self, edge: EdgeID) -> u32 {
+        (**self).weight(edge)
+    }
+    fn for_each_arc(&self, node: NodeID, f: impl FnMut(NodeID, u32)) {
+        (**self).for_each_arc(node, f);
+    }
+    fn standing(&self) -> usize {
+        (**self).standing()
+    }
+}
+
+impl Borders for Arc<PagedGraph> {
+    #[inline]
+    fn leaves_cell(&self, edge: EdgeID, level: usize) -> bool {
+        (**self).leaves_cell(edge, level)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -543,6 +664,14 @@ mod tests {
         StaticGraph::new(edges)
     }
 
+    /// Border levels off a grid's own partition, which is what a real pack
+    /// gets and what makes the arcs carry something worth reading back.
+    fn borders_of(graph: &StaticGraph<u32>, side: usize) -> BorderLevels {
+        use crate::{grid_graph::grid_directory, packed_partition::PackedPartition};
+        let directory = grid_directory(side);
+        BorderLevels::of(graph, &PackedPartition::of(&directory))
+    }
+
     fn paged(
         graph: &StaticGraph<u32>,
         arcs: usize,
@@ -550,8 +679,16 @@ mod tests {
     ) -> (tempfile::TempDir, PagedGraph) {
         let held = tempfile::tempdir().expect("a directory to write in");
         let path = held.path().join("arcs");
-        let (map, first_edges) =
-            pack(graph, None, &path, arcs, Codec::Lz4, 3).expect("a graph to pack");
+        let (map, first_edges) = pack(
+            graph,
+            &BorderLevels::of_bytes(vec![0; Graph::number_of_edges(graph)]),
+            None,
+            &path,
+            arcs,
+            Codec::Lz4,
+            3,
+        )
+        .expect("a graph to pack");
         let read = PagedGraph::open(&path, map, &first_edges, budget).expect("a graph to open");
         (held, read)
     }
@@ -638,6 +775,45 @@ mod tests {
         }
     }
 
+    /// The border levels are written down when the store is packed and read
+    /// back, rather than worked out by walking every arc of a graph that is on
+    /// a file.
+    #[test]
+    fn the_border_levels_read_back_as_the_walk_would_have_found_them() {
+        use crate::{
+            border_levels::BorderLevels, grid_graph::grid_directory,
+            packed_partition::PackedPartition,
+        };
+
+        let side = 16;
+        let graph = grid(side);
+        let directory = grid_directory(side);
+        let partition = PackedPartition::of(&directory);
+        let walked = BorderLevels::of(&graph, &partition);
+
+        let held = tempfile::tempdir().expect("a directory to write in");
+        let arcs = held.path().join("arcs");
+        let (_, first_edges) =
+            pack(&graph, &walked, None, &arcs, 64, Codec::Lz4, 3).expect("a graph to pack");
+        let borders = held.path().join("borders");
+        let map = pack_borders(walked.as_bytes(), &first_edges, &borders, Codec::Lz4, 3)
+            .expect("the levels to pack");
+        assert!(map.len() > 1, "the pack is worth checking");
+
+        let read = BorderLevels::of_bytes(read_borders(&borders, &map).expect("the levels"));
+        assert_eq!(read.len(), walked.len(), "a different number of arcs");
+        for edge in 0..walked.len() {
+            assert_eq!(read.highest_of(edge), walked.highest_of(edge), "arc {edge}");
+            for level in 0..directory.levels() {
+                assert_eq!(
+                    read.leaves_cell(edge, level),
+                    walked.leaves_cell(edge, level),
+                    "arc {edge} at level {level}"
+                );
+            }
+        }
+    }
+
     /// A plain Dijkstra, with no overlay under it at all, run over a graph
     /// that is on a file: the same search, the same answers.
     #[test]
@@ -694,8 +870,16 @@ mod tests {
 
         let held = tempfile::tempdir().expect("a directory to write in");
         let path = held.path().join("arcs");
-        let (map, first_edges) =
-            pack(&graph, Some(&tree), &path, 64, Codec::Lz4, 3).expect("a graph to pack");
+        let (map, first_edges) = pack(
+            &graph,
+            &borders_of(&graph, side),
+            Some(&tree),
+            &path,
+            64,
+            Codec::Lz4,
+            3,
+        )
+        .expect("a graph to pack");
 
         // Every block carries the key span of the cells its nodes fall in.
         // They rise with the blocks only where the nodes have been renumbered
@@ -728,10 +912,19 @@ mod tests {
     /// the arcs in memory.
     #[test]
     fn the_arcs_on_the_file_are_smaller_than_the_arcs_in_memory() {
-        let graph = grid(48);
+        let graph = grid(64);
         let held = tempfile::tempdir().expect("a directory to write in");
         let path = held.path().join("arcs");
-        let (map, _) = pack(&graph, None, &path, 8_192, Codec::Lz4, 3).expect("a graph to pack");
+        let (map, _) = pack(
+            &graph,
+            &borders_of(&graph, 64),
+            None,
+            &path,
+            8_192,
+            Codec::Lz4,
+            3,
+        )
+        .expect("a graph to pack");
         let (stored, _) = map.bytes();
         let in_memory =
             (Graph::number_of_edges(&graph) * 8 + Graph::number_of_nodes(&graph) * 4) as u64;
