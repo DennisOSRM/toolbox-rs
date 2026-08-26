@@ -106,7 +106,11 @@ THIN <- 5
 counts <- table(timings$exponent)
 thin <- as.integer(names(counts)[counts < THIN * length(engines)])
 
-palette <- c("#3060c0", "#c05030", "#309050", "#9050b0")
+# enough for a sweep of block sizes with the engine they are measured against
+palette <- c(
+  "#3060c0", "#c05030", "#309050", "#9050b0",
+  "#c09030", "#30909c", "#a03060", "#606060"
+)
 colour_of <- setNames(palette[seq_along(engines)], engines)
 
 png(output, width = 1400, height = 1000, res = 130)
