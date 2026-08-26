@@ -580,8 +580,8 @@ impl CellTree {
 
         let at = 8 + length as u64;
         self.paged = Some(Arc::new(PagedCells {
-            facts: PagedArray::open(path, at, cells as usize, 8, Arc::clone(pool))?,
-            begins_node: PagedArray::open(
+            facts: PagedArray::open_pinned(path, at, cells as usize, 8, Arc::clone(pool))?,
+            begins_node: PagedArray::open_pinned(
                 path,
                 at + cells * 8,
                 begins as usize,

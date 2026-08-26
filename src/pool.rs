@@ -141,7 +141,22 @@ impl std::fmt::Debug for Pool {
 }
 
 struct Inside {
+    /// what may be let go of, oldest first
     kept: LRU<Key, Held>,
+    /// What may not.
+    ///
+    /// The partition and the tree are asked something for every node a search
+    /// settles and every cell it touches, and they are small: seven mebibytes
+    /// of a hundred and twenty eight. Left to take their chances in the list
+    /// they are pushed out by the arcs, which are read once and walked, and
+    /// then read again for the next query -- so the hottest lookups in the
+    /// engine pay a block read and the coldest keep the room.
+    ///
+    /// Held here they are still the budget's: what is pinned is counted, and
+    /// a pool whose pins fill it has nothing left to cache with. It is the
+    /// letting go that they are exempt from, not the accounting.
+    stuck: rustc_hash::FxHashMap<Key, Held>,
+    pinned: usize,
     bytes: usize,
     faults: Faults,
     scrap: Scrap,
@@ -163,6 +178,8 @@ impl Pool {
                 // room for the entries, which the budget in bytes bounds; the
                 // count is only what the index is made large enough for
                 kept: LRU::new_with_capacity(1 << 18),
+                stuck: rustc_hash::FxHashMap::default(),
+                pinned: 0,
                 bytes: 0,
                 faults: Faults::default(),
                 scrap: Scrap::default(),
@@ -181,7 +198,7 @@ impl Pool {
     pub fn faults(&self) -> Faults {
         let inside = self.inside.lock().expect("the pool");
         Faults {
-            held: inside.bytes,
+            held: inside.bytes + inside.pinned,
             ..inside.faults
         }
     }
@@ -190,6 +207,11 @@ impl Pool {
     #[must_use]
     pub fn get(&self, key: &Key) -> Option<Held> {
         let mut inside = self.inside.lock().expect("the pool");
+        if let Some(held) = inside.stuck.get(key) {
+            let held = held.clone();
+            inside.faults.hits += 1;
+            return Some(held);
+        }
         match inside.kept.get(key) {
             Some(held) => {
                 let held = held.clone();
@@ -215,16 +237,49 @@ impl Pool {
             return;
         }
         let mut inside = self.inside.lock().expect("the pool");
-        while inside.bytes + cost > self.budget
+        while inside.bytes + inside.pinned + cost > self.budget
             && let Some((_, gone)) = inside.kept.pop_lru()
         {
             inside.bytes -= gone.bytes();
             inside.faults.evicted += 1;
             recycle(&mut inside.scrap, gone);
         }
-        inside.kept.push(&key, held);
-        inside.bytes += cost;
-        inside.faults.highest = inside.faults.highest.max(inside.bytes);
+        // a pool whose pins leave no room keeps nothing else
+        if inside.bytes + inside.pinned + cost <= self.budget {
+            inside.kept.push(&key, held);
+            inside.bytes += cost;
+        }
+        inside.faults.highest = inside.faults.highest.max(inside.bytes + inside.pinned);
+    }
+
+    /// Puts something in that will not be let go of.
+    ///
+    /// It counts against the budget like anything else; what it is exempt from
+    /// is eviction. A caller that pins more than the budget gets a pool with
+    /// nothing left to cache with, which is a caller's mistake and not the
+    /// pool's, so it is allowed and reported rather than refused.
+    pub fn pin(&self, key: Key, held: Held) {
+        let cost = held.bytes();
+        let mut inside = self.inside.lock().expect("the pool");
+        // room first, out of what may be let go of
+        while inside.bytes + inside.pinned + cost > self.budget
+            && let Some((_, gone)) = inside.kept.pop_lru()
+        {
+            inside.bytes -= gone.bytes();
+            inside.faults.evicted += 1;
+            recycle(&mut inside.scrap, gone);
+        }
+        if inside.stuck.insert(key, held).is_none() {
+            inside.pinned += cost;
+        }
+        let held = inside.bytes + inside.pinned;
+        inside.faults.highest = inside.faults.highest.max(held);
+    }
+
+    /// What is pinned, in bytes.
+    #[must_use]
+    pub fn pinned(&self) -> usize {
+        self.inside.lock().expect("the pool").pinned
     }
 
     /// Notes that a block was read off a file.
@@ -411,5 +466,46 @@ mod tests {
         pool.forget();
         assert_eq!(pool.faults().held, 0);
         assert!(pool.get(&Key::Way(0, 0, 0)).is_none());
+    }
+
+    /// The one this is for: what is pinned stays however much else goes
+    /// through the pool.
+    #[test]
+    fn what_is_pinned_is_not_let_go_of() {
+        let pool = Pool::of(16 * 1024);
+        pool.pin(Key::Way(1, 1, 0), way(64));
+        let stuck = pool.pinned();
+        assert!(stuck > 0, "nothing was pinned");
+
+        // enough of everything else to have emptied the list many times over
+        for at in 0..256 {
+            pool.put(Key::Way(at + 2, at + 2, 0), way(128));
+        }
+        assert!(pool.faults().evicted > 0, "nothing was let go of");
+        assert!(
+            pool.get(&Key::Way(1, 1, 0)).is_some(),
+            "what was pinned went anyway"
+        );
+        assert_eq!(pool.pinned(), stuck, "what is pinned changed size");
+        assert!(
+            pool.faults().held <= 16 * 1024,
+            "held {} bytes",
+            pool.faults().held
+        );
+    }
+
+    /// And it is the budget's: a pool whose pins fill it caches nothing.
+    #[test]
+    fn what_is_pinned_is_counted_against_the_budget() {
+        let pool = Pool::of(4 * 1024);
+        for at in 0..64 {
+            pool.pin(Key::Way(at, at, 0), way(64));
+        }
+        assert!(pool.pinned() > 0);
+        pool.put(Key::Arcs(0), way(64));
+        assert!(
+            pool.get(&Key::Arcs(0)).is_none(),
+            "a pool with no room left kept something anyway"
+        );
     }
 }

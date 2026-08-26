@@ -593,9 +593,10 @@ impl PackedPartition {
         }
         let runs = head.runs as usize;
         let at = 8 + length as u64;
-        let begins = PagedArray::open(path, at, runs + 1, 4, Arc::clone(pool))?;
-        let words = PagedArray::open(path, at + (runs as u64 + 1) * 4, runs, 16, Arc::clone(pool))?;
-        let buckets = PagedArray::open(
+        let begins = PagedArray::open_pinned(path, at, runs + 1, 4, Arc::clone(pool))?;
+        let words =
+            PagedArray::open_pinned(path, at + (runs as u64 + 1) * 4, runs, 16, Arc::clone(pool))?;
+        let buckets = PagedArray::open_pinned(
             path,
             at + (runs as u64 + 1) * 4 + runs as u64 * 16,
             (head.nodes as usize >> head.shift) + 2,

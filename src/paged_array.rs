@@ -67,6 +67,9 @@ pub struct PagedArray {
     apiece: usize,
     /// which array this is, for the pool
     which: u16,
+    /// whether its blocks are pinned, for an array asked something on every
+    /// step of every search
+    stuck: bool,
     pool: Arc<Pool>,
     reads: AtomicUsize,
 }
@@ -97,9 +100,36 @@ impl PagedArray {
             apiece: BLOCK_BYTES / wide,
             which: u16::try_from(NEXT_ARRAY.fetch_add(1, Ordering::Relaxed))
                 .expect("more arrays than a short counts"),
+            stuck: false,
             pool,
             reads: AtomicUsize::new(0),
         })
+    }
+
+    /// The same, for an array whose blocks are not to be let go of.
+    ///
+    /// The partition and the cell tree are asked something for every node a
+    /// search settles and every cell it touches. Left to take their chances
+    /// against the arcs -- which are read once, walked, and not wanted again
+    /// until the next query -- they are pushed out constantly, so the hottest
+    /// lookups in the engine pay a block read apiece.
+    ///
+    /// What is pinned is still the budget's. It is the letting go it is exempt
+    /// from, not the accounting.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever went wrong opening the file.
+    pub fn open_pinned(
+        path: &Path,
+        at: u64,
+        entries: usize,
+        wide: usize,
+        pool: Arc<Pool>,
+    ) -> std::io::Result<Self> {
+        let mut held = Self::open(path, at, entries, wide, pool)?;
+        held.stuck = true;
+        Ok(held)
     }
 
     /// How many entries it holds.
@@ -170,7 +200,11 @@ impl PagedArray {
         self.reads.fetch_add(1, Ordering::Relaxed);
         self.pool.note_read();
         let held = Arc::new(into);
-        self.pool.put(key, Held::Bytes(Arc::clone(&held)));
+        if self.stuck {
+            self.pool.pin(key, Held::Bytes(Arc::clone(&held)));
+        } else {
+            self.pool.put(key, Held::Bytes(Arc::clone(&held)));
+        }
         Ok(held)
     }
 }

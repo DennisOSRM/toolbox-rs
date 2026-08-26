@@ -162,7 +162,11 @@ fn main() {
     // was packed, and building it from a directory means reading seventy one
     // mebibytes of one to throw it away again -- which puts the high-water
     // mark of the process above anything it goes on to hold.
-    let early = Pool::of(4 * toolbox_rs::paged_array::BLOCK_BYTES);
+    // One pool, made before anything is opened, because everything draws on
+    // it: the arcs, the tables, the ways, and the partition and tree arrays
+    // that are pinned into it. What stands outside it is the footing, which is
+    // a third of a mebibyte, so the budget less a mebibyte is the pool's.
+    let early = Pool::of(bytes.saturating_sub(MIB as usize));
     let partition = PackedPartition::open(
         Path::new(&format!(
             "{}.partition",
@@ -228,10 +232,13 @@ fn main() {
         bytes,
         // levels held outright are read at open and never let go of, so a run
         // that must never exceed its budget while starting up may want none
+        // Nothing is held outside the pool by default: a level held outright
+        // is room the pool does not have, and the pool is where the pinning
+        // that matters now happens.
         pinned_share: std::env::var("TOOLBOX_PIN_SHARE")
             .ok()
             .and_then(|share| share.parse().ok())
-            .unwrap_or(0.5),
+            .unwrap_or(0.0),
     };
     // Where a pack of the arcs is at hand, the graph pages too and the footing
     // stands for its index rather than for its arcs.
@@ -257,9 +264,9 @@ fn main() {
             // nothing: the queue keeps only what a run touched
             searches: 0,
         };
-        let pool = budget.pool_for(&tree, &footing);
+        let pool = Arc::clone(&early);
         println!(
-            "one pool of {:.1} MiB for the arcs, the tables and the ways alike",
+            "one pool of {:.1} MiB for the arcs, the tables, the ways and the pins",
             pool.budget() as f64 / MIB
         );
         let read = PagedGraph::open(Path::new(at), arc_map, &first_edges, Arc::clone(&pool))
@@ -475,6 +482,10 @@ fn main() {
         std::thread::sleep(std::time::Duration::from_secs(seconds));
     }
 
+    println!(
+        "  of the pool, {:.1} MiB is pinned: the partition and the tree arrays",
+        paged.pool().pinned() as f64 / MIB
+    );
     let faults = paged.faults();
     let tables = paged.pinned_bytes() as u64 + faults.held as u64;
     let pool = paged.pool().faults();
