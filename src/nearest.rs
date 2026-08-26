@@ -91,83 +91,140 @@ pub const VERSION: u16 = 1;
 /// inside one read of the array they are in.
 pub const FAN: usize = 32;
 
-/// What the index is over.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Archive, Serialize, Deserialize)]
-pub enum Kind {
-    /// the nodes of the graph, one thing apiece
-    Nodes,
-    /// the arcs of the graph, as the piece of road between their ends
-    Segments,
+/// Something an index can hold.
+///
+/// # What a shape has to say about itself
+///
+/// Where it is, so it can be put in an order that makes the boxes over it
+/// tight; what box holds it, so a walk can bound it; how far away it is and
+/// what point of it is nearest, so a walk can rank it against the boxes; and
+/// how to write it down and read it back, at a width that does not vary, so
+/// that where it sits in a file is arithmetic and the index can be read a
+/// block at a time.
+///
+/// The fixed width is the only demand that is not obvious, and it is the one
+/// that buys the paging. A shape with a variable-length tail keeps the tail
+/// somewhere else and holds an offset here.
+///
+/// # The contract a walk rests on
+///
+/// [`nearest_to`](Self::nearest_to) must never answer less than
+/// [`Metric::min_distance`] of [`bbox`](Self::bbox), in the same measure. A
+/// walk keys boxes on the bound and shapes on this, so a shape that reports
+/// nearer than the box around it is a shape handed out before things that are
+/// closer.
+pub trait Indexed: Copy {
+    /// How wide one is written, in bytes.
+    const BYTES: usize;
+
+    /// What kind of thing this is, so a file says what is in it and reading it
+    /// as something else is refused rather than answered wrongly.
+    const TAG: u32;
+
+    /// Writes one down. `into` is at least [`BYTES`](Self::BYTES) long.
+    fn write_to(&self, into: &mut [u8]);
+
+    /// Reads one back.
+    fn read_from(from: &[u8]) -> Self;
+
+    /// The box that holds it.
+    fn bbox(&self) -> BoundingBox;
+
+    /// Where it sits, for the sort that decides which things share a box.
+    fn center(&self) -> FPCoordinate;
+
+    /// How far away it is, and what point of it is nearest.
+    fn nearest_to(&self, at: &FPCoordinate, by: &Scaled) -> (f64, FPCoordinate);
 }
 
-/// One thing the index holds.
-///
-/// A node is a segment whose ends are the same place, which is what lets one
-/// walk serve both: the distance to it comes out of the same call.
+/// A node of the graph, at a place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Item {
-    /// the node or the arc this is
+pub struct Node {
+    pub what: u32,
+    pub at: FPCoordinate,
+}
+
+impl Indexed for Node {
+    const BYTES: usize = 4 + 8;
+    const TAG: u32 = 1;
+
+    fn write_to(&self, into: &mut [u8]) {
+        into[0..4].copy_from_slice(&self.what.to_le_bytes());
+        into[4..8].copy_from_slice(&self.at.lat.to_le_bytes());
+        into[8..12].copy_from_slice(&self.at.lon.to_le_bytes());
+    }
+
+    fn read_from(from: &[u8]) -> Self {
+        Self {
+            what: u32::from_le_bytes(from[0..4].try_into().expect("four bytes")),
+            at: FPCoordinate::new(word(&from[4..8]), word(&from[8..12])),
+        }
+    }
+
+    fn bbox(&self) -> BoundingBox {
+        BoundingBox::between(self.at, self.at)
+    }
+
+    fn center(&self) -> FPCoordinate {
+        self.at
+    }
+
+    fn nearest_to(&self, at: &FPCoordinate, by: &Scaled) -> (f64, FPCoordinate) {
+        (by.distance(at, &self.at), self.at)
+    }
+}
+
+/// A piece of road, between the ends of an arc.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Segment {
     pub what: u32,
     pub from: FPCoordinate,
     pub to: FPCoordinate,
 }
 
-/// How wide an [`Item`] is written.
-const ITEM_BYTES: usize = 4 + 8 + 8;
-/// And a [`BoundingBox`].
-const BOX_BYTES: usize = 16;
+impl Indexed for Segment {
+    const BYTES: usize = 4 + 8 + 8;
+    const TAG: u32 = 2;
 
-/// What a browse hands back.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Found {
-    /// the node, or the arc
-    pub what: u32,
-    /// where on it the nearest point is: the node itself, or the place on the
-    /// segment the query is beside
-    pub at: FPCoordinate,
-    /// how far away that is, in metres
-    pub away: f64,
+    fn write_to(&self, into: &mut [u8]) {
+        into[0..4].copy_from_slice(&self.what.to_le_bytes());
+        into[4..8].copy_from_slice(&self.from.lat.to_le_bytes());
+        into[8..12].copy_from_slice(&self.from.lon.to_le_bytes());
+        into[12..16].copy_from_slice(&self.to.lat.to_le_bytes());
+        into[16..20].copy_from_slice(&self.to.lon.to_le_bytes());
+    }
+
+    fn read_from(from: &[u8]) -> Self {
+        Self {
+            what: u32::from_le_bytes(from[0..4].try_into().expect("four bytes")),
+            from: FPCoordinate::new(word(&from[4..8]), word(&from[8..12])),
+            to: FPCoordinate::new(word(&from[12..16]), word(&from[16..20])),
+        }
+    }
+
+    fn bbox(&self) -> BoundingBox {
+        BoundingBox::from_coordinates(&[self.from, self.to])
+    }
+
+    fn center(&self) -> FPCoordinate {
+        FPCoordinate::new(
+            (self.from.lat + self.to.lat) / 2,
+            (self.from.lon + self.to.lon) / 2,
+        )
+    }
+
+    fn nearest_to(&self, at: &FPCoordinate, by: &Scaled) -> (f64, FPCoordinate) {
+        by.distance_to_segment(at, &self.from, &self.to)
+    }
 }
 
-/// Where the boxes live.
-enum Boxes {
-    Held(Vec<BoundingBox>),
-    Paged(PagedArray),
-}
-
-/// And the things.
-enum Items {
-    Held(Vec<Item>),
-    Paged(PagedArray),
-}
-
-/// What a written index says about itself before its arrays.
-#[derive(Archive, Serialize, Deserialize)]
-struct Head {
-    version: u16,
-    kind: Kind,
-    fan: u32,
-    objects: u64,
-    /// how many boxes each level has, the bottom row first
-    counts: Vec<u32>,
-    lon_scale: f64,
-}
-
-/// A nearest-first index over the nodes or the arcs of a graph.
-pub struct NearestIndex {
-    kind: Kind,
-    fan: usize,
-    objects: usize,
-    /// where each level begins in the flat run of boxes, the bottom row first
-    level_at: Vec<u64>,
-    counts: Vec<u32>,
-    boxes: Boxes,
-    items: Items,
-    /// the plane everything is measured in
-    plane: Scaled,
-}
-
-impl NearestIndex {
+/// The two an index over a road network is built from.
+///
+/// A caller indexing anything else writes its own [`Indexed`] and hands the
+/// shapes to [`NearestIndex::over`]; these are here because a router asks for
+/// them constantly and because building them off a graph is the same three
+/// lines every time.
+impl NearestIndex<Node> {
     /// An index over the nodes of a graph.
     ///
     /// # Panics
@@ -175,18 +232,20 @@ impl NearestIndex {
     /// Panics for more nodes than four thousand million.
     #[must_use]
     pub fn over_nodes(coordinates: &[FPCoordinate]) -> Self {
-        let items = coordinates
-            .iter()
-            .enumerate()
-            .map(|(at, &place)| Item {
-                what: u32::try_from(at).expect("a node in four bytes"),
-                from: place,
-                to: place,
-            })
-            .collect();
-        Self::of(items, Kind::Nodes)
+        Self::over(
+            coordinates
+                .iter()
+                .enumerate()
+                .map(|(at, &place)| Node {
+                    what: u32::try_from(at).expect("a node in four bytes"),
+                    at: place,
+                })
+                .collect(),
+        )
     }
+}
 
+impl NearestIndex<Segment> {
     /// An index over the arcs of a graph, as the road between their ends.
     ///
     /// Only one direction of a two-way road is kept: the two carry the same
@@ -206,24 +265,86 @@ impl NearestIndex {
                 if target <= node {
                     continue;
                 }
-                items.push(Item {
+                items.push(Segment {
                     what: u32::try_from(edge).expect("an arc in four bytes"),
                     from: coordinates[node],
                     to: coordinates[target],
                 });
             }
         }
-        Self::of(items, Kind::Segments)
+        Self::over(items)
+    }
+}
+
+/// How wide a [`BoundingBox`] is written.
+const BOX_BYTES: usize = 16;
+
+/// What a browse hands back.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Found<T> {
+    /// the thing itself
+    pub what: T,
+    /// what point of it is nearest
+    pub at: FPCoordinate,
+    /// how far away that is, in metres
+    pub away: f64,
+}
+
+/// Where the boxes live.
+enum Boxes {
+    Held(Vec<BoundingBox>),
+    Paged(PagedArray),
+}
+
+/// And the things.
+enum Items<T> {
+    Held(Vec<T>),
+    Paged(PagedArray),
+}
+
+/// What a written index says about itself before its arrays.
+#[derive(Archive, Serialize, Deserialize)]
+struct Head {
+    version: u16,
+    /// what shape the things are, so reading them as another is refused
+    tag: u32,
+    fan: u32,
+    objects: u64,
+    /// how many boxes each level has, the bottom row first
+    counts: Vec<u32>,
+    lon_scale: f64,
+}
+
+/// A nearest-first index over the nodes or the arcs of a graph.
+pub struct NearestIndex<T: Indexed> {
+    fan: usize,
+    objects: usize,
+    /// where each level begins in the flat run of boxes, the bottom row first
+    level_at: Vec<u64>,
+    counts: Vec<u32>,
+    boxes: Boxes,
+    items: Items<T>,
+    /// the plane everything is measured in
+    plane: Scaled,
+}
+
+impl<T: Indexed> NearestIndex<T> {
+    /// An index over whatever shapes a caller has.
+    ///
+    /// # Panics
+    ///
+    /// Panics for nothing to index, which has no box to be measured in.
+    #[must_use]
+    pub fn over(items: Vec<T>) -> Self {
+        Self::of(items)
     }
 
     /// Builds the tree over things already collected.
-    fn of(mut items: Vec<Item>, kind: Kind) -> Self {
-        let whole = BoundingBox::from_coordinates(
-            &items
-                .iter()
-                .flat_map(|item| [item.from, item.to])
-                .collect::<Vec<_>>(),
-        );
+    fn of(mut items: Vec<T>) -> Self {
+        let mut whole = BoundingBox::invalid();
+        for item in &items {
+            whole.extend_with(&item.bbox());
+        }
         let plane = Scaled::about(&whole);
 
         sort_tile_recursive(&mut items, plane.lon_scale);
@@ -240,7 +361,7 @@ impl NearestIndex {
         for at in 0..wide {
             let mut held = BoundingBox::invalid();
             for item in &items[at * FAN..((at + 1) * FAN).min(items.len())] {
-                held.extend_with(&BoundingBox::from_coordinates(&[item.from, item.to]));
+                held.extend_with(&item.bbox());
             }
             boxes.push(held);
         }
@@ -261,7 +382,6 @@ impl NearestIndex {
         }
 
         Self {
-            kind,
             fan: FAN,
             objects: items.len(),
             level_at,
@@ -270,12 +390,6 @@ impl NearestIndex {
             items: Items::Held(items),
             plane,
         }
-    }
-
-    /// What it is over.
-    #[must_use]
-    pub fn kind(&self) -> Kind {
-        self.kind
     }
 
     /// How many things it holds.
@@ -305,7 +419,7 @@ impl NearestIndex {
                 Boxes::Paged(read) => read.bytes(),
             }
             + match &self.items {
-                Items::Held(held) => held.capacity() * size_of::<Item>(),
+                Items::Held(held) => held.capacity() * size_of::<T>(),
                 Items::Paged(read) => read.bytes(),
             }
     }
@@ -326,16 +440,19 @@ impl NearestIndex {
     }
 
     /// The thing at a place.
-    fn item_at(&self, at: usize) -> Item {
+    fn item_at(&self, at: usize) -> T {
         match &self.items {
             Items::Held(held) => held[at],
             Items::Paged(read) => {
-                let held = read.get::<ITEM_BYTES>(at).expect("a thing the index has");
-                Item {
-                    what: u32::from_le_bytes(held[0..4].try_into().expect("four bytes")),
-                    from: FPCoordinate::new(word(&held[4..8]), word(&held[8..12])),
-                    to: FPCoordinate::new(word(&held[12..16]), word(&held[16..20])),
-                }
+                // a shape says how wide it is at run time, so the buffer is
+                // sized here rather than named in a turbofish
+                let mut into = [0_u8; 64];
+                assert!(
+                    T::BYTES <= into.len(),
+                    "a shape wider than sixty four bytes"
+                );
+                assert!(read.get_into(at, &mut into), "a thing the index has");
+                T::read_from(&into)
             }
         }
     }
@@ -345,7 +462,7 @@ impl NearestIndex {
     /// The walk is lazy: it does no more work than the caller takes answers,
     /// so asking for the first is not asking for a sort.
     #[must_use]
-    pub fn browse(&self, at: FPCoordinate) -> Browsing<'_> {
+    pub fn browse(&self, at: FPCoordinate) -> Browsing<'_, T> {
         let mut queue = BinaryHeap::new();
         if self.objects > 0 {
             let top = self.counts.len() - 1;
@@ -376,7 +493,7 @@ impl NearestIndex {
     /// a segment is the box round its two ends: a road may be kept whose line
     /// misses the query even though the box round it does not.
     #[must_use]
-    pub fn intersecting(&self, within: BoundingBox) -> Intersecting<'_> {
+    pub fn intersecting(&self, within: BoundingBox) -> Intersecting<'_, T> {
         let mut stack = Vec::new();
         if self.objects > 0 {
             let top = self.counts.len() - 1;
@@ -394,7 +511,7 @@ impl NearestIndex {
 
     /// The nearest thing, and nothing where the index is empty.
     #[must_use]
-    pub fn nearest(&self, at: FPCoordinate) -> Option<Found> {
+    pub fn nearest(&self, at: FPCoordinate) -> Option<Found<T>> {
         self.browse(at).next()
     }
 
@@ -411,7 +528,7 @@ impl NearestIndex {
         };
         let head = Head {
             version: VERSION,
-            kind: self.kind,
+            tag: T::TAG,
             fan: u32::try_from(self.fan).expect("a fan in four bytes"),
             objects: self.objects as u64,
             counts: self.counts.clone(),
@@ -430,12 +547,10 @@ impl NearestIndex {
             out.write_all(&max.lat.to_le_bytes())?;
             out.write_all(&max.lon.to_le_bytes())?;
         }
+        let mut into = vec![0_u8; T::BYTES];
         for item in items {
-            out.write_all(&item.what.to_le_bytes())?;
-            out.write_all(&item.from.lat.to_le_bytes())?;
-            out.write_all(&item.from.lon.to_le_bytes())?;
-            out.write_all(&item.to.lat.to_le_bytes())?;
-            out.write_all(&item.to.lon.to_le_bytes())?;
+            item.write_to(&mut into);
+            out.write_all(&into)?;
         }
         out.flush()
     }
@@ -465,6 +580,13 @@ impl NearestIndex {
                 head.version
             )));
         }
+        if head.tag != T::TAG {
+            return Err(std::io::Error::other(format!(
+                "an index of shape {} read as shape {}",
+                head.tag,
+                T::TAG
+            )));
+        }
 
         let mut level_at = Vec::with_capacity(head.counts.len());
         let mut running = 0_u64;
@@ -476,7 +598,6 @@ impl NearestIndex {
 
         let at = 8 + length as u64;
         Ok(Self {
-            kind: head.kind,
             fan: head.fan as usize,
             objects: head.objects as usize,
             level_at,
@@ -492,7 +613,7 @@ impl NearestIndex {
                 path,
                 at + boxes * BOX_BYTES as u64,
                 head.objects as usize,
-                ITEM_BYTES,
+                T::BYTES,
                 Arc::clone(pool),
             )?),
             plane: Scaled {
@@ -554,16 +675,16 @@ impl PartialOrd for Nearer {
 }
 
 /// Every thing in an index, nearest to a place first.
-pub struct Browsing<'a> {
-    over: &'a NearestIndex,
+pub struct Browsing<'a, T: Indexed> {
+    over: &'a NearestIndex<T>,
     at: FPCoordinate,
     queue: BinaryHeap<Nearer>,
 }
 
-impl Iterator for Browsing<'_> {
-    type Item = Found;
+impl<T: Indexed> Iterator for Browsing<'_, T> {
+    type Item = Found<T>;
 
-    fn next(&mut self) -> Option<Found> {
+    fn next(&mut self) -> Option<Found<T>> {
         while let Some(Nearer { away, what }) = self.queue.pop() {
             match what {
                 // a thing off the top of the queue is nearer than everything
@@ -571,7 +692,7 @@ impl Iterator for Browsing<'_> {
                 Step::Thing(at, lat, lon) => {
                     let item = self.over.item_at(at);
                     return Some(Found {
-                        what: item.what,
+                        what: item,
                         at: FPCoordinate::new(lat, lon),
                         away: self.over.plane.metres(away),
                     });
@@ -583,10 +704,7 @@ impl Iterator for Browsing<'_> {
                         let upto = (first + self.over.fan).min(self.over.objects);
                         for at in first..upto {
                             let item = self.over.item_at(at);
-                            let (away, near) = self
-                                .over
-                                .plane
-                                .distance_to_segment(&self.at, &item.from, &item.to);
+                            let (away, near) = item.nearest_to(&self.at, &self.over.plane);
                             self.queue.push(Nearer {
                                 away,
                                 what: Step::Thing(at, near.lat, near.lon),
@@ -616,15 +734,13 @@ impl Iterator for Browsing<'_> {
 ///
 /// A box built over a run of things in this order holds things that are near
 /// each other, which is what makes its floor tight enough to be worth having.
-fn sort_tile_recursive(items: &mut [Item], lon_scale: f64) {
+fn sort_tile_recursive<T: Indexed>(items: &mut [T], lon_scale: f64) {
     if items.len() <= FAN {
         return;
     }
-    let middle = |item: &Item| {
-        (
-            f64::from(item.from.lon + item.to.lon) / 2.0 * lon_scale,
-            f64::from(item.from.lat + item.to.lat) / 2.0,
-        )
+    let middle = |item: &T| {
+        let at = item.center();
+        (f64::from(at.lon) * lon_scale, f64::from(at.lat))
     };
     items.sort_by(|a, b| {
         middle(a)
@@ -684,19 +800,19 @@ pub(crate) mod tests {
 
     /// The answer worked out by asking every thing, which is what the tree has
     /// to agree with.
-    fn by_hand(index: &NearestIndex, items: &[Item], at: FPCoordinate) -> f64 {
+    fn by_hand<T: Indexed>(index: &NearestIndex<T>, items: &[T], at: FPCoordinate) -> f64 {
         items
             .iter()
-            .map(|item| index.plane.distance_to_segment(&at, &item.from, &item.to).0)
+            .map(|item| item.nearest_to(&at, &index.plane).0)
             .fold(f64::INFINITY, f64::min)
     }
 
-    fn items_of(index: &NearestIndex) -> Vec<Item> {
+    pub(crate) fn items_of<T: Indexed>(index: &NearestIndex<T>) -> Vec<T> {
         (0..index.len()).map(|at| index.item_at(at)).collect()
     }
 
     /// Somewhere to ask about, spread over the data and beyond its edges.
-    fn asked(which: usize) -> FPCoordinate {
+    pub(crate) fn asked(which: usize) -> FPCoordinate {
         let step = which as i32;
         FPCoordinate::new(
             47_800_000 + (step * 39_301) % 900_000,
@@ -710,7 +826,6 @@ pub(crate) mod tests {
     fn the_nearest_node_is_the_nearest_node() {
         let index = NearestIndex::over_nodes(&places(40));
         let items = items_of(&index);
-        assert_eq!(index.kind(), Kind::Nodes);
         assert_eq!(index.len(), 1600);
 
         for which in 0..200 {
@@ -723,7 +838,7 @@ pub(crate) mod tests {
                 "asked {which}: found {away}, nearest is {wanted}"
             );
             // and what it says it found is where it says it is
-            assert_eq!(found.at, places(40)[found.what as usize]);
+            assert_eq!(found.at, places(40)[found.what.what as usize]);
         }
     }
 
@@ -734,7 +849,6 @@ pub(crate) mod tests {
         let side = 40;
         let index = NearestIndex::over_segments(&grid_graph(side), &places(side));
         let items = items_of(&index);
-        assert_eq!(index.kind(), Kind::Segments);
         // one segment a road, not one an arc
         assert_eq!(index.len(), 2 * side * (side - 1));
 
@@ -750,7 +864,7 @@ pub(crate) mod tests {
             );
             let item = items
                 .iter()
-                .find(|item| item.what == found.what)
+                .find(|item| item.what == found.what.what)
                 .expect("the item");
             if found.at != item.from && found.at != item.to {
                 between_the_ends += 1;
@@ -778,7 +892,11 @@ pub(crate) mod tests {
                     found.away
                 );
                 last = found.away;
-                assert!(seen.insert(found.what), "handed out {} twice", found.what);
+                assert!(
+                    seen.insert(found.what.what),
+                    "handed out {} twice",
+                    found.what.what
+                );
             }
             assert_eq!(seen.len(), index.len(), "some were never handed out");
         }
@@ -807,36 +925,45 @@ pub(crate) mod tests {
     fn an_index_read_off_a_file_answers_what_the_one_it_came_from_does() {
         let side = 32;
         let held = tempfile::tempdir().expect("a directory to write in");
-        for (name, whole) in [
-            ("nodes", NearestIndex::over_nodes(&places(side))),
-            (
-                "segments",
-                NearestIndex::over_segments(&grid_graph(side), &places(side)),
-            ),
-        ] {
-            let path = held.path().join(name);
-            whole.save(&path).expect("an index to write");
-            // small enough that it is reading and letting go throughout
-            let pool = Pool::of(2 * crate::paged_array::BLOCK_BYTES);
-            let read = NearestIndex::open(&path, &pool).expect("an index to read");
+        both_ways(
+            &held.path().join("nodes"),
+            "nodes",
+            NearestIndex::over_nodes(&places(side)),
+        );
+        both_ways(
+            &held.path().join("segments"),
+            "segments",
+            NearestIndex::over_segments(&grid_graph(side), &places(side)),
+        );
+    }
 
-            assert_eq!(read.kind(), whole.kind());
-            assert_eq!(read.len(), whole.len());
-            assert_eq!(read.levels(), whole.levels());
-            for which in 0..120 {
-                let at = asked(which);
-                assert_eq!(
-                    read.nearest(at),
-                    whole.nearest(at),
-                    "asked {which} of {name}"
-                );
-            }
-            // and the whole order, not only the first of it
-            let at = asked(7);
-            let one: Vec<_> = whole.browse(at).take(50).collect();
-            let other: Vec<_> = read.browse(at).take(50).collect();
-            assert_eq!(one, other, "the order differs for {name}");
+    /// Written, read back, and asked the same questions as the one it came
+    /// from -- for whatever shape it is over.
+    fn both_ways<T: Indexed + std::fmt::Debug + PartialEq>(
+        path: &std::path::Path,
+        name: &str,
+        whole: NearestIndex<T>,
+    ) {
+        whole.save(path).expect("an index to write");
+        // small enough that it is reading and letting go throughout
+        let pool = Pool::of(2 * crate::paged_array::BLOCK_BYTES);
+        let read: NearestIndex<T> = NearestIndex::open(path, &pool).expect("an index to read");
+
+        assert_eq!(read.len(), whole.len());
+        assert_eq!(read.levels(), whole.levels());
+        for which in 0..120 {
+            let at = asked(which);
+            assert_eq!(
+                read.nearest(at),
+                whole.nearest(at),
+                "asked {which} of {name}"
+            );
         }
+        // and the whole order, not only the first of it
+        let at = asked(7);
+        let one: Vec<_> = whole.browse(at).take(50).collect();
+        let other: Vec<_> = read.browse(at).take(50).collect();
+        assert_eq!(one, other, "the order differs for {name}");
     }
 
     /// What it costs standing still goes with the levels and not the things.
@@ -850,7 +977,8 @@ pub(crate) mod tests {
             NearestIndex::over_nodes(&places(side))
                 .save(&path)
                 .expect("an index to write");
-            let read = NearestIndex::open(&path, &pool).expect("an index to read");
+            let read: NearestIndex<Node> =
+                NearestIndex::open(&path, &pool).expect("an index to read");
             sizes.push((read.len(), read.bytes()));
         }
         assert!(sizes[1].0 > sizes[0].0 * 8, "the two are the same size");
@@ -869,7 +997,8 @@ pub(crate) mod tests {
         NearestIndex::over_nodes(&places(8))
             .save(&path)
             .expect("an index to write");
-        let read = NearestIndex::open(&path, &Pool::of(1 << 20)).expect("an index to read");
+        let read: NearestIndex<Node> =
+            NearestIndex::open(&path, &Pool::of(1 << 20)).expect("an index to read");
         assert!(read.save(&held.path().join("again")).is_err());
     }
 
@@ -912,19 +1041,19 @@ pub(crate) mod tests {
 }
 
 /// Every thing of an index whose box meets a given one.
-pub struct Intersecting<'a> {
-    over: &'a NearestIndex,
+pub struct Intersecting<'a, T: Indexed> {
+    over: &'a NearestIndex<T>,
     within: BoundingBox,
     /// boxes still to look at, as a row and a place in it
     stack: Vec<(usize, usize)>,
     /// things found under the box last opened, still to hand out
-    things: Vec<Item>,
+    things: Vec<T>,
 }
 
-impl Iterator for Intersecting<'_> {
-    type Item = Item;
+impl<T: Indexed> Iterator for Intersecting<'_, T> {
+    type Item = T;
 
-    fn next(&mut self) -> Option<Item> {
+    fn next(&mut self) -> Option<T> {
         loop {
             if let Some(item) = self.things.pop() {
                 return Some(item);
@@ -938,8 +1067,7 @@ impl Iterator for Intersecting<'_> {
                 let upto = (first + self.over.fan).min(self.over.objects);
                 for at in first..upto {
                     let item = self.over.item_at(at);
-                    if BoundingBox::from_coordinates(&[item.from, item.to]).intersects(&self.within)
-                    {
+                    if item.bbox().intersects(&self.within) {
                         self.things.push(item);
                     }
                 }
@@ -965,7 +1093,7 @@ mod asking {
     fn asking_what_lies_in_a_box_finds_what_lies_in_it() {
         let side = 32;
         let index = NearestIndex::over_nodes(&places(side));
-        let items: Vec<Item> = (0..index.len()).map(|at| index.item_at(at)).collect();
+        let items = items_of(&index);
 
         for (low, high) in [
             ((48_050_000, 9_050_000), (48_150_000, 9_150_000)),
@@ -980,7 +1108,7 @@ mod asking {
             found.sort_unstable();
             let mut wanted: Vec<u32> = items
                 .iter()
-                .filter(|item| within.contains(&item.from))
+                .filter(|item| within.contains(&item.at))
                 .map(|item| item.what)
                 .collect();
             wanted.sort_unstable();
@@ -995,8 +1123,9 @@ mod asking {
         let path = held.path().join("index");
         let whole = NearestIndex::over_segments(&grid_graph(24), &places(24));
         whole.save(&path).expect("an index to write");
-        let read = NearestIndex::open(&path, &Pool::of(2 * crate::paged_array::BLOCK_BYTES))
-            .expect("an index to read");
+        let read: NearestIndex<Segment> =
+            NearestIndex::open(&path, &Pool::of(2 * crate::paged_array::BLOCK_BYTES))
+                .expect("an index to read");
 
         let within = BoundingBox::from_coordinates(&[
             FPCoordinate::new(48_030_000, 9_030_000),
@@ -1034,5 +1163,136 @@ mod asking {
                 }
             }
         }
+    }
+}
+
+/// A shape the crate does not know about, indexed by the same tree.
+///
+/// This is the whole of what a caller has to write to index something new, and
+/// it is here as a test because "it is generic" is a claim that is only worth
+/// anything if something outside the two built-in shapes has been through it.
+#[cfg(test)]
+mod another_shape {
+    use super::{tests::*, *};
+
+    /// A place with a radius: a roadworks site, a charging station, a parking
+    /// area. Its box is the square round it and its distance is measured from
+    /// its edge, so a query inside it is nowhere at all.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct Patch {
+        what: u32,
+        at: FPCoordinate,
+        radius: u32,
+    }
+
+    impl Indexed for Patch {
+        const BYTES: usize = 4 + 8 + 4;
+        const TAG: u32 = 0x5041_5443;
+
+        fn write_to(&self, into: &mut [u8]) {
+            into[0..4].copy_from_slice(&self.what.to_le_bytes());
+            into[4..8].copy_from_slice(&self.at.lat.to_le_bytes());
+            into[8..12].copy_from_slice(&self.at.lon.to_le_bytes());
+            into[12..16].copy_from_slice(&self.radius.to_le_bytes());
+        }
+
+        fn read_from(from: &[u8]) -> Self {
+            Self {
+                what: u32::from_le_bytes(from[0..4].try_into().expect("four bytes")),
+                at: FPCoordinate::new(
+                    i32::from_le_bytes(from[4..8].try_into().expect("four bytes")),
+                    i32::from_le_bytes(from[8..12].try_into().expect("four bytes")),
+                ),
+                radius: u32::from_le_bytes(from[12..16].try_into().expect("four bytes")),
+            }
+        }
+
+        fn bbox(&self) -> BoundingBox {
+            let out = self.radius as i32;
+            BoundingBox::from_coordinates(&[
+                FPCoordinate::new(self.at.lat - out, self.at.lon - out),
+                FPCoordinate::new(self.at.lat + out, self.at.lon + out),
+            ])
+        }
+
+        fn center(&self) -> FPCoordinate {
+            self.at
+        }
+
+        fn nearest_to(&self, at: &FPCoordinate, by: &Scaled) -> (f64, FPCoordinate) {
+            // measured from the edge, and nothing at all from inside it
+            let middle = by.distance(at, &self.at);
+            let edge = by.distance(
+                &self.at,
+                &FPCoordinate::new(self.at.lat + self.radius as i32, self.at.lon),
+            );
+            ((middle - edge).max(0.0), self.at)
+        }
+    }
+
+    fn patches(side: usize) -> Vec<Patch> {
+        places(side)
+            .into_iter()
+            .enumerate()
+            .map(|(at, place)| Patch {
+                what: at as u32,
+                at: place,
+                radius: 1_000 + (at as u32 % 7) * 500,
+            })
+            .collect()
+    }
+
+    /// A shape written outside this module goes in, comes out, and is ranked
+    /// by what it says about itself rather than by anything the tree assumed.
+    #[test]
+    fn a_shape_the_crate_does_not_know_about_is_indexed_the_same_way() {
+        let index = NearestIndex::over(patches(24));
+        let items = items_of(&index);
+        assert_eq!(index.len(), 576);
+
+        for which in 0..80 {
+            let at = asked(which);
+            let found = index.nearest(at).expect("a patch");
+            let wanted = items
+                .iter()
+                .map(|patch| patch.nearest_to(&at, &index.plane).0)
+                .fold(f64::INFINITY, f64::min);
+            let away = found.away / index.plane.metres(1.0);
+            assert!(
+                (away - wanted).abs() < 1e-6,
+                "asked {which}: found {away}, nearest is {wanted}"
+            );
+        }
+    }
+
+    /// And it pages like the others, with the same answers.
+    #[test]
+    fn a_shape_of_a_caller_s_own_reads_back_off_a_file() {
+        let held = tempfile::tempdir().expect("a directory to write in");
+        let path = held.path().join("patches");
+        let whole = NearestIndex::over(patches(24));
+        whole.save(&path).expect("an index to write");
+        let read: NearestIndex<Patch> =
+            NearestIndex::open(&path, &Pool::of(2 * crate::paged_array::BLOCK_BYTES))
+                .expect("an index to read");
+        for which in 0..80 {
+            let at = asked(which);
+            assert_eq!(read.nearest(at), whole.nearest(at), "asked {which}");
+        }
+    }
+
+    /// A file says what shape is in it, so reading it as another is refused
+    /// rather than answered with nonsense off a misread run of bytes.
+    #[test]
+    fn an_index_of_one_shape_is_not_read_as_another() {
+        let held = tempfile::tempdir().expect("a directory to write in");
+        let path = held.path().join("patches");
+        NearestIndex::over(patches(8))
+            .save(&path)
+            .expect("an index to write");
+        let pool = Pool::of(1 << 20);
+        assert!(NearestIndex::<Node>::open(&path, &pool).is_err());
+        assert!(NearestIndex::<Segment>::open(&path, &pool).is_err());
+        assert!(NearestIndex::<Patch>::open(&path, &pool).is_ok());
     }
 }

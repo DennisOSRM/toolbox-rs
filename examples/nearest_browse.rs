@@ -108,14 +108,20 @@ fn main() {
         "\n{:>10} {:>10} {:>10} {:>10} {:>10} {:>9}",
         "over", "budget", "median", "p95", "in memory", "slowdown"
     );
-    for (what, whole, at) in [
-        ("nodes", &over_nodes, &nodes_at),
-        ("segments", &over_segments, &segments_at),
-    ] {
-        // in memory first, which is what the paged one is measured against
-        let mut held_took = Vec::with_capacity(asked);
-        let mut answers = Vec::with_capacity(asked);
-        for &place in &places {
+    // The same measurement for either shape: the index is generic, so what
+    // asks it can be too.
+    fn measure<T: toolbox_rs::nearest::Indexed + PartialEq + std::fmt::Debug>(
+        what: &str,
+        whole: &NearestIndex<T>,
+        at: &str,
+        places: &[FPCoordinate],
+        budgets: &[usize],
+        rows: &mut String,
+        writing: bool,
+    ) {
+        let mut held_took = Vec::with_capacity(places.len());
+        let mut answers = Vec::with_capacity(places.len());
+        for &place in places {
             let started = Instant::now();
             let found = whole.nearest(place);
             held_took.push(started.elapsed().as_nanos() as u64);
@@ -134,17 +140,18 @@ fn main() {
             "-",
             "1.00x",
         );
-        if writing.is_some() {
+        if writing {
             for (place, took) in places.iter().zip(&held_took) {
                 use std::fmt::Write as _;
                 let _ = writeln!(rows, "{what},held,0,{},{},{took}", place.lat, place.lon);
             }
         }
 
-        for &bytes in &budgets {
+        for &bytes in budgets {
             let pool = Pool::of(bytes);
-            let read = NearestIndex::open(Path::new(at), &pool).expect("an index to read");
-            let mut took = Vec::with_capacity(asked);
+            let read: NearestIndex<T> =
+                NearestIndex::open(Path::new(at), &pool).expect("an index to read");
+            let mut took = Vec::with_capacity(places.len());
             let mut wrong = 0_usize;
             for (which, &place) in places.iter().enumerate() {
                 let started = Instant::now();
@@ -168,7 +175,7 @@ fn main() {
                 format!("{in_memory:.1}us"),
                 format!("{:.2}x", median / in_memory),
             );
-            if writing.is_some() {
+            if writing {
                 use std::fmt::Write as _;
                 for (place, one) in places.iter().zip(&took) {
                     let _ = writeln!(
@@ -190,6 +197,26 @@ fn main() {
             );
         }
     }
+
+    let writes = writing.is_some();
+    measure(
+        "nodes",
+        &over_nodes,
+        &nodes_at,
+        &places,
+        &budgets,
+        &mut rows,
+        writes,
+    );
+    measure(
+        "segments",
+        &over_segments,
+        &segments_at,
+        &places,
+        &budgets,
+        &mut rows,
+        writes,
+    );
 
     if let Some(at) = &writing {
         let mut out = File::create(at).expect("somewhere to write the timings");
