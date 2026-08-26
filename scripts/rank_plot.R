@@ -27,6 +27,8 @@ output <- if (length(args) >= 2) args[2] else "ranks.png"
 # hold anything worth comparing -- two ways of unpacking a path, say -- and
 # then the one to divide by is whichever the others are being judged against.
 denominator <- if (length(args) >= 3) args[3] else "mld"
+# what the rows are timings of; only the wording changes with it
+measuring <- if (length(args) >= 4) args[4] else "query time"
 
 timings <- read.csv(input, stringsAsFactors = FALSE)
 for (column in c("engine", "rank", "nanos")) {
@@ -50,7 +52,12 @@ exponents <- sort(unique(timings$exponent))
 # the engine column says which search wrote the row; a legend wants to say
 # which search it was, and "dijkstra" does not distinguish the plain search
 # from the one that runs from both ends
-display <- c(dijkstra = "unidirectional", bidirectional = "bidirectional", mld = "mld")
+display <- c(
+  dijkstra = "unidirectional", bidirectional = "bidirectional", mld = "mld",
+  offline = "offline",
+  # the same two again for putting the way back rather than costing it
+  "mld-unpack" = "mld, unpacked", "offline-unpack" = "offline, unpacked"
+)
 name_of <- function(engine) ifelse(engine %in% names(display), display[engine], engine)
 
 # every power of ten the numbers reach, written out rather than as 1e+03: a
@@ -111,7 +118,7 @@ for (index in seq_along(exponents)) {
 boxplot(groups,
   at = at, boxwex = width * 0.9, col = fill, log = "y",
   xaxt = "n", yaxt = "n", xlab = "", ylab = "milliseconds",
-  main = sprintf("query time by Dijkstra rank (%s)", basename(input)),
+  main = sprintf("%s by Dijkstra rank (%s)", measuring, basename(input)),
   outcex = 0.3, whisklty = 1, staplewex = 0.5
 )
 axis(1, at = exponents, labels = parse(text = sprintf("2^%d", exponents)))
@@ -153,9 +160,14 @@ if (denominator %in% engines && length(engines) > 1) {
   plot(NA,
     xlim = range(exponents), ylim = ylim, log = "y", xaxt = "n", yaxt = "n",
     xlab = "Dijkstra rank",
-    ylab = sprintf("%s / %s", measured, name_of(denominator))
+    ylab = ""
   )
   axis(1, at = exponents, labels = parse(text = sprintf("2^%d", exponents)))
+  # placed by hand rather than as ylab, so a long pair of names can be set
+  # smaller instead of running off the edge of the device
+  side_label <- sprintf("%s / %s", measured, name_of(denominator))
+  mtext(side_label, side = 2, line = 3.2, las = 0,
+        cex = if (nchar(side_label) > 28) 0.72 else 0.9)
   ticks <- ratios_over(c(ratios, 1))
   axis(2, at = ticks, labels = as_multiple(ticks))
   # a line at each tick, so a point can be read across to the axis rather than

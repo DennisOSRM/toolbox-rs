@@ -91,6 +91,7 @@ pub trait Overlay {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::path_unpacking::{cost_of_way, unpack};
     use crate::{
         customization::{CellDistances, Customization},
         edge::InputEdge,
@@ -211,5 +212,52 @@ mod tests {
             guarding.asked.get() > 0,
             "the guarding store was never asked for a table"
         );
+    }
+
+    /// And the same again for the way rather than the cost: unpacking asks the
+    /// store for tables of its own, level by level down, and has to get the
+    /// same way out of a store that guards as out of one that lends.
+    #[test]
+    fn the_same_way_is_unpacked_over_a_store_that_hands_out_guards() {
+        let side = 16;
+        let lending = grid(side);
+        let guarding = Paged {
+            held: grid(side),
+            asked: Cell::new(0),
+        };
+
+        let mut over_lending = MldQuery::new();
+        let mut over_guarding = MldQuery::new();
+        let mut unpacked = 0;
+        for source in (0..side * side).step_by(7) {
+            for target in (0..side * side).step_by(11) {
+                over_lending.clear();
+                over_guarding.clear();
+                over_lending.run(&lending, source, &[target]);
+                over_guarding.run(&guarding, source, &[target]);
+
+                let Some(packed) = over_lending.retrieve_packed_path(target) else {
+                    continue;
+                };
+                assert_eq!(
+                    Some(packed.clone()),
+                    over_guarding.retrieve_packed_path(target),
+                    "the packed path differs from {source} to {target}"
+                );
+
+                let over_one = unpack(&lending, &packed).expect("a way over the lending store");
+                let over_other = unpack(&guarding, &packed).expect("a way over the guarding one");
+                assert_eq!(over_one, over_other, "from {source} to {target}");
+
+                // and the way is worth what the search said it would be
+                assert_eq!(
+                    cost_of_way(lending.graph(), &over_one),
+                    Some(over_lending.distance(target)),
+                    "from {source} to {target}"
+                );
+                unpacked += 1;
+            }
+        }
+        assert!(unpacked > 100, "the sweep is worth running");
     }
 }

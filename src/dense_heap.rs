@@ -97,6 +97,12 @@ pub struct ByArray {
 }
 
 impl ByArray {
+    /// What the table has taken, which goes with the nodes of the graph.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        self.of_node.capacity() * size_of::<Slot>()
+    }
+
     #[inline]
     pub fn get(&self, node: NodeID) -> Slot {
         self.of_node.get(node).copied().unwrap_or(UNTOUCHED)
@@ -144,6 +150,13 @@ pub struct ByMap {
 }
 
 impl ByMap {
+    /// What the table has taken, which goes with what a run reached rather
+    /// than with the graph.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        self.of_node.capacity() * (size_of::<NodeID>() + size_of::<Slot>())
+    }
+
     #[inline]
     pub fn get(&self, node: NodeID) -> Slot {
         self.of_node.get(&node).copied().unwrap_or(UNTOUCHED)
@@ -235,6 +248,17 @@ macro_rules! query_heap {
 
             pub fn stats(&self) -> &S {
                 &self.stats
+            }
+
+            /// What the queue has taken, table and all.
+            ///
+            /// The table goes with the nodes of the graph where it is an
+            /// array, and the heap with what the longest run so far reached.
+            #[must_use]
+            pub fn bytes(&self) -> usize {
+                self.heap.capacity() * size_of::<(u32, u32)>()
+                    + self.held.capacity() * size_of::<Held>()
+                    + self.table.bytes()
             }
 
             /// Forgets the run that has just finished.

@@ -115,6 +115,13 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
         self.queue.weight(node)
     }
 
+    /// What this search has taken, which goes with the nodes of the graph and
+    /// not with any budget set for the cell tables.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        self.queue.bytes()
+    }
+
     /// The node a reached node was reached from.
     ///
     /// `None` if the search never reached it, and the node itself if it is the

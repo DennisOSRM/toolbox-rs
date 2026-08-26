@@ -36,7 +36,8 @@ use toolbox_rs::{
     mld_query::MldQuery,
     node_ordering::NodeOrdering,
     packed_partition::PackedPartition,
-    paged_overlay::{Budget, PagedOverlay},
+    paged_overlay::{Budget, Footing, PagedOverlay},
+    path_unpacking::{Unpacker, cost_of_way},
     static_graph::StaticGraph,
 };
 
@@ -268,8 +269,22 @@ fn main() {
         .ok()
         .and_then(|share| share.parse::<f64>().ok())
         .unwrap_or(0.5);
+    // whether to put the ways back as well as cost them; it is dearer than the
+    // query by far and a run measuring the query alone should not pay for it
+    let unpacking = std::env::var("TOOLBOX_UNPACK").is_ok_and(|on| on != "0");
     let mut summary = String::from(
-        "budget,share,pinned_from,pinned,cache,mld_median,offline_median,p95,slowdown,reads,hits\n",
+        "budget,share,pinned_from,pinned,cache,mld_median,offline_median,p95,slowdown,reads,hits,\
+         mld_unpack,offline_unpack,unpack_slowdown,unpack_reads\n",
+    );
+
+    // What an instance costs before a single cell table, which the budget is
+    // for as much as the tables are.
+    let footing = Footing::of(&graph, &held_tree, map.len(), 2);
+    println!(
+        "before any table: {:.1} MiB for the graph, {:.1} for the partition, {:.1} for the rest",
+        footing.graph as f64 / MIB as f64,
+        footing.partition as f64 / MIB as f64,
+        (footing.total() - footing.graph - footing.partition) as f64 / MIB as f64,
     );
 
     for &bytes in &budgets {
@@ -287,10 +302,20 @@ fn main() {
             budget,
         );
         let open = opening.elapsed();
-        let (pinned, cache) = budget.split(&held_tree);
+        let (pinned, cache) = budget.split(&held_tree, &footing);
+        if budget.for_tables(&footing).is_err() {
+            println!(
+                "{:>7}   a budget of this size does not cover the {:.1} MiB the instance costs before any table",
+                format!("{} MiB", bytes / MIB),
+                footing.total() as f64 / MIB as f64,
+            );
+            continue;
+        }
 
         let mut over_file = MldQuery::new();
         let mut over_memory = MldQuery::new();
+        let mut unpack_file = Unpacker::for_instance(&paged);
+        let mut unpack_memory = Unpacker::for_instance(&in_memory);
         // Both are warmed before either is timed. The customization works a
         // cell out the first time it is wanted, so an unwarmed first query
         // pays for forty-three thousand cells; the store reads its first
@@ -301,11 +326,26 @@ fn main() {
             over_file.run(&paged, source, &[target]);
             over_memory.clear();
             over_memory.run(&in_memory, source, &[target]);
+            if unpacking && let Some(packed) = over_memory.retrieve_packed_path(target) {
+                let _ = unpack_file.unpack(&paged, &packed);
+                let _ = unpack_memory.unpack(&in_memory, &packed);
+            }
         }
+
+        // The warmup ran the unpackers over the same pairs that are about to be
+        // timed, so every one of them would be a hit in the cache of ways and
+        // nothing would be put back at all. The block cache and the worked-out
+        // cells stay warm, which is what the warmup was for; the ways do not.
+        unpack_file.clear();
+        unpack_memory.clear();
 
         let mut took = Vec::with_capacity(pairs.len());
         let mut memory_took = Vec::with_capacity(pairs.len());
+        let mut unpack_took = Vec::new();
+        let mut unpack_memory_took = Vec::new();
+        let mut unpack_reads = 0_u64;
         let mut wrong = 0_u64;
+        let mut wrong_way = 0_u64;
         let before = paged.faults();
         // both engines timed over the same pairs, in the shape rank_plot wants
         let mut timings = String::new();
@@ -327,6 +367,28 @@ fn main() {
             if from_file != from_memory {
                 wrong += 1;
             }
+
+            // and the way itself, which asks each store for tables of the
+            // levels below the ones the query touched
+            if unpacking && let Some(packed) = over_memory.retrieve_packed_path(target) {
+                let reads_before = paged.faults().reads;
+                let started = Instant::now();
+                let by_file = unpack_file.unpack(&paged, &packed);
+                unpack_took.push(started.elapsed().as_nanos() as u64);
+                unpack_reads += paged.faults().reads - reads_before;
+
+                let started = Instant::now();
+                let by_memory = unpack_memory.unpack(&in_memory, &packed);
+                unpack_memory_took.push(started.elapsed().as_nanos() as u64);
+
+                // the same way out of both, and worth what the query said
+                match (&by_file, &by_memory) {
+                    (Ok(one), Ok(other))
+                        if one == other
+                            && cost_of_way(in_memory.graph(), one) == Some(from_memory) => {}
+                    _ => wrong_way += 1,
+                }
+            }
             if writing.is_some() {
                 use std::fmt::Write;
                 let _ = writeln!(
@@ -337,6 +399,18 @@ fn main() {
                     timings,
                     "offline,{source},{target},{rank},{paged_nanos},{from_file}"
                 );
+                if let (Some(&by_memory), Some(&by_file)) =
+                    (unpack_memory_took.last(), unpack_took.last())
+                {
+                    let _ = writeln!(
+                        timings,
+                        "mld-unpack,{source},{target},{rank},{by_memory},{from_memory}"
+                    );
+                    let _ = writeln!(
+                        timings,
+                        "offline-unpack,{source},{target},{rank},{by_file},{from_file}"
+                    );
+                }
             }
         }
         if let Some(path) = &writing {
@@ -349,8 +423,19 @@ fn main() {
         }
         took.sort_unstable();
         memory_took.sort_unstable();
+        unpack_took.sort_unstable();
+        unpack_memory_took.sort_unstable();
+        let middle = |sorted: &[u64]| {
+            if sorted.is_empty() {
+                0.0
+            } else {
+                sorted[sorted.len() / 2] as f64 / 1000.0
+            }
+        };
+        let (by_file, by_memory) = (middle(&unpack_took), middle(&unpack_memory_took));
         let faults = paged.faults();
-        let reads = faults.reads - before.reads;
+        // what the queries read, which is not what unpacking read on top of it
+        let reads = faults.reads - before.reads - unpack_reads;
         let asked = faults.hits + faults.misses - before.hits - before.misses;
 
         // one row a budget, for whatever draws the picture
@@ -363,12 +448,19 @@ fn main() {
             let tail = took[took.len() * 95 / 100] as f64 / 1000.0;
             let _ = writeln!(
                 summary,
-                "{},{share},{},{pinned},{cache},{in_memory:.1},{offline:.1},{tail:.1},{:.3},{:.2},{:.4}",
+                "{},{share},{},{pinned},{cache},{in_memory:.1},{offline:.1},{tail:.1},{:.3},\
+                 {:.2},{:.4},{by_memory:.1},{by_file:.1},{:.3},{:.2}",
                 bytes / MIB,
                 paged.pinned_from(),
                 offline / in_memory,
                 reads as f64 / pairs.len() as f64,
                 (faults.hits - before.hits) as f64 / asked.max(1) as f64,
+                if by_memory > 0.0 {
+                    by_file / by_memory
+                } else {
+                    0.0
+                },
+                unpack_reads as f64 / unpack_took.len().max(1) as f64,
             );
         }
 
@@ -392,6 +484,42 @@ fn main() {
                 format!("  {wrong} WRONG")
             },
         );
+        if unpacking {
+            println!(
+                "{:>7} {:>6} {:>10} {:>10} {:>9} {:>8} {:>9} {:>9} {:>9}{}",
+                "",
+                "unpack",
+                "",
+                "",
+                "",
+                format!("{by_file:.0}us"),
+                format!(
+                    "{:.0}us",
+                    if unpack_took.is_empty() {
+                        0.0
+                    } else {
+                        unpack_took[unpack_took.len() * 95 / 100] as f64 / 1000.0
+                    }
+                ),
+                format!(
+                    "{:.1}",
+                    unpack_reads as f64 / unpack_took.len().max(1) as f64
+                ),
+                format!(
+                    "{:.1}× memory",
+                    if by_memory > 0.0 {
+                        by_file / by_memory
+                    } else {
+                        0.0
+                    }
+                ),
+                if wrong_way == 0 {
+                    String::new()
+                } else {
+                    format!("  {wrong_way} WRONG WAYS")
+                },
+            );
+        }
     }
 
     if let Ok(path) = std::env::var("TOOLBOX_SUMMARY") {

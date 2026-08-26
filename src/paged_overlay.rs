@@ -38,11 +38,12 @@ use std::sync::{Arc, Mutex};
 const BLOCKS_IN_HAND: usize = 8;
 
 use crate::{
+    block_map::BlockEntry,
     block_store::{BlockStore, NotRead},
     border_levels::BorderLevels,
     cell_block::CellBlock,
-    cell_tree::CellTree,
-    graph::NodeID,
+    cell_tree::{CellFacts, CellTree},
+    graph::{Graph, NodeID},
     level_directory::CellId,
     lru::LRU,
     overlay::{CellTable, Overlay},
@@ -132,11 +133,106 @@ pub struct Faults {
 /// left idle: a share is a ceiling on what may be held, not a reservation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Budget {
-    /// what the tables may come to in all, in bytes
+    /// what the instance may come to in all, in bytes: the graph, the
+    /// partition, the border levels, the store's own tables of contents, the
+    /// arrays a search wants, and the cell tables
     pub bytes: usize,
-    /// the most of it that may be held outright, as a share of the whole
+    /// the most of what is left after the footing that may be held outright,
+    /// as a share of that remainder
     pub pinned_share: f64,
 }
+
+/// What an instance costs before it holds a single cell table.
+///
+/// # Why this is not a detail
+///
+/// The budget is for the whole of an instance and the cell tables are the
+/// smallest part of it. On a continent the graph is four hundred mebibytes and
+/// the partition another three hundred, against tables that can be run in a
+/// tenth of that: a budget set without counting them is not a budget for
+/// anything a device has to hold.
+///
+/// So the footing is paid first and the tables get the remainder, and where
+/// there is no remainder the budget is refused rather than quietly exceeded.
+///
+/// # What is fixed and what is not
+///
+/// The graph, the partition and the border levels go with the instance and
+/// cannot be traded for anything; the store's map and cell tree go with how it
+/// was packed. The searches are the one part that goes with how many run at
+/// once, which is why they are counted per search rather than once.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Footing {
+    /// the arcs and the offsets into them
+    pub graph: u64,
+    /// one word a node
+    pub partition: u64,
+    /// one byte a node
+    pub border_levels: u64,
+    /// one entry a block, and one a cell
+    pub block_map: u64,
+    pub cell_tree: u64,
+    /// what the arrays of every search that may run at once come to
+    pub searches: u64,
+}
+
+impl Footing {
+    /// What an instance over this graph and this store costs before tables.
+    ///
+    /// `searches` is how many searches may be running at once, since each
+    /// keeps a table over the nodes of the graph for as long as it lives.
+    #[must_use]
+    pub fn of<G: Graph<u32>>(graph: &G, tree: &CellTree, blocks: usize, searches: usize) -> Self {
+        let nodes = graph.number_of_nodes() as u64;
+        let arcs = graph.number_of_edges() as u64;
+        Self {
+            // a target and a weight an arc, and an offset a node
+            graph: arcs * 8 + nodes * 4,
+            partition: nodes * 16,
+            border_levels: nodes,
+            block_map: blocks as u64 * size_of::<BlockEntry>() as u64,
+            cell_tree: (0..tree.levels())
+                .map(|level| tree.cells_on_level(level) as u64 * size_of::<CellFacts>() as u64)
+                .sum(),
+            // four bytes a node for the table a queue reads in one look; what
+            // the heap itself takes goes with the widest run and not with the
+            // graph, and is not standing room
+            searches: searches as u64 * nodes * 4,
+        }
+    }
+
+    /// What the whole of it comes to.
+    #[must_use]
+    pub fn total(&self) -> u64 {
+        self.graph
+            + self.partition
+            + self.border_levels
+            + self.block_map
+            + self.cell_tree
+            + self.searches
+    }
+}
+
+/// A budget that does not cover what the instance costs before tables.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TooSmall {
+    /// what the footing comes to
+    pub footing: u64,
+    /// what the budget was
+    pub budget: usize,
+}
+
+impl std::fmt::Display for TooSmall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "a budget of {} bytes does not cover the {} the instance costs before any cell table",
+            self.budget, self.footing
+        )
+    }
+}
+
+impl std::error::Error for TooSmall {}
 
 impl Budget {
     /// A budget with half of it available to hold levels outright.
@@ -148,11 +244,29 @@ impl Budget {
         }
     }
 
+    /// What is left for the cell tables once the instance is paid for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TooSmall`] where the budget does not cover the footing, which
+    /// is a budget that cannot be met rather than one that will be tight.
+    pub fn for_tables(&self, footing: &Footing) -> Result<usize, TooSmall> {
+        let wants = usize::try_from(footing.total()).unwrap_or(usize::MAX);
+        self.bytes.checked_sub(wants).ok_or(TooSmall {
+            footing: footing.total(),
+            budget: self.bytes,
+        })
+    }
+
     /// The lowest level worth holding outright, and the level count when none
     /// is: levels from here up are held, levels below are cached.
+    ///
+    /// The share is of what is left after the footing, not of the whole
+    /// budget: half of a budget the graph has already spent is not room.
     #[must_use]
-    pub fn pin_from(&self, tree: &CellTree) -> usize {
-        let room = (self.bytes as f64 * self.pinned_share.clamp(0.0, 1.0)) as u64;
+    pub fn pin_from(&self, tree: &CellTree, footing: &Footing) -> usize {
+        let left = self.for_tables(footing).unwrap_or(0);
+        let room = (left as f64 * self.pinned_share.clamp(0.0, 1.0)) as u64;
         let mut taken = 0_u64;
         let mut from = tree.levels();
         for level in (0..tree.levels()).rev() {
@@ -167,16 +281,19 @@ impl Budget {
     }
 
     /// What the held levels come to, and what is left for the cache.
+    ///
+    /// Both are out of what the tables were left, so the two and the footing
+    /// come to the budget.
     #[must_use]
-    pub fn split(&self, tree: &CellTree) -> (u64, usize) {
-        let from = self.pin_from(tree);
+    pub fn split(&self, tree: &CellTree, footing: &Footing) -> (u64, usize) {
+        let left = self.for_tables(footing).unwrap_or(0);
+        let from = self.pin_from(tree, footing);
         let pinned = (from..tree.levels())
             .map(|level| tree.unpacked_bytes(level))
             .sum::<u64>();
         (
             pinned,
-            self.bytes
-                .saturating_sub(usize::try_from(pinned).unwrap_or(usize::MAX)),
+            left.saturating_sub(usize::try_from(pinned).unwrap_or(usize::MAX)),
         )
     }
 }
@@ -259,8 +376,9 @@ impl PagedOverlay {
         borders: BorderLevels,
         budget: Budget,
     ) -> Self {
-        let pin_from = budget.pin_from(store.tree());
-        let (_, cache) = budget.split(store.tree());
+        let footing = Footing::of(&graph, store.tree(), store.map().len(), 1);
+        let pin_from = budget.pin_from(store.tree(), &footing);
+        let (_, cache) = budget.split(store.tree(), &footing);
         let levels = store.tree().levels();
 
         let mut held = Self::new(store, graph, partition, borders, cache);
@@ -681,14 +799,17 @@ mod tests {
         let path = held.path().join("blocks");
         let map = pack(&in_memory, &tree, &path, 3);
 
-        // room enough for the two coarsest levels and no more
+        // room enough for the two coarsest levels and no more, on top of what
+        // the instance costs before any table: the budget is for the whole of
+        // it and the graph is paid for first
         let levels = tree.levels();
         let wanted = tree.unpacked_bytes(levels - 1) + tree.unpacked_bytes(levels - 2);
+        let footing = Footing::of(&graph, &tree, map.len(), 1);
         let budget = Budget {
-            bytes: usize::try_from(wanted).expect("a budget of that size") * 2,
+            bytes: usize::try_from(footing.total() + wanted * 2).expect("a budget of that size"),
             pinned_share: 0.5,
         };
-        let pin_from = budget.pin_from(&tree);
+        let pin_from = budget.pin_from(&tree, &footing);
         assert_eq!(pin_from, levels - 2, "two levels were to be held");
 
         let store = BlockStore::open(&path, map, tree).expect("a store to open");
@@ -734,6 +855,83 @@ mod tests {
         }
     }
 
+    /// The one that says what a budget is for: a graph counted, not assumed
+    /// away.
+    #[test]
+    fn a_budget_pays_for_the_instance_before_it_pays_for_a_table() {
+        let side = 16;
+        let (edges, directory) = laid_out(side);
+        let graph = StaticGraph::new(edges);
+        let partition = PackedPartition::of(&directory);
+        let coordinates = vec![FPCoordinate::new(0, 0); side * side];
+        let tree = CellTree::of(&directory, &partition, &graph, &coordinates);
+        let footing = Footing::of(&graph, &tree, 4, 1);
+
+        assert!(footing.graph > 0 && footing.partition > 0);
+        assert_eq!(
+            footing.total(),
+            footing.graph
+                + footing.partition
+                + footing.border_levels
+                + footing.block_map
+                + footing.cell_tree
+                + footing.searches,
+            "the parts come to the whole"
+        );
+
+        // a budget under the footing is refused rather than quietly exceeded
+        let short = Budget {
+            bytes: usize::try_from(footing.total()).expect("a size") / 2,
+            pinned_share: 0.5,
+        };
+        assert_eq!(
+            short.for_tables(&footing),
+            Err(TooSmall {
+                footing: footing.total(),
+                budget: short.bytes,
+            })
+        );
+        // The coarsest level has no border and so costs nothing, and a level
+        // that costs nothing fits any budget including one already spent. What
+        // a budget it cannot meet holds is nothing that has a size.
+        assert_eq!(
+            short.split(&tree, &footing).0,
+            0,
+            "a budget it cannot meet held something with a cost"
+        );
+        assert_eq!(short.split(&tree, &footing).1, 0, "and left no cache");
+
+        // and one over it leaves exactly the difference for the tables
+        let over = Budget {
+            bytes: usize::try_from(footing.total()).expect("a size") + 4096,
+            pinned_share: 0.5,
+        };
+        assert_eq!(over.for_tables(&footing), Ok(4096));
+        let (pinned, cache) = over.split(&tree, &footing);
+        assert_eq!(
+            usize::try_from(pinned).expect("a size") + cache,
+            4096,
+            "the held levels and the cache come to what was left, not to the budget"
+        );
+    }
+
+    /// Two searches want two tables over the nodes, and a budget that counts
+    /// one of them is a budget for an instance nobody is running.
+    #[test]
+    fn every_search_that_may_run_at_once_is_counted() {
+        let side = 16;
+        let (edges, directory) = laid_out(side);
+        let graph = StaticGraph::new(edges);
+        let partition = PackedPartition::of(&directory);
+        let coordinates = vec![FPCoordinate::new(0, 0); side * side];
+        let tree = CellTree::of(&directory, &partition, &graph, &coordinates);
+
+        let one = Footing::of(&graph, &tree, 4, 1);
+        let four = Footing::of(&graph, &tree, 4, 4);
+        assert_eq!(four.searches, one.searches * 4);
+        assert_eq!(four.total() - one.total(), one.searches * 3);
+    }
+
     #[test]
     fn a_budget_too_small_holds_only_what_costs_nothing() {
         let side = 8;
@@ -750,7 +948,7 @@ mod tests {
         // has no table and costs nothing to hold. A level that costs nothing
         // fits any budget, so what is asserted is that nothing which costs
         // anything was held.
-        let from = budget.pin_from(&tree);
+        let from = budget.pin_from(&tree, &Footing::default());
         for level in from..tree.levels() {
             assert_eq!(
                 tree.unpacked_bytes(level),
@@ -758,7 +956,11 @@ mod tests {
                 "level {level} was held in eight bytes"
             );
         }
-        assert_eq!(budget.split(&tree).0, 0, "nothing with a cost was held");
+        assert_eq!(
+            budget.split(&tree, &Footing::default()).0,
+            0,
+            "nothing with a cost was held"
+        );
     }
 
     /// What the pinned share does not use is the cache's, not nobody's.
@@ -774,7 +976,7 @@ mod tests {
             bytes: 1 << 20,
             pinned_share: 0.5,
         };
-        let (pinned, cache) = budget.split(&tree);
+        let (pinned, cache) = budget.split(&tree, &Footing::default());
         assert_eq!(
             cache,
             budget.bytes - usize::try_from(pinned).expect("a size"),
