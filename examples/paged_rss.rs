@@ -504,8 +504,9 @@ fn main() {
         cache as f64 / MIB,
     );
     println!(
-        "{} pairs asked, {ways} ways put back, {} blocks read",
+        "{} pairs asked, {ways} ways put back, {} blocks read in all ({} of them tables)",
         pairs.len(),
+        paged.pool().faults().reads,
         faults.reads
     );
 
