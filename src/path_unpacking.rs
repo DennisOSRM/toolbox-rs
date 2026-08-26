@@ -44,7 +44,7 @@ use std::{cmp::Reverse, collections::BinaryHeap};
 use rustc_hash::FxHashMap;
 
 use crate::{
-    graph::{Graph, NodeID},
+    graph::{Arcs, NodeID},
     level_directory::CellId,
     lru::LRU,
     overlay::{CellTable, Overlay},
@@ -457,7 +457,7 @@ fn within_cell<O: Overlay>(
                 // answered for in one step
                 continue;
             }
-            offer(target, cost + *graph.data(edge) as usize);
+            offer(target, cost + graph.weight(edge) as usize);
         }
     }
     None
@@ -472,14 +472,14 @@ fn within_cell<O: Overlay>(
 ///
 /// Panics if the way holds a node the graph does not.
 #[must_use]
-pub fn cost_of_way<G: Graph<u32>>(graph: &G, way: &[NodeID]) -> Option<usize> {
+pub fn cost_of_way<G: Arcs<u32>>(graph: &G, way: &[NodeID]) -> Option<usize> {
     let mut total = 0_usize;
     for pair in way.windows(2) {
         let (from, to) = (pair[0], pair[1]);
         let arc = graph
             .edge_range(from)
             .filter(|&edge| graph.target(edge) == to)
-            .map(|edge| *graph.data(edge) as usize)
+            .map(|edge| graph.weight(edge) as usize)
             .min()?;
         total += arc;
     }

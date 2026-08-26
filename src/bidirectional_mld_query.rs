@@ -32,7 +32,7 @@ use log::debug;
 use crate::{
     border_levels::BorderLevels,
     dense_heap::DenseHeap,
-    graph::{Graph, INVALID_NODE_ID, NodeID},
+    graph::{Arcs, INVALID_NODE_ID, NodeID},
     heap_stats::{Counters, HeapStats, Untracked},
     overlay::{CellTable, Overlay},
     packed_partition::PackedPartition,
@@ -179,7 +179,7 @@ impl<S: HeapStats<NodeID>> BidirectionalMldSearch<S> {
     /// # Panics
     ///
     /// Panics if a level of the partition has no cells worked out for it.
-    pub fn run<O: Overlay, G: Graph<u32>>(
+    pub fn run<O: Overlay, G: Arcs<u32>>(
         &mut self,
         customization: &O,
         reverse: &G,
@@ -328,7 +328,7 @@ impl<S: HeapStats<NodeID>> BidirectionalMldSearch<S> {
     /// The arcs of the graph that leave the cell, which is how a search gets
     /// out of one.
     #[inline(never)]
-    fn relax_out_of_cell<G: Graph<u32>>(
+    fn relax_out_of_cell<G: Arcs<u32>>(
         &mut self,
         graph: &G,
         borders: &BorderLevels,
@@ -345,14 +345,14 @@ impl<S: HeapStats<NodeID>> BidirectionalMldSearch<S> {
                 continue;
             }
             let target = graph.target(edge);
-            self.relax(side, target, distance + *graph.data(edge) as usize, node);
+            self.relax(side, target, distance + graph.weight(edge) as usize, node);
         }
     }
 
     /// Every arc of the graph, which is what this does inside a cell holding
     /// one of the two ends.
     #[inline(never)]
-    fn relax_every_arc<G: Graph<u32>>(
+    fn relax_every_arc<G: Arcs<u32>>(
         &mut self,
         graph: &G,
         side: Side,
@@ -361,7 +361,7 @@ impl<S: HeapStats<NodeID>> BidirectionalMldSearch<S> {
     ) {
         for edge in graph.edge_range(node) {
             let target = graph.target(edge);
-            self.relax(side, target, distance + *graph.data(edge) as usize, node);
+            self.relax(side, target, distance + graph.weight(edge) as usize, node);
         }
     }
 

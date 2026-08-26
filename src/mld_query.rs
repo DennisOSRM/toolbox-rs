@@ -35,7 +35,7 @@ use rustc_hash::FxHashSet;
 use crate::{
     border_levels::BorderLevels,
     dense_heap::DenseHeap,
-    graph::{Graph, NodeID},
+    graph::{Arcs, NodeID},
     heap_stats::{Counters, HeapStats, Untracked},
     overlay::{CellTable, Overlay},
     packed_partition::PackedPartition,
@@ -329,7 +329,7 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
     /// The arcs of the graph that leave the cell, which is how the search gets
     /// out of one.
     #[inline(never)]
-    fn relax_out_of_cell<G: Graph<u32>>(
+    fn relax_out_of_cell<G: Arcs<u32>>(
         &mut self,
         graph: &G,
         borders: &BorderLevels,
@@ -345,17 +345,17 @@ impl<S: HeapStats<NodeID>> MldSearch<S> {
                 continue;
             }
             let target = graph.target(edge);
-            self.relax(target, distance + *graph.data(edge) as usize, node);
+            self.relax(target, distance + graph.weight(edge) as usize, node);
         }
     }
 
     /// Every arc of the graph, which is what a plain Dijkstra does and what
     /// this does inside a cell that holds the source or a target.
     #[inline(never)]
-    fn relax_every_arc<G: Graph<u32>>(&mut self, graph: &G, node: NodeID, distance: usize) {
+    fn relax_every_arc<G: Arcs<u32>>(&mut self, graph: &G, node: NodeID, distance: usize) {
         for edge in graph.edge_range(node) {
             let target = graph.target(edge);
-            self.relax(target, distance + *graph.data(edge) as usize, node);
+            self.relax(target, distance + graph.weight(edge) as usize, node);
         }
     }
 

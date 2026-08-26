@@ -39,7 +39,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 use crate::{
     bounding_box::BoundingBox,
     geometry::FPCoordinate,
-    graph::Graph,
+    graph::{Graph, NodeID},
     level_directory::{CellId, LevelDirectory},
     packed_partition::PackedPartition,
 };
@@ -354,6 +354,22 @@ impl CellTree {
     #[must_use]
     pub fn nodes_begin(&self, level: usize, cell: CellId) -> u32 {
         self.begins_node[level][cell as usize]
+    }
+
+    /// Which cell of a level a node is in, and nothing where none is.
+    ///
+    /// Found by searching where the cells begin rather than by asking the
+    /// partition, which is what the renumbering bought: a cell's nodes are a
+    /// run, so the cells of a level are the runs in order and a node falls in
+    /// the last one that begins at or before it.
+    #[must_use]
+    pub fn cell_holding_node(&self, level: usize, node: NodeID) -> Option<CellId> {
+        let begins = self.begins_node.get(level)?;
+        let node = u32::try_from(node).ok()?;
+        let after = begins.partition_point(|&first| first <= node);
+        let cell = after.checked_sub(1)?;
+        let facts = self.facts.get(level)?.get(cell)?;
+        (node < begins[cell] + facts.nodes).then_some(cell as CellId)
     }
 
     /// The key of a cell: the path from the root down to it.

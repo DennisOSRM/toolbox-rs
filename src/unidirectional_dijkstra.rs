@@ -12,7 +12,7 @@
 /// ratio between them is partly a ratio between two ways of finding a node.
 use crate::{
     dense_heap::DenseHeap,
-    graph::{Graph, NodeID},
+    graph::{Arcs, NodeID},
     heap_stats::{Counters, HeapStats, Untracked},
 };
 
@@ -82,7 +82,7 @@ impl<S: HeapStats<NodeID>> UnidirectionalSearch<S> {
     /// run a path computation from s to t on some graph. The object is reusable
     /// to run consecutive searches, even on different graphs. It is cleared on
     /// every run, which saves on allocations.
-    pub fn run<G: Graph<u32>>(&mut self, graph: &G, s: NodeID, t: NodeID) -> usize {
+    pub fn run<G: Arcs<u32>>(&mut self, graph: &G, s: NodeID, t: NodeID) -> usize {
         // clear the search space
         self.clear();
 
@@ -111,7 +111,7 @@ impl<S: HeapStats<NodeID>> UnidirectionalSearch<S> {
             for edge in graph.edge_range(u) {
                 debug!("[relax] edge {edge}");
                 let v = graph.target(edge);
-                let new_distance = distance + *graph.data(edge) as usize;
+                let new_distance = distance + graph.weight(edge) as usize;
 
                 self.queue.insert_or_decrease(v, new_distance, u);
             }

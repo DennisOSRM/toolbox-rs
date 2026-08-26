@@ -43,7 +43,7 @@ use crate::{
     border_levels::BorderLevels,
     cell_block::CellBlock,
     cell_tree::{CellFacts, CellTree},
-    graph::{Graph, NodeID},
+    graph::{Arcs, NodeID},
     level_directory::CellId,
     lru::LRU,
     overlay::{CellTable, Overlay},
@@ -163,7 +163,8 @@ pub struct Budget {
 /// once, which is why they are counted per search rather than once.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Footing {
-    /// the arcs and the offsets into them
+    /// what the graph costs standing still: all of its arcs where it holds
+    /// them, and only what finds a block where it pages them
     pub graph: u64,
     /// one word a node
     pub partition: u64,
@@ -182,12 +183,12 @@ impl Footing {
     /// `searches` is how many searches may be running at once, since each
     /// keeps a table over the nodes of the graph for as long as it lives.
     #[must_use]
-    pub fn of<G: Graph<u32>>(graph: &G, tree: &CellTree, blocks: usize, searches: usize) -> Self {
+    pub fn of<G: Arcs<u32>>(graph: &G, tree: &CellTree, blocks: usize, searches: usize) -> Self {
         let nodes = graph.number_of_nodes() as u64;
-        let arcs = graph.number_of_edges() as u64;
         Self {
-            // a target and a weight an arc, and an offset a node
-            graph: arcs * 8 + nodes * 4,
+            // what the graph says it costs standing still, which is all of its
+            // arcs where it holds them and only an index where it pages them
+            graph: graph.standing() as u64,
             partition: nodes * 16,
             border_levels: nodes,
             block_map: blocks as u64 * size_of::<BlockEntry>() as u64,
@@ -299,9 +300,9 @@ impl Budget {
 }
 
 /// The cells of a partition, read off a file and kept while there is room.
-pub struct PagedOverlay {
+pub struct PagedOverlay<G = StaticGraph<u32>> {
     store: BlockStore,
-    graph: StaticGraph<u32>,
+    graph: G,
     partition: PackedPartition,
     borders: BorderLevels,
     kept: Mutex<Kept>,
@@ -329,12 +330,12 @@ struct Kept {
     faults: Faults,
 }
 
-impl PagedOverlay {
+impl<G: Arcs<u32> + Sync> PagedOverlay<G> {
     /// Opens a store to read cells from, holding `budget` bytes of them.
     #[must_use]
     pub fn new(
         store: BlockStore,
-        graph: StaticGraph<u32>,
+        graph: G,
         partition: PackedPartition,
         borders: BorderLevels,
         budget: usize,
@@ -371,7 +372,7 @@ impl PagedOverlay {
     #[must_use]
     pub fn within(
         store: BlockStore,
-        graph: StaticGraph<u32>,
+        graph: G,
         partition: PackedPartition,
         borders: BorderLevels,
         budget: Budget,
@@ -554,8 +555,8 @@ impl PagedOverlay {
     }
 }
 
-impl Overlay for PagedOverlay {
-    type Graph = StaticGraph<u32>;
+impl<G: Arcs<u32> + Sync> Overlay for PagedOverlay<G> {
+    type Graph = G;
     type Table<'a>
         = Arc<HeldTable>
     where
@@ -646,7 +647,7 @@ mod tests {
     }
 
     /// Writes every cell of a customization into a store.
-    fn pack(
+    fn pack_cells(
         customization: &Customization,
         tree: &CellTree,
         path: &std::path::Path,
@@ -745,7 +746,7 @@ mod tests {
 
         let held = tempfile::tempdir().expect("a directory to write in");
         let path = held.path().join("blocks");
-        let map = pack(&in_memory, &tree, &path, 3);
+        let map = pack_cells(&in_memory, &tree, &path, 3);
         assert!(map.len() > 1, "the store is worth more than one block");
 
         let store = BlockStore::open(&path, map, tree).expect("a store to open");
@@ -797,7 +798,7 @@ mod tests {
 
         let held = tempfile::tempdir().expect("a directory to write in");
         let path = held.path().join("blocks");
-        let map = pack(&in_memory, &tree, &path, 3);
+        let map = pack_cells(&in_memory, &tree, &path, 3);
 
         // room enough for the two coarsest levels and no more, on top of what
         // the instance costs before any table: the budget is for the whole of
@@ -853,6 +854,75 @@ mod tests {
                 assert_eq!(paged.faults().misses, before, "level {level} was read");
             }
         }
+    }
+
+    /// The whole of it on a file: the cell tables paged and the arcs paged
+    /// under them, answering what an instance holding both in memory does.
+    #[test]
+    fn an_instance_with_its_arcs_on_a_file_too_answers_the_same() {
+        use crate::paged_graph::{PagedGraph, pack};
+
+        let side = 16;
+        let (edges, directory) = laid_out(side);
+        let graph = StaticGraph::new(edges.clone());
+        let partition = PackedPartition::of(&directory);
+        let coordinates = vec![FPCoordinate::new(0, 0); side * side];
+        let tree = CellTree::of(&directory, &partition, &graph, &coordinates);
+        let in_memory = Customization::new(StaticGraph::new(edges.clone()), directory.clone());
+
+        let held = tempfile::tempdir().expect("a directory to write in");
+        let tables = held.path().join("blocks");
+        let map = pack_cells(&in_memory, &tree, &tables, 3);
+        let arcs = held.path().join("arcs");
+        let (arc_map, first_edges) =
+            pack(&graph, Some(&tree), &arcs, 32, Codec::Lz4, 3).expect("a graph to pack");
+
+        // both under budgets too small to hold what they are for, so both are
+        // reading throughout rather than reading once and running in memory
+        let paged_graph =
+            PagedGraph::open(&arcs, arc_map, &first_edges, 8 * 1024).expect("a graph to open");
+        let footing = Footing::of(&paged_graph, &tree, 4, 1);
+        assert!(
+            footing.graph < (crate::graph::Graph::number_of_edges(&graph) * 8) as u64 / 4,
+            "a paged graph stood for most of itself: {} bytes",
+            footing.graph
+        );
+
+        let store = BlockStore::open(&tables, map, tree.clone()).expect("a store to open");
+        let budget = Budget {
+            bytes: usize::try_from(footing.total()).expect("a size") + 16 * 1024,
+            pinned_share: 0.5,
+        };
+        let paged = PagedOverlay::within(
+            store,
+            paged_graph,
+            PackedPartition::of(&directory),
+            BorderLevels::of(&graph, &partition),
+            budget,
+        );
+
+        let mut over_memory = MldQuery::new();
+        let mut over_file = MldQuery::new();
+        let mut asked = 0;
+        for source in (0..side * side).step_by(5) {
+            for target in (0..side * side).step_by(7) {
+                over_memory.clear();
+                over_file.clear();
+                over_memory.run(&in_memory, source, &[target]);
+                over_file.run(&paged, source, &[target]);
+                assert_eq!(
+                    over_memory.distance(target),
+                    over_file.distance(target),
+                    "from {source} to {target}"
+                );
+                asked += 1;
+            }
+        }
+        assert!(asked > 100, "the sweep is worth running");
+        assert!(
+            paged.graph().faults().reads > 0,
+            "the arcs were never read off the file"
+        );
     }
 
     /// The one that says what a budget is for: a graph counted, not assumed
