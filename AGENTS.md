@@ -83,6 +83,20 @@ The title follows the same rule as a commit subject: name the algorithm or
 the structure, not the effect. A pull request doing several things names the
 ones a reviewer would search for rather than reaching for the sum of them.
 
+Name the types, the traits and the algorithms, in the words the code uses. A
+reader scanning a list of merged pull requests should be able to tell what
+moved without opening any of them, and should be able to find this one again
+by searching for the thing it changed.
+
+The test is whether the title would still make sense to somebody who has never
+read the description. "Draw everything from one cache" fails it: there is no
+"everything" in the code and no reader can guess what a cache was drawn from.
+"Add Pool, one byte-budgeted LRU shared by every kind of block" passes, because
+`Pool` and LRU are searchable and the sentence says what was built.
+
+Metaphor is for the body, where there is room to say what it stands for. A
+title that reads well and identifies nothing is worse than a plain one.
+
 Otherwise the description carries the reasoning: what the change does, why,
 what it leaves for later, and which PR it is stacked on if any. Lead it with
 the change itself — the signatures, the fields, the behaviour — and put the
