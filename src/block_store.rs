@@ -109,6 +109,13 @@ impl BlockWriter {
         )
     }
 
+    /// The blocks written so far, for a caller keeping more than one run in
+    /// one file and wanting a map of each.
+    #[must_use]
+    pub fn written(&self) -> &[BlockEntry] {
+        &self.entries
+    }
+
     /// Writes a block that has already been serialized.
     ///
     /// This is what [`push`](Self::push) is written on, and what anything else

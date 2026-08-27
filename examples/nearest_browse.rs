@@ -73,10 +73,15 @@ fn main() {
         .save(Path::new(&segments_at))
         .expect("a segment index to write");
     for (what, at) in [("nodes", &nodes_at), ("segments", &segments_at)] {
-        let held = std::fs::metadata(at).expect("a file").len();
+        // the head names the blocks, and the blocks are the index
+        let head = std::fs::metadata(at).expect("a file").len();
+        let blocks = std::fs::metadata(toolbox_rs::nearest::blocks_beside(Path::new(at)))
+            .expect("the blocks")
+            .len();
         println!(
-            "the {what} index is {:.1} MiB on the file",
-            held as f64 / MIB as f64
+            "the {what} index is {:.1} MiB on the file, of which {:.1} MiB is the head",
+            (head + blocks) as f64 / MIB as f64,
+            head as f64 / MIB as f64,
         );
     }
 
