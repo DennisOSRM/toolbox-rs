@@ -103,5 +103,13 @@ the change itself — the signatures, the fields, the behaviour — and put the
 motivation after; a reviewer opens a diff already knowing they want to see
 what moved.
 
+A hook formats and lints every change to a `.rs` file as it is made:
+`.claude/hooks/rust-checks.sh` runs `cargo fmt --all` and then
+`cargo clippy --all-targets`, and refuses the change where clippy complains, so
+a lint is fixed while the reason for the code is still in mind rather than in a
+sweep at the end. It says so when the formatter moved something, since what is
+then on disk is not what was written. `TOOLBOX_SKIP_CLIPPY=1` keeps the
+formatting and drops the lint, for a run of many small edits.
+
 Releases are cut by release-plz from `main`; do not bump the version in
 `Cargo.toml` by hand.
