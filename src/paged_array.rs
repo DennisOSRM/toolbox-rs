@@ -41,6 +41,8 @@ use std::{
 };
 
 use crate::{
+    block_codec::Codec,
+    block_map::BlockMap,
     block_store::{NotRead, read_at},
     pool::{Held, Key, Pool},
 };
@@ -54,6 +56,70 @@ pub const BLOCK_BYTES: usize = 64 * 1024;
 /// Tells one array from another, so their blocks do not collide in the pool.
 static NEXT_ARRAY: AtomicUsize = AtomicUsize::new(0);
 
+/// Lays a block out by column instead of by row.
+///
+/// # Why a codec wants it this way
+///
+/// A block holds entries of a fixed width, one after another, and the same
+/// byte of consecutive entries is the one most like its neighbour: the high
+/// byte of a latitude does not change across a block of things that are near
+/// each other, while the low byte changes every time. Row by row those two are
+/// interleaved and a codec sees noise. Column by column the high bytes are one
+/// long run and the low bytes are their own, and only the low bytes are hard.
+///
+/// It is the ordering alone -- the same bytes, moved -- so it costs one pass
+/// each way and nothing in space.
+fn by_column(rows: &[u8], wide: usize) -> Vec<u8> {
+    let entries = rows.len() / wide;
+    let mut into = Vec::with_capacity(rows.len());
+    for byte in 0..wide {
+        for at in 0..entries {
+            into.push(rows[at * wide + byte]);
+        }
+    }
+    into
+}
+
+/// And back into rows.
+fn by_row(columns: &[u8], wide: usize) -> Vec<u8> {
+    let entries = columns.len() / wide;
+    let mut into = vec![0_u8; columns.len()];
+    for byte in 0..wide {
+        for at in 0..entries {
+            into[at * wide + byte] = columns[byte * entries + at];
+        }
+    }
+    into
+}
+
+/// Where the blocks are and what has to be done to them.
+#[derive(Debug)]
+enum Laid {
+    /// One after another, uncompressed, so where a block sits is arithmetic.
+    ///
+    /// Nothing stands: not an offset, not a length. This is what a small array
+    /// wants, where an entry a block of index would cost more than the codec
+    /// would save.
+    Flat,
+    /// Compressed, so where a block sits has to be looked up.
+    ///
+    /// A block still holds a fixed number of entries, so which block an entry
+    /// is in is still arithmetic -- it is only how long the block turned out
+    /// to be that has to be written down. That is an entry a block, which for
+    /// a big array is a rounding error against what the codec saves: three
+    /// quarters of a gibibyte of coordinates is ten thousand blocks.
+    Blocks(BlockMap),
+}
+
+/// Lays a run of entries out for writing: by column, so the codec has runs to
+/// work with rather than the interleaving of a row.
+///
+/// What [`PagedArray`] in its block form undoes on the way back.
+#[must_use]
+pub fn for_writing(rows: &[u8], wide: usize) -> Vec<u8> {
+    by_column(rows, wide)
+}
+
 /// A run of fixed-width entries on a file.
 #[derive(Debug)]
 pub struct PagedArray {
@@ -65,6 +131,7 @@ pub struct PagedArray {
     wide: usize,
     /// how many go in a block
     apiece: usize,
+    laid: Laid,
     /// which array this is, for the pool
     which: u16,
     /// whether its blocks are pinned, for an array asked something on every
@@ -98,12 +165,42 @@ impl PagedArray {
             entries,
             wide,
             apiece: BLOCK_BYTES / wide,
+            laid: Laid::Flat,
             which: u16::try_from(NEXT_ARRAY.fetch_add(1, Ordering::Relaxed))
                 .expect("more arrays than a short counts"),
             stuck: false,
             pool,
             reads: AtomicUsize::new(0),
         })
+    }
+
+    /// The same over blocks a codec has been through.
+    ///
+    /// `apiece` is how many entries a block holds, which has to be what they
+    /// were written with: it is what turns an entry's number into a block's,
+    /// and nothing in the file says it twice.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever went wrong opening the file.
+    ///
+    /// # Panics
+    ///
+    /// Panics for an entry wider than a block, or for no entries in one.
+    pub fn open_blocks(
+        path: &Path,
+        map: BlockMap,
+        entries: usize,
+        wide: usize,
+        apiece: usize,
+        pool: Arc<Pool>,
+    ) -> std::io::Result<Self> {
+        assert!(wide > 0, "an entry of {wide} bytes");
+        assert!(apiece > 0, "a block of no entries");
+        let mut held = Self::open(path, 0, entries, wide, pool)?;
+        held.apiece = apiece;
+        held.laid = Laid::Blocks(map);
+        Ok(held)
     }
 
     /// The same, for an array whose blocks are not to be let go of.
@@ -216,15 +313,31 @@ impl PagedArray {
         if let Some(Held::Bytes(held)) = self.pool.get(&key) {
             return Ok(held);
         }
-        // the last block is short where the entries do not fill it
-        let first = which * self.apiece;
-        let held = (self.entries - first).min(self.apiece) * self.wide;
-        let mut into = vec![0_u8; held];
-        read_at(
-            &self.held,
-            self.at + (which * self.apiece * self.wide) as u64,
-            &mut into,
-        )?;
+        let into = match &self.laid {
+            Laid::Flat => {
+                // the last block is short where the entries do not fill it
+                let first = which * self.apiece;
+                let held = (self.entries - first).min(self.apiece) * self.wide;
+                let mut into = vec![0_u8; held];
+                read_at(
+                    &self.held,
+                    self.at + (which * self.apiece * self.wide) as u64,
+                    &mut into,
+                )?;
+                into
+            }
+            Laid::Blocks(map) => {
+                let entry = *map.entries().get(which).ok_or(NotRead::NotHere)?;
+                let mut stored = vec![0_u8; entry.stored as usize];
+                read_at(&self.held, entry.at, &mut stored)?;
+                let codec =
+                    Codec::of(entry.codec).map_err(|_| NotRead::UnknownCodec(entry.codec))?;
+                let held = codec
+                    .decode(&stored, entry.unpacked as usize)
+                    .map_err(NotRead::Corrupt)?;
+                by_row(&held, self.wide)
+            }
+        };
         self.reads.fetch_add(1, Ordering::Relaxed);
         self.pool.note_read();
         let held = Arc::new(into);

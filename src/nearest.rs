@@ -72,7 +72,9 @@ use std::{
 use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::{
-    block_store::read_at,
+    block_codec::Codec,
+    block_map::BlockMap,
+    block_store::{BlockWriter, read_at},
     bounding_box::BoundingBox,
     geometry::FPCoordinate,
     graph::Arcs,
@@ -313,7 +315,22 @@ struct Head {
     /// how many boxes each level has, the bottom row first
     counts: Vec<u32>,
     lon_scale: f64,
+    /// how many entries a block of each holds, and where every block is
+    apiece: u32,
+    boxes: BlockMap,
+    items: BlockMap,
 }
+
+/// How many entries go in a block of an index.
+///
+/// Enough that the block is worth a codec's while and few enough that reading
+/// one to answer a query is not reading a great deal that will not be looked
+/// at. Sixty four kibibytes of boxes is four thousand of them.
+pub const IN_A_BLOCK: usize = 4096;
+
+/// What the two runs of a written index are filed under.
+const BOXES: u8 = u8::MAX - 2;
+const THINGS: u8 = u8::MAX - 3;
 
 /// A nearest-first index over the nodes or the arcs of a graph.
 pub struct NearestIndex<T: Indexed> {
@@ -526,6 +543,28 @@ impl<T: Indexed> NearestIndex<T> {
                 "this index is read off a file and cannot be written back",
             ));
         };
+        // The two runs go through BlockWriter, which is what the cell tables
+        // and the arc blocks go through: the same codec, the same entry, the
+        // same map out the other end. An index over a continent's roads is
+        // three quarters of a gibibyte written plainly, which is far too much
+        // to leave to a codec that was never run.
+        let beside = blocks_beside(path);
+        let mut writer = BlockWriter::create(&beside)?;
+        let boxes_map = write_run(&mut writer, BOXES, boxes.len(), BOX_BYTES, |at, into| {
+            let (min, max) = boxes[at].corners();
+            into.extend_from_slice(&min.lat.to_le_bytes());
+            into.extend_from_slice(&min.lon.to_le_bytes());
+            into.extend_from_slice(&max.lat.to_le_bytes());
+            into.extend_from_slice(&max.lon.to_le_bytes());
+        })?;
+        let mut one = vec![0_u8; T::BYTES];
+        let items_map = write_run(&mut writer, THINGS, items.len(), T::BYTES, |at, into| {
+            items[at].write_to(&mut one);
+            into.extend_from_slice(&one);
+        })?;
+        let both = writer.finish()?;
+        debug_assert_eq!(both.len(), boxes_map.len() + items_map.len());
+
         let head = Head {
             version: VERSION,
             tag: T::TAG,
@@ -533,25 +572,15 @@ impl<T: Indexed> NearestIndex<T> {
             objects: self.objects as u64,
             counts: self.counts.clone(),
             lon_scale: self.plane.lon_scale,
+            apiece: u32::try_from(IN_A_BLOCK).expect("a block in four bytes"),
+            boxes: boxes_map,
+            items: items_map,
         };
         let head = rkyv::to_bytes::<rkyv::rancor::Error>(&head)
             .map_err(|why| std::io::Error::other(format!("an index will not serialize: {why}")))?;
-
         let mut out = BufWriter::new(File::create(path)?);
         out.write_all(&(head.len() as u64).to_le_bytes())?;
         out.write_all(&head)?;
-        for held in boxes {
-            let (min, max) = held.corners();
-            out.write_all(&min.lat.to_le_bytes())?;
-            out.write_all(&min.lon.to_le_bytes())?;
-            out.write_all(&max.lat.to_le_bytes())?;
-            out.write_all(&max.lon.to_le_bytes())?;
-        }
-        let mut into = vec![0_u8; T::BYTES];
-        for item in items {
-            item.write_to(&mut into);
-            out.write_all(&into)?;
-        }
         out.flush()
     }
 
@@ -596,24 +625,27 @@ impl<T: Indexed> NearestIndex<T> {
         }
         let boxes = running;
 
-        let at = 8 + length as u64;
+        let beside = blocks_beside(path);
+        let apiece = head.apiece as usize;
         Ok(Self {
             fan: head.fan as usize,
             objects: head.objects as usize,
             level_at,
             counts: head.counts,
-            boxes: Boxes::Paged(PagedArray::open(
-                path,
-                at,
+            boxes: Boxes::Paged(PagedArray::open_blocks(
+                &beside,
+                head.boxes,
                 boxes as usize,
                 BOX_BYTES,
+                apiece,
                 Arc::clone(pool),
             )?),
-            items: Items::Paged(PagedArray::open(
-                path,
-                at + boxes * BOX_BYTES as u64,
+            items: Items::Paged(PagedArray::open_blocks(
+                &beside,
+                head.items,
                 head.objects as usize,
                 T::BYTES,
+                apiece,
                 Arc::clone(pool),
             )?),
             plane: Scaled {
@@ -621,6 +653,65 @@ impl<T: Indexed> NearestIndex<T> {
             },
         })
     }
+}
+
+/// Where the blocks of an index go, beside the head that names them.
+///
+/// Appended rather than put in place of an extension the caller chose: two
+/// indexes written as `held.nodes` and `held.segments` would otherwise both
+/// want `held.blocks`, and the second would quietly write over the first.
+#[must_use]
+pub fn blocks_beside(path: &Path) -> std::path::PathBuf {
+    let mut beside = path.as_os_str().to_os_string();
+    beside.push(".blocks");
+    beside.into()
+}
+
+/// Writes a run of fixed-width entries as blocks of [`IN_A_BLOCK`] apiece.
+///
+/// A block holds a fixed count and not a fixed size, so which block an entry
+/// is in stays arithmetic and only how long the block turned out to be has to
+/// be written down.
+fn write_run(
+    out: &mut BlockWriter,
+    tag: u8,
+    entries: usize,
+    wide: usize,
+    mut one: impl FnMut(usize, &mut Vec<u8>),
+) -> std::io::Result<BlockMap> {
+    let mut into = Vec::new();
+    for block in 0..entries.div_ceil(IN_A_BLOCK) {
+        let first = block * IN_A_BLOCK;
+        let upto = (first + IN_A_BLOCK).min(entries);
+        into.clear();
+        for at in first..upto {
+            one(at, &mut into);
+        }
+        // by column, so the codec sees the high bytes of a coordinate as one
+        // run rather than interleaved with the low ones
+        let planed = crate::paged_array::for_writing(&into, wide);
+        out.push_bytes(
+            &planed,
+            tag,
+            (first as u128, (upto - 1) as u128),
+            (u32::try_from(block).expect("a block in four bytes"), 1),
+            (
+                u32::try_from(first).expect("an entry in four bytes"),
+                u32::try_from(upto - first).expect("a run in four bytes"),
+            ),
+            Codec::Lz4,
+            3,
+        )?;
+    }
+    // the writer holds every block of the file, and what is wanted here is the
+    // ones this run put in it
+    Ok(BlockMap::of(
+        out.written()
+            .iter()
+            .filter(|entry| entry.level == tag)
+            .copied()
+            .collect(),
+    ))
 }
 
 /// Four bytes of a written coordinate.
