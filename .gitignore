@@ -3,3 +3,8 @@
 Cargo.lock
 /.claude/settings.local.json
 .DS_Store
+
+# Scripts that re-run the measurements, and what they produce. Kept out of
+# the repository on purpose: they name paths on one machine and write large
+# files beside them.
+/experiments/

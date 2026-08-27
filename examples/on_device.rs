@@ -75,6 +75,10 @@ fn main() {
     let whole = started.elapsed();
     println!("customized {tables} tables in {whole:.1?}, which is the run an update is spared\n");
 
+    // one row a measurement, for whatever draws the picture
+    let writing = std::env::var("TOOLBOX_TIMINGS").ok();
+    let mut rows = String::from("drawn,share,arcs,dirty,tables,seconds,whole_seconds\n");
+
     println!(
         "{:>10} {:>8} {:>12} {:>10} {:>12} {:>10} {:>10}",
         "drawn", "share", "arcs", "dirty", "of tables", "took", "of a run"
@@ -112,6 +116,17 @@ fn main() {
             customize(&held, levels);
             let took = marked + started.elapsed();
 
+            if writing.is_some() {
+                use std::fmt::Write as _;
+                let _ = writeln!(
+                    rows,
+                    "{},{share},{},{dirty},{tables},{:.6},{:.6}",
+                    if scattered { "scattered" } else { "together" },
+                    changes.len(),
+                    took.as_secs_f64(),
+                    whole.as_secs_f64(),
+                );
+            }
             println!(
                 "{:>10} {:>7.1}% {:>12} {dirty:>10} {:>11.1}% {:>10} {:>9.1}%",
                 if scattered { "scattered" } else { "together" },
@@ -122,5 +137,10 @@ fn main() {
                 100.0 * took.as_secs_f64() / whole.as_secs_f64(),
             );
         }
+    }
+
+    if let Some(at) = &writing {
+        std::fs::write(at, rows).expect("somewhere to write the measurements");
+        println!("\nwrote {at}");
     }
 }
