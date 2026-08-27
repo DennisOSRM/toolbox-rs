@@ -103,7 +103,10 @@ the change itself — the signatures, the fields, the behaviour — and put the
 motivation after; a reviewer opens a diff already knowing they want to see
 what moved.
 
-A hook formats and lints every change to a `.rs` file as it is made:
+A hook formats and lints every change to a `.rs` file as it is made, whether
+it was written by an editing tool or by a shell command -- a heredoc, a script,
+`sed` -- since a good deal of the editing here is the latter and a hook that
+only watches `Edit` watches half of it:
 `.claude/hooks/rust-checks.sh` runs `cargo fmt --all` and then
 `cargo clippy --all-targets`, and refuses the change where clippy complains, so
 a lint is fixed while the reason for the code is still in mind rather than in a

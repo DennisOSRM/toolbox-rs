@@ -17,7 +17,7 @@
 use crate::{
     border_levels::BorderLevels,
     edge::InputEdge,
-    graph::{Graph, NodeID},
+    graph::{EdgeID, Graph, NodeID},
     level_directory::{CellId, LevelDirectory},
     one_to_many_dijkstra::OneToManyDijkstra,
     overlay::{CellTable, Overlay},
@@ -26,7 +26,7 @@ use crate::{
 };
 use log::debug;
 use rayon::prelude::*;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
     cell::RefCell,
     sync::{
@@ -639,6 +639,120 @@ impl Customization {
     /// everything else here does. Handing a table out is a borrow that lasts
     /// as long as the caller reads it, and dropping the tables underneath a
     /// reader is the one thing the slots cannot be asked to allow.
+    /// Takes new weights for some arcs and forgets only what depended on them.
+    ///
+    /// # What a changed arc costs
+    ///
+    /// A cell's table says what it costs to cross the cell, which is worked
+    /// out from what is inside it: at the finest level the arcs of the graph,
+    /// and above that the tables of the cells below plus the arcs between
+    /// them. So an arc that changes weight spoils the table of the cell it is
+    /// inside, and of every cell above that one, and no others. An arc that
+    /// leaves a cell is not inside it: it is inside the first cell that holds
+    /// both its ends, which is what decides where the spoiling starts.
+    ///
+    /// Everything else is still good and is kept. That is the whole of what
+    /// makes this affordable on a device: a hundredth of the arcs changing is
+    /// not a hundredth of the work of a customization, but it is a long way
+    /// from all of it.
+    ///
+    /// The tables are not worked out here. They are forgotten, and the next
+    /// caller to ask for one works it out -- which is what
+    /// [`distances_of`](Self::distances_of) has always done, and means a cell
+    /// nobody asks about is never paid for.
+    ///
+    /// Returns how many tables were marked dirty and forgotten.
+    ///
+    /// # Panics
+    ///
+    /// Panics for an arc the graph does not have.
+    pub fn update(&mut self, changes: &[(EdgeID, u32)]) -> usize {
+        // The partition and the border levels are worked out from the shape of
+        // the graph and not from its weights, so they outlive a change of
+        // weight and are not touched here.
+        // Which tables the changes dirty is worked out before any weight is
+        // written, since the partition is read off `self` and the weights are
+        // written to it. The partition itself does not move: it is the shape
+        // of the graph and not its weights.
+        let levels = self.directory.levels();
+        let mut dirty: FxHashSet<(usize, CellId)> = FxHashSet::default();
+        {
+            let partition = self.partition();
+            for &(edge, _) in changes {
+                let target = self.graph.target(edge);
+                // where the arc leaves from, which is the row of the adjacency
+                // it sits in, and where it goes
+                let source = self.source_of(edge);
+                let (one, other) = (partition.word(source), partition.word(target));
+
+                // The cell the arc is inside, which is where the dirt starts.
+                //
+                // For an arc with both ends in one cell of the finest level
+                // that is the base layer, which is the ordinary case. For an
+                // arc that leaves its cell it is higher up: such an arc is
+                // inside no cell of the base layer -- neither end's table is
+                // worked out from it, since a cell's table is worked out from
+                // what is within it -- and is inside the first cell that holds
+                // both its ends. Starting at the base layer for those too
+                // would be right and would dirty two tables a border arc that
+                // do not depend on it.
+                let inside = partition
+                    .highest_different_level(one, other)
+                    .map_or(0, |level| level + 1);
+
+                // and up from there: a cell whose child changed is worked out
+                // from that child's table, so it is dirty too, and so is its
+                // own parent, to the top
+                for level in inside..levels {
+                    dirty.insert((level, partition.cell_of(source, level)));
+                }
+            }
+        }
+
+        for &(edge, weight) in changes {
+            *self.graph.data_mut(edge) = weight;
+        }
+
+        for &(level, cell) in &dirty {
+            if let Some(slot) = self
+                .tabulated
+                .get_mut(level)
+                .and_then(|level| level.get_mut(cell as usize))
+            {
+                slot.take();
+            }
+        }
+        dirty.len()
+    }
+
+    /// Which node an arc leaves.
+    ///
+    /// The adjacency holds where an arc goes and not where it came from, so
+    /// this is a search of the offsets: the last node whose arcs begin at or
+    /// before this one.
+    ///
+    /// # Panics
+    ///
+    /// Panics for an arc the graph does not have.
+    #[must_use]
+    pub fn source_of(&self, edge: EdgeID) -> NodeID {
+        assert!(
+            edge < self.graph.number_of_edges(),
+            "no arc {edge} in the graph"
+        );
+        let mut low = 0;
+        let mut high = self.graph.number_of_nodes();
+        while low + 1 < high {
+            let middle = low + (high - low) / 2;
+            if self.graph.begin_edges(middle) <= edge {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        low
+    }
+
     pub fn forget(&mut self) {
         for level in &mut self.tabulated {
             for slot in level {
@@ -1672,5 +1786,126 @@ mod tests {
         assert_eq!(wrong.built, wrong.expected + 100);
         assert_eq!(wrong.from, border_nodes[0] as usize);
         assert_eq!(wrong.to, border_nodes[1] as usize);
+    }
+
+    /// The one that matters for an update: after changing some weights and
+    /// forgetting what depended on them, every table is the table a
+    /// customization built from scratch on the changed graph has.
+    #[test]
+    fn an_update_leaves_what_a_fresh_customization_would_have_built() {
+        use crate::graph::Graph;
+
+        let (graph, directory) = crate::grid_graph::grid(16, true);
+        let (again, _) = crate::grid_graph::grid(16, true);
+        let arcs = Graph::number_of_edges(&graph);
+        let mut held = Customization::new(graph, directory.clone());
+        // customized first, so the update is against tables that exist
+        for level in 0..directory.levels() {
+            for cell in 0..held.cells_on_level(level) as CellId {
+                let _ = held.distances_of(level, cell);
+            }
+        }
+
+        // a spread of arcs: some inside a cell, some crossing one
+        let changes: Vec<(EdgeID, u32)> = (0..arcs)
+            .step_by(7)
+            .map(|edge| (edge, 3 + (edge % 11) as u32))
+            .collect();
+        assert!(changes.len() > 20, "the update is worth making");
+        let dirty = held.update(&changes);
+        assert!(dirty > 0, "an update dirtied nothing");
+
+        // and the same changes made to a graph that is then customized whole
+        let mut fresh = again;
+        for &(edge, weight) in &changes {
+            *fresh.data_mut(edge) = weight;
+        }
+        let fresh = Customization::new(fresh, directory.clone());
+
+        for level in 0..directory.levels() {
+            for cell in 0..fresh.cells_on_level(level) as CellId {
+                match (
+                    held.distances_of(level, cell),
+                    fresh.distances_of(level, cell),
+                ) {
+                    (Some(one), Some(other)) => {
+                        assert_eq!(
+                            one.border_nodes_of(),
+                            other.border_nodes_of(),
+                            "cell {cell} of level {level} borders differently"
+                        );
+                        let wide = one.border_nodes_of().len();
+                        for source in 0..wide {
+                            assert_eq!(
+                                one.row(source),
+                                other.row(source),
+                                "cell {cell} of level {level}, row {source}"
+                            );
+                        }
+                    }
+                    (None, None) => {}
+                    (one, other) => panic!(
+                        "cell {cell} of level {level}: {} against {}",
+                        one.is_some(),
+                        other.is_some()
+                    ),
+                }
+            }
+        }
+    }
+
+    /// An update dirties what depends on the arcs and leaves the rest, which
+    /// is the whole of why it is worth doing.
+    #[test]
+    fn an_update_dirties_less_than_everything() {
+        let (graph, directory) = crate::grid_graph::grid(32, true);
+        let mut held = Customization::new(graph, directory.clone());
+        let all: usize = (0..directory.levels())
+            .map(|level| held.cells_on_level(level))
+            .sum();
+
+        // one arc, which is inside one cell of the base layer
+        let dirty = held.update(&[(0, 9)]);
+        assert!(
+            dirty <= directory.levels(),
+            "one arc dirtied {dirty} tables of {all}"
+        );
+        assert!(dirty >= 1, "one arc dirtied nothing");
+    }
+
+    /// An arc that leaves its cell is inside none of the base layer, so the
+    /// dirt starts above it.
+    #[test]
+    fn an_arc_that_leaves_its_cell_does_not_dirty_the_base_layer() {
+        use crate::graph::Graph;
+
+        let (graph, directory) = crate::grid_graph::grid(16, true);
+        let (again, _) = crate::grid_graph::grid(16, true);
+        let arcs = Graph::number_of_edges(&graph);
+        let held = Customization::new(graph, directory.clone());
+        let partition = held.partition();
+
+        // an arc whose ends are in different cells of the finest level
+        let crossing = (0..arcs).find(|&edge| {
+            let source = held.source_of(edge);
+            let target = Graph::target(held.graph(), edge);
+            partition.cell_of(source, 0) != partition.cell_of(target, 0)
+        });
+        let Some(crossing) = crossing else {
+            panic!("a grid of two hundred and fifty six has no arc leaving a cell");
+        };
+        let source = held.source_of(crossing);
+        let base = partition.cell_of(source, 0);
+
+        let mut held = held;
+        held.update(&[(crossing, 5)]);
+        // the base layer cell of that end still has whatever it had, since its
+        // table was never worked out from an arc that leaves it
+        let mut fresh = again;
+        *fresh.data_mut(crossing) = 5;
+        let fresh = Customization::new(fresh, directory);
+        let one = held.distances_of(0, base).map(|held| held.row(0).to_vec());
+        let other = fresh.distances_of(0, base).map(|held| held.row(0).to_vec());
+        assert_eq!(one, other);
     }
 }

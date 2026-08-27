@@ -25,15 +25,27 @@
 set -uo pipefail
 
 payload=$(cat)
+tool=$(printf '%s' "$payload" | jq -r '.tool_name // empty' 2>/dev/null)
 file=$(printf '%s' "$payload" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
-
-case "$file" in
-*.rs) ;;
-*) exit 0 ;;
-esac
 
 root="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 cd "$root" || exit 0
+
+# An editing tool says which file it wrote. A shell command does not, and a
+# good deal of the editing here is done by a shell command -- a heredoc, a
+# script, sed -- so for those the question is asked of the working tree
+# instead: has any Rust file changed since the last commit.
+case "$tool" in
+Bash)
+    git status --porcelain -- '*.rs' 2>/dev/null | grep -q . || exit 0
+    ;;
+*)
+    case "$file" in
+    *.rs) ;;
+    *) exit 0 ;;
+    esac
+    ;;
+esac
 
 notes=""
 
