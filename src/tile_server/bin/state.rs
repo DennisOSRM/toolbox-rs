@@ -19,7 +19,8 @@ use toolbox_rs::{
     customization::{CellDistances, Customization, Level},
     geometry::{FPCoordinate, Point2D},
     level_directory::{CellId, LevelDirectory},
-    r_tree::{RTree, RTreeElement},
+    metric::{Metric, Scaled},
+    nearest::{Indexed, NearestIndex},
     static_graph::StaticGraph,
 };
 
@@ -37,24 +38,49 @@ pub type Hull = (Vec<FPCoordinate>, [FPCoordinate; 2]);
 /// a cell of the coarsest level covers a country. A grid of buckets holds that
 /// badly, as such a cell lands in every bucket there is; a tree holds boxes of
 /// any size and is why this is a tree.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct CellBox {
     pub cell: CellId,
     pub bbox: BoundingBox,
-    pub middle: FPCoordinate,
 }
 
-impl RTreeElement for CellBox {
+impl Indexed for CellBox {
+    const BYTES: usize = 4 + 8 + 8;
+    const TAG: u32 = 3;
+
+    fn write_to(&self, into: &mut [u8]) {
+        let (min, max) = self.bbox.corners();
+        into[0..4].copy_from_slice(&self.cell.to_le_bytes());
+        into[4..8].copy_from_slice(&min.lat.to_le_bytes());
+        into[8..12].copy_from_slice(&min.lon.to_le_bytes());
+        into[12..16].copy_from_slice(&max.lat.to_le_bytes());
+        into[16..20].copy_from_slice(&max.lon.to_le_bytes());
+    }
+
+    fn read_from(from: &[u8]) -> Self {
+        let word = |held: &[u8]| i32::from_le_bytes(held.try_into().expect("four bytes"));
+        Self {
+            cell: u32::from_le_bytes(from[0..4].try_into().expect("four bytes")),
+            bbox: BoundingBox::between(
+                FPCoordinate::new(word(&from[4..8]), word(&from[8..12])),
+                FPCoordinate::new(word(&from[12..16]), word(&from[16..20])),
+            ),
+        }
+    }
+
     fn bbox(&self) -> BoundingBox {
         self.bbox
     }
 
-    fn distance_to(&self, coordinate: &FPCoordinate) -> f64 {
-        self.bbox.min_distance(coordinate)
+    fn center(&self) -> FPCoordinate {
+        self.bbox.center()
     }
 
-    fn center(&self) -> &FPCoordinate {
-        &self.middle
+    /// The nearest point of the box, measured the way the walk measures the
+    /// boxes above it, so that a cell is never handed out before a nearer one.
+    fn nearest_to(&self, at: &FPCoordinate, by: &Scaled) -> (f64, FPCoordinate) {
+        let near = self.bbox.nearest_point(at);
+        (by.distance(&near, at), near)
     }
 }
 
@@ -76,7 +102,7 @@ pub struct ServerState {
     /// The cells of a level in a tree, so that a tile can ask which of them
     /// reach it rather than trying every one. A level of the finest cut holds
     /// half a million cells, and every tile was walking all of them.
-    pub cell_trees: Mutex<FxHashMap<usize, Arc<RTree<CellBox>>>>,
+    pub cell_trees: Mutex<FxHashMap<usize, Option<Arc<NearestIndex<CellBox>>>>>,
     /// The convex hull of each cell of a level, worked out the first time that
     /// level is asked for. A hull costs a walk of the nodes of the cell, which
     /// is not something to pay per tile.
@@ -87,7 +113,7 @@ pub struct ServerState {
 
 impl ServerState {
     pub fn new(
-        graph: StaticGraph<usize>,
+        graph: StaticGraph<u32>,
         coordinates: Vec<FPCoordinate>,
         directory: LevelDirectory,
         alpha: f64,
@@ -141,7 +167,7 @@ impl ServerState {
     }
 
     /// the graph the partition was built over
-    pub fn graph(&self) -> &StaticGraph<usize> {
+    pub fn graph(&self) -> &StaticGraph<u32> {
         self.customization.graph()
     }
 
@@ -176,11 +202,10 @@ impl ServerState {
         let cells = self.level(level);
         let hulls = self.hulls(level);
         let alpha = self.alpha;
-        let shapes = cells
-            .nodes_of_cell
-            .par_iter()
-            .enumerate()
-            .map(|(cell, nodes)| {
+        let shapes = (0..cells.cells())
+            .into_par_iter()
+            .map(|cell| {
+                let nodes = cells.nodes_of(cell as CellId);
                 if nodes.len() < 3 {
                     let hull = hulls[cell].0.clone();
                     return if hull.len() < 3 {
@@ -230,7 +255,10 @@ impl ServerState {
 
     /// The cells of a level in a tree, built from their hulls the first time
     /// the level is asked for and kept.
-    pub fn cell_tree(&self, level: usize) -> Arc<RTree<CellBox>> {
+    ///
+    /// Nothing for a level where no cell has a hull to speak of, as an index
+    /// wants a box to be measured in and an empty one has none.
+    pub fn cell_tree(&self, level: usize) -> Option<Arc<NearestIndex<CellBox>>> {
         if let Some(tree) = self
             .cell_trees
             .lock()
@@ -241,19 +269,20 @@ impl ServerState {
         }
 
         let hulls = self.hulls(level);
-        let tree = Arc::new(RTree::from_elements(hulls.iter().enumerate().filter_map(
-            |(cell, (hull, corners))| {
+        let boxes = hulls
+            .iter()
+            .enumerate()
+            .filter_map(|(cell, (hull, corners))| {
                 if hull.len() < 3 {
                     return None;
                 }
-                let bbox = BoundingBox::from_coordinates(corners);
                 Some(CellBox {
                     cell: cell as CellId,
-                    bbox,
-                    middle: bbox.center(),
+                    bbox: BoundingBox::from_coordinates(corners),
                 })
-            },
-        )));
+            })
+            .collect::<Vec<_>>();
+        let tree = (!boxes.is_empty()).then(|| Arc::new(NearestIndex::over(boxes)));
         self.cell_trees
             .lock()
             .expect("the cell tree cache is poisoned")
@@ -277,10 +306,10 @@ impl ServerState {
         }
 
         let cells = self.level(level);
-        let hulls = cells
-            .nodes_of_cell
-            .par_iter()
-            .map(|nodes| {
+        let hulls = (0..cells.cells())
+            .into_par_iter()
+            .map(|cell| {
+                let nodes = cells.nodes_of(cell as CellId);
                 let coordinates = nodes
                     .iter()
                     .map(|&node| self.coordinates[node])
@@ -308,7 +337,7 @@ impl ServerState {
     }
 
     /// Hands out the distances of a cell, tabulating them on the first request.
-    pub fn distances_of(&self, level: usize, cell: CellId) -> Option<Arc<CellDistances>> {
+    pub fn distances_of(&self, level: usize, cell: CellId) -> Option<&CellDistances> {
         self.customization.distances_of(level, cell)
     }
 

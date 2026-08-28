@@ -121,9 +121,11 @@ pub fn build_tile(state: &ServerState, level: u32, zoom: u32, x: u32, y: u32) ->
     let hulls = state.hulls(level as usize);
     let reaching = state
         .cell_tree(level as usize)
-        .intersecting(&tile_bounds(zoom, x, y))
-        .map(|held| held.cell)
-        .collect::<Vec<_>>();
+        .map_or_else(Vec::new, |tree| {
+            tree.intersecting(tile_bounds(zoom, x, y))
+                .map(|held| held.cell)
+                .collect::<Vec<_>>()
+        });
     let (hull_features, hull_values) = hulls_of(state, level, above, &reaching, &hulls, at);
     let (shape_features, shape_values) = shapes_of(state, level, above, &reaching, &hulls, at);
 

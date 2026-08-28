@@ -16,7 +16,6 @@ use state::ServerState;
 use tile_builder::build_tile;
 use tile_index::index_tiles_of;
 use toolbox_rs::{
-    edge::InputEdge,
     geometry::FPCoordinate,
     graph::Graph,
     io,
@@ -102,7 +101,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // parse and print command line parameters
     let args = <Arguments as clap::Parser>::parse();
 
-    let edges = io::read_vec_from_file::<InputEdge<usize>>(&args.graph);
+    let edges = io::read_edges_from_file(&args.graph);
     info!("loaded {} graph edges", edges.len());
 
     let directory: LevelDirectory = io::read_from_file(&args.directory);
@@ -196,6 +195,7 @@ mod tests {
     use rustc_hash::FxHashMap;
     use std::sync::Mutex;
     use toolbox_rs::customization::Customization;
+    use toolbox_rs::edge::InputEdge;
     use toolbox_rs::static_graph::StaticGraph;
     use toolbox_rs::tile_geometry::TILE_EXTENT;
     // `test` is aliased, as importing it plainly would shadow the `#[test]`
@@ -215,7 +215,7 @@ mod tests {
     /// tiles. The graph holds that arc, as whether a node is still on the
     /// border of the level being looked at is read off it.
     fn state_with_one_arc() -> ServerState {
-        let edges = vec![InputEdge::new(0, 1, 1_usize), InputEdge::new(1, 0, 1_usize)];
+        let edges = vec![InputEdge::new(0, 1, 1_u32), InputEdge::new(1, 0, 1_u32)];
         ServerState {
             tiles: data_with_one_arc(),
             hulls: Mutex::new(FxHashMap::default()),
@@ -314,12 +314,12 @@ mod tests {
     ///     0 - 1 === 2 - 3
     fn state_of_two_cells() -> ServerState {
         let edges = vec![
-            InputEdge::new(0, 1, 3_usize),
-            InputEdge::new(1, 0, 3_usize),
-            InputEdge::new(1, 2, 7_usize),
-            InputEdge::new(2, 1, 7_usize),
-            InputEdge::new(2, 3, 5_usize),
-            InputEdge::new(3, 2, 5_usize),
+            InputEdge::new(0, 1, 3_u32),
+            InputEdge::new(1, 0, 3_u32),
+            InputEdge::new(1, 2, 7_u32),
+            InputEdge::new(2, 1, 7_u32),
+            InputEdge::new(2, 3, 5_u32),
+            InputEdge::new(3, 2, 5_u32),
         ];
         let coordinates = (0..4)
             .map(|index| FPCoordinate::new_from_lat_lon(LAT, LON + 0.001 * f64::from(index)))
@@ -610,7 +610,7 @@ mod tests {
         // with the higher id to the west so that the lower one is outside
         let west = FPCoordinate::new_from_lat_lon(LAT, 8.80);
         let east = FPCoordinate::new_from_lat_lon(LAT, 8.95);
-        let edges = vec![InputEdge::new(0, 1, 1_usize), InputEdge::new(1, 0, 1_usize)];
+        let edges = vec![InputEdge::new(0, 1, 1_u32), InputEdge::new(1, 0, 1_u32)];
         // node 0 is east, node 1 is west, so the arc runs from the higher id
         let coordinates = vec![east, west];
         let directory = LevelDirectory::new(vec![0, 0], Vec::new());

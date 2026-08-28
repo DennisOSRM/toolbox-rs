@@ -124,11 +124,7 @@ pub async fn get_node_distances(
         return HttpResponse::NotFound()
             .body(format!("cell {cell} of level {level} has no border"));
     };
-    let Some(source) = distances
-        .border_nodes
-        .iter()
-        .position(|&border| border == node)
-    else {
+    let Some(source) = distances.place_of(node) else {
         return HttpResponse::NotFound().body(format!("node {node} is not on the border"));
     };
 
@@ -142,10 +138,13 @@ pub async fn get_node_distances(
         .iter()
         .enumerate()
         .filter(|&(target, _)| target != source)
-        .map(|(target, &node)| Reachable {
-            node,
-            coordinate: coordinate(node),
-            distance: distances.distance(source, target),
+        .map(|(target, &node)| {
+            let node = node as NodeID;
+            Reachable {
+                node,
+                coordinate: coordinate(node),
+                distance: distances.distance(source, target),
+            }
         })
         .collect::<Vec<_>>();
     let unreachable_count = nearest

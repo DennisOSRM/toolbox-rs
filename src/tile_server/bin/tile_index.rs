@@ -190,7 +190,7 @@ impl TileData {
     /// leave on. Those arcs are what separates one cell from the next, so
     /// drawing them draws the partition. Each pair of nodes is taken once, as
     /// the graph holds both directions of an arc.
-    pub fn new(graph: &StaticGraph<usize>, coordinates: &[FPCoordinate], cells: &[CellId]) -> Self {
+    pub fn new(graph: &StaticGraph<u32>, coordinates: &[FPCoordinate], cells: &[CellId]) -> Self {
         let mut boundary = Vec::new();
         let mut border_nodes = Vec::new();
         let mut nodes_by_tile: FxHashMap<(u32, u32), Vec<NodeID>> = FxHashMap::default();
@@ -344,10 +344,10 @@ mod tests {
     fn boundary_holds_the_arcs_that_leave_their_cell() {
         // 0 - 1 - 2, with the cut between node 1 and node 2
         let edges = vec![
-            InputEdge::new(0, 1, 1_usize),
-            InputEdge::new(1, 0, 1_usize),
-            InputEdge::new(1, 2, 1_usize),
-            InputEdge::new(2, 1, 1_usize),
+            InputEdge::new(0, 1, 1_u32),
+            InputEdge::new(1, 0, 1_u32),
+            InputEdge::new(1, 2, 1_u32),
+            InputEdge::new(2, 1, 1_u32),
         ];
         let graph = StaticGraph::new(edges);
         let coordinates = vec![
@@ -368,7 +368,7 @@ mod tests {
 
     #[test]
     fn a_partition_of_one_cell_has_no_boundary() {
-        let edges = vec![InputEdge::new(0, 1, 1_usize), InputEdge::new(1, 0, 1_usize)];
+        let edges = vec![InputEdge::new(0, 1, 1_u32), InputEdge::new(1, 0, 1_u32)];
         let graph = StaticGraph::new(edges);
         let coordinates = vec![
             FPCoordinate::new_from_lat_lon(50.0, 8.0),
