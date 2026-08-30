@@ -104,12 +104,21 @@ fn resident() -> u64 {
     0
 }
 
+/// Every step and what it cost, for whatever draws the picture.
+static STEPS: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
 fn report(step: &str, before: u64) -> u64 {
     let now = resident();
     println!(
         "{step:<38} {:>9.1} MiB   {:+9.1} MiB",
         now as f64 / MIB,
         (now as f64 - before as f64) / MIB
+    );
+    use std::fmt::Write as _;
+    let _ = writeln!(
+        STEPS.lock().expect("the steps"),
+        "\"{step}\",{now},{}",
+        now as i64 - before as i64
     );
     now
 }
@@ -474,6 +483,13 @@ fn main() {
     // A run held open, so that vmmap and heap can be pointed at it: the
     // resident set says how much there is and neither of those has to be
     // guessed at afterwards.
+    if let Ok(at) = std::env::var("TOOLBOX_STEPS") {
+        let mut held = String::from("step,footprint_bytes,added_bytes\n");
+        held.push_str(&STEPS.lock().expect("the steps"));
+        std::fs::write(&at, held).expect("somewhere to write the steps");
+        println!("wrote {at}");
+    }
+
     if let Ok(seconds) = std::env::var("TOOLBOX_HOLD") {
         let seconds: u64 = seconds.parse().unwrap_or(120);
         println!("HOLDING pid {} for {seconds}s", std::process::id());

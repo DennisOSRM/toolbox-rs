@@ -107,22 +107,35 @@ counts <- table(timings$exponent)
 thin <- as.integer(names(counts)[counts < THIN * length(engines)])
 
 # enough for a sweep of block sizes with the engine they are measured against
+# Okabe and Ito's, which survive the common kinds of colour blindness and stay
+# distinct in grey; the same set experiments/paper.R uses, so a paper's figures
+# are told apart the same way throughout.
 palette <- c(
-  "#3060c0", "#c05030", "#309050", "#9050b0",
-  "#c09030", "#30909c", "#a03060", "#606060"
+  "#0072B2", "#D55E00", "#009E73", "#CC79A7",
+  "#E69F00", "#56B4E9", "#F0E442", "#000000"
 )
 colour_of <- setNames(palette[seq_along(engines)], engines)
 
-png(output, width = 1400, height = 1000, res = 130)
+# A figure that goes into a paper is vector and is drawn at the size it will be
+# printed, so that eight point text is eight point text. A `.png` name still
+# gives a raster, for a look on a screen.
+paper <- !grepl("\\.png$", output, ignore.case = TRUE)
+if (paper) {
+  pdf(output, width = 7.0, height = 4.6, pointsize = 8, family = "Times",
+      useDingbats = FALSE)
+  par(mgp = c(1.8, 0.5, 0), tcl = -0.25)
+} else {
+  png(output, width = 1400, height = 1000, res = 130)
+}
 # The lower panel is a ratio, and there is no ratio to draw where only one
 # engine wrote to the file: it gets the whole device instead of two thirds of
 # it and a line of apology.
 ratio_panel <- length(engines) > 1 && denominator %in% engines
 if (ratio_panel) {
   layout(matrix(c(1, 2), nrow = 2), heights = c(2, 1))
-  par(mar = c(1.5, 4.5, 2.5, 1), las = 1)
+  par(mar = if (paper) c(1.2, 3.6, 1.6, 0.6) else c(1.5, 4.5, 2.5, 1), las = 1)
 } else {
-  par(mar = c(4.5, 4.5, 2.5, 1), las = 1)
+  par(mar = if (paper) c(2.6, 3.6, 1.6, 0.6) else c(4.5, 4.5, 2.5, 1), las = 1)
 }
 
 # what each engine costs, as a box per bucket
@@ -144,7 +157,10 @@ boxplot(groups,
   at = at, boxwex = width * 0.9, col = fill, log = "y",
   xaxt = "n", yaxt = "n", xlab = "",
   ylab = if (counting) measuring else "milliseconds",
-  main = sprintf("%s by Dijkstra rank (%s)", measuring, basename(input)),
+  # A figure in a paper has a caption and does not want a title as well, and
+  # certainly not the name of the file it was drawn from. On a screen both are
+  # useful for telling one exploratory plot from the next.
+  main = if (paper) "" else sprintf("%s by Dijkstra rank (%s)", measuring, basename(input)),
   outcex = 0.3, whisklty = 1, staplewex = 0.5
 )
 axis(1, at = exponents, labels = parse(text = sprintf("2^%d", exponents)))
@@ -175,7 +191,8 @@ if (!ratio_panel) {
   quit(status = 0)
 }
 
-par(mar = c(4.5, 4.5, 1, 1))
+# the lower panel's title is a pair of engine names and wants the room
+par(mar = if (paper) c(2.6, 4.4, 0.6, 0.6) else c(4.5, 4.5, 1, 1))
 medians <- sapply(engines, function(engine) {
   sapply(exponents, function(exponent) {
     rows <- timings$exponent == exponent & timings$engine == engine
@@ -206,7 +223,7 @@ if (denominator %in% engines && length(engines) > 1) {
   # placed by hand rather than as ylab, so a long pair of names can be set
   # smaller instead of running off the edge of the device
   side_label <- sprintf("%s / %s", measured, name_of(denominator))
-  mtext(side_label, side = 2, line = 3.2, las = 0,
+  mtext(side_label, side = 2, line = if (paper) 3.0 else 3.2, las = 0,
         cex = if (nchar(side_label) > 28) 0.72 else 0.9)
   ticks <- ratios_over(c(ratios, 1))
   axis(2, at = ticks, labels = as_multiple(ticks))
@@ -233,7 +250,7 @@ if (denominator %in% engines && length(engines) > 1) {
     sprintf("%s / %s (up to %.2f\u00d7 at 2^%d)", name_of(engine), name_of(denominator),
             ratios[best, engine], exponents[best])
   })
-  legend("topleft", legend = best_of, col = colour_of[against],
+  legend(if (paper) "bottomleft" else "topleft", legend = best_of, col = colour_of[against],
          lty = 1, pch = 19, bty = "n")
 
 } else {
