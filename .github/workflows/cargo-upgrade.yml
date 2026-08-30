@@ -1,0 +1,67 @@
+name: "cargo upgrade"
+
+# Dependabot only proposes a cargo update when the new version falls outside the
+# requirement, so a bare caret like `rkyv = "0.8.15"` never moves however many
+# 0.8.x are released. This raises the satisfied ones; dependabot keeps the
+# incompatible ones, which is why --incompatible is not passed here.
+#
+# The pull request is opened with GITHUB_TOKEN, which does not trigger the other
+# workflows, so this one builds and tests before opening it.
+
+on:
+  schedule:
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup update stable && rustup default stable
+      - run: cargo install cargo-edit --locked
+      - id: upgrade
+        run: |
+          cargo upgrade | tee upgraded.txt
+          if git diff --quiet -- Cargo.toml; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.upgrade.outputs.changed == 'true'
+        run: cargo build --verbose
+      - if: steps.upgrade.outputs.changed == 'true'
+        run: cargo test --verbose
+      - if: steps.upgrade.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c deps/cargo-upgrade
+          git commit -m "Raise dependency requirements to the latest compatible versions" -- Cargo.toml
+          git push -f origin deps/cargo-upgrade
+          if gh pr view deps/cargo-upgrade --json state -q .state 2>/dev/null | grep -qx OPEN; then
+            echo "pull request already open, pushed to it"
+            exit 0
+          fi
+          {
+            echo "\`cargo upgrade\` raising requirements that the existing caret"
+            echo "already satisfied, which dependabot does not propose."
+            echo
+            echo '```'
+            cat upgraded.txt
+            echo '```'
+            echo
+            echo "\`cargo build\` and \`cargo test\` pass on this branch."
+          } > body.md
+          gh pr create --base main --head deps/cargo-upgrade \
+            --title "Raise dependency requirements to the latest compatible versions" \
+            --body-file body.md
