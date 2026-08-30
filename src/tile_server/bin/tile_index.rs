@@ -380,4 +380,115 @@ mod tests {
                 .is_empty()
         );
     }
+
+    #[test]
+    fn a_tile_of_the_index_zoom_is_one_bucket() {
+        assert_eq!(
+            index_tiles_of(INDEX_ZOOM, 2100, 1350),
+            (2100, 1350, 2100, 1350)
+        );
+    }
+
+    #[test]
+    fn a_tile_above_the_index_falls_into_the_bucket_that_holds_it() {
+        // one zoom in halves the tile, so its bucket is its number shifted down
+        let (from_x, from_y, to_x, to_y) = index_tiles_of(INDEX_ZOOM + 2, 8400, 5400);
+        assert_eq!((from_x, from_y), (2100, 1350));
+        assert_eq!((to_x, to_y), (from_x, from_y), "a single bucket");
+    }
+
+    #[test]
+    fn a_tile_below_the_index_spans_four_buckets_per_level() {
+        let (from_x, from_y, to_x, to_y) = index_tiles_of(INDEX_ZOOM - 2, 525, 337);
+        assert_eq!((from_x, from_y), (2100, 1348));
+        // two levels down is four buckets on a side, both ends included
+        assert_eq!(to_x - from_x + 1, 4);
+        assert_eq!(to_y - from_y + 1, 4);
+    }
+
+    #[test]
+    fn the_whole_world_is_covered_at_zoom_zero() {
+        let (from_x, from_y, to_x, to_y) = index_tiles_of(0, 0, 0);
+        assert_eq!((from_x, from_y), (0, 0));
+        assert_eq!(to_x + 1, 1 << INDEX_ZOOM);
+        assert_eq!(to_y + 1, 1 << INDEX_ZOOM);
+    }
+
+    #[test]
+    fn the_range_of_a_tile_holds_the_bucket_of_a_coordinate_on_it() {
+        // where the fixture of the other tests sits
+        let at = FPCoordinate::new_from_lat_lon(50.20731, 8.57747);
+        let (across, down) = bucket_place_of(at);
+        let (bucket_x, bucket_y) = (across.floor() as u32, down.floor() as u32);
+        let (from_x, from_y, to_x, to_y) = index_tiles_of(INDEX_ZOOM, bucket_x, bucket_y);
+        assert!((from_x..=to_x).contains(&bucket_x));
+        assert!((from_y..=to_y).contains(&bucket_y));
+    }
+
+    #[test]
+    fn a_bucket_packs_next_to_another_without_running_into_it() {
+        assert_eq!(pack_bucket(0, 0), 0);
+        assert_eq!(pack_bucket(0, 5), 5);
+        assert_eq!(pack_bucket(1, 0), 1 << INDEX_ZOOM);
+        // the largest pair the index zoom allows still comes apart
+        let last = (1 << INDEX_ZOOM) - 1;
+        assert_ne!(pack_bucket(last, 0), pack_bucket(0, last));
+    }
+
+    #[test]
+    fn a_segment_within_one_bucket_crosses_only_that_one() {
+        let at = FPCoordinate::new_from_lat_lon(50.20731, 8.57747);
+        let crossed = buckets_crossed(at, at);
+        assert_eq!(crossed.len(), 1);
+        let (across, down) = bucket_place_of(at);
+        assert_eq!(crossed[0], (across.floor() as u32, down.floor() as u32));
+    }
+
+    #[test]
+    fn a_segment_starts_in_the_bucket_of_one_end_and_stops_in_the_other() {
+        let from = FPCoordinate::new_from_lat_lon(50.0, 8.0);
+        let to = FPCoordinate::new_from_lat_lon(50.0, 9.0);
+        let crossed = buckets_crossed(from, to);
+        let bucket_of = |at| {
+            let (across, down) = bucket_place_of(at);
+            (across.floor() as u32, down.floor() as u32)
+        };
+        assert_eq!(*crossed.first().expect("a first bucket"), bucket_of(from));
+        assert_eq!(*crossed.last().expect("a last bucket"), bucket_of(to));
+    }
+
+    #[test]
+    fn a_segment_that_runs_over_buckets_is_listed_in_the_ones_between() {
+        // the ferry case: nothing ends in the middle buckets, so an index of
+        // the ends alone would leave every tile between the two empty
+        let from = FPCoordinate::new_from_lat_lon(50.0, 8.0);
+        let to = FPCoordinate::new_from_lat_lon(50.0, 9.0);
+        let crossed = buckets_crossed(from, to);
+        assert!(crossed.len() > 2, "a degree of longitude spans buckets");
+        // walked once each, and each a step from the one before it
+        assert_eq!(
+            crossed
+                .iter()
+                .copied()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            crossed.len(),
+            "a bucket was visited twice"
+        );
+        for pair in crossed.windows(2) {
+            let (before, after) = (pair[0], pair[1]);
+            let step = before.0.abs_diff(after.0) + before.1.abs_diff(after.1);
+            assert_eq!(step, 1, "{before:?} to {after:?} is not one step");
+        }
+    }
+
+    #[test]
+    fn a_segment_is_crossed_the_same_way_in_either_direction() {
+        let from = FPCoordinate::new_from_lat_lon(50.0, 8.0);
+        let to = FPCoordinate::new_from_lat_lon(50.3, 8.4);
+        let there = buckets_crossed(from, to);
+        let mut back = buckets_crossed(to, from);
+        back.reverse();
+        assert_eq!(there, back);
+    }
 }

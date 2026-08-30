@@ -348,3 +348,165 @@ impl ServerState {
         level.unwrap_or(0).min(self.max_level)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use toolbox_rs::edge::InputEdge;
+
+    /// Two cells of three nodes each, far enough apart that a box around one
+    /// does not touch the other, and one arc running between them. Three
+    /// points is the fewest a cell can have and still carry a hull, which is
+    /// what the tree is built out of.
+    fn state() -> ServerState {
+        let coordinates = vec![
+            FPCoordinate::new_from_lat_lon(50.20, 8.57),
+            FPCoordinate::new_from_lat_lon(50.21, 8.57),
+            FPCoordinate::new_from_lat_lon(50.20, 8.58),
+            FPCoordinate::new_from_lat_lon(50.30, 8.67),
+            FPCoordinate::new_from_lat_lon(50.31, 8.67),
+            FPCoordinate::new_from_lat_lon(50.30, 8.68),
+        ];
+        let mut edges = Vec::new();
+        for (from, to) in [(0, 1), (1, 2), (2, 0), (3, 4), (4, 5), (5, 3), (2, 3)] {
+            edges.push(InputEdge::new(from, to, 1_u32));
+            edges.push(InputEdge::new(to, from, 1_u32));
+        }
+        ServerState::new(
+            StaticGraph::new(edges),
+            coordinates,
+            // three nodes a cell on the finest level, and both cells under one
+            // on the level above
+            LevelDirectory::new(vec![0, 0, 0, 1, 1, 1], vec![vec![0, 0]]),
+            300.0,
+        )
+    }
+
+    fn a_box() -> CellBox {
+        CellBox {
+            cell: 7,
+            bbox: BoundingBox::between(
+                FPCoordinate::new_from_lat_lon(50.20, 8.57),
+                FPCoordinate::new_from_lat_lon(50.30, 8.67),
+            ),
+        }
+    }
+
+    #[test]
+    fn a_cell_box_survives_the_round_trip() {
+        let written = a_box();
+        let mut bytes = vec![0_u8; CellBox::BYTES];
+        written.write_to(&mut bytes);
+        let read = CellBox::read_from(&bytes);
+        assert_eq!(read.cell, written.cell);
+        assert_eq!(read.bbox.corners(), written.bbox.corners());
+    }
+
+    #[test]
+    fn a_cell_box_writes_within_the_width_it_claims() {
+        // the store hands out exactly BYTES, so a write past it would be a
+        // write into the next entry
+        let mut bytes = vec![0_u8; CellBox::BYTES];
+        a_box().write_to(&mut bytes);
+        assert_eq!(CellBox::BYTES, 20);
+        assert!(bytes.iter().any(|&byte| byte != 0));
+    }
+
+    #[test]
+    fn the_centre_of_a_cell_box_is_the_centre_of_its_box() {
+        let held = a_box();
+        assert_eq!(held.center(), held.bbox.center());
+        assert_eq!(held.bbox().corners(), held.bbox.corners());
+    }
+
+    #[test]
+    fn a_point_inside_the_box_is_no_distance_from_it() {
+        let held = a_box();
+        let (distance, _) = held.nearest_to(&held.bbox.center(), &Scaled::about(&held.bbox));
+        assert_eq!(distance, 0.0);
+    }
+
+    #[test]
+    fn a_point_outside_the_box_is_nearer_to_it_than_a_point_further_out() {
+        let held = a_box();
+        let by = Scaled::about(&held.bbox);
+        let near = FPCoordinate::new_from_lat_lon(50.40, 8.67);
+        let far = FPCoordinate::new_from_lat_lon(50.90, 8.67);
+        assert!(held.nearest_to(&near, &by).0 < held.nearest_to(&far, &by).0);
+    }
+
+    #[test]
+    fn the_finest_level_answers_when_none_was_asked_for() {
+        let state = state();
+        assert_eq!(state.level_or_finest(None), 0);
+    }
+
+    #[test]
+    fn a_level_the_directory_does_not_carry_is_held_down_to_one_it_does() {
+        let state = state();
+        assert_eq!(state.max_level, 1);
+        assert_eq!(state.level_or_finest(Some(1)), 1);
+        assert_eq!(state.level_or_finest(Some(99)), state.max_level);
+    }
+
+    #[test]
+    fn a_hull_is_worked_out_for_every_cell_of_the_level() {
+        let state = state();
+        let hulls = state.hulls(0);
+        assert_eq!(hulls.len(), 2, "two cells on the finest level");
+        for (hull, _) in hulls.iter() {
+            assert!(hull.len() >= 3, "a triangle of nodes has a hull");
+        }
+    }
+
+    #[test]
+    fn the_level_above_holds_both_cells_in_one() {
+        let state = state();
+        assert_eq!(state.hulls(1).len(), 1);
+    }
+
+    #[test]
+    fn asking_a_level_for_its_hulls_twice_works_them_out_once() {
+        let state = state();
+        assert!(Arc::ptr_eq(&state.hulls(0), &state.hulls(0)));
+    }
+
+    #[test]
+    fn asking_a_level_for_its_shapes_twice_works_them_out_once() {
+        let state = state();
+        assert!(Arc::ptr_eq(&state.shapes(0), &state.shapes(0)));
+        assert_eq!(state.shapes(0).len(), 2);
+    }
+
+    #[test]
+    fn the_cells_of_a_level_go_into_a_tree_that_is_built_once() {
+        let state = state();
+        let tree = state.cell_tree(0).expect("both cells carry a hull");
+        assert!(Arc::ptr_eq(
+            &tree,
+            &state.cell_tree(0).expect("the same tree")
+        ));
+    }
+
+    #[test]
+    fn the_tree_hands_back_the_cell_whose_box_a_point_falls_in() {
+        let state = state();
+        let tree = state.cell_tree(0).expect("both cells carry a hull");
+        let found = tree
+            .nearest(FPCoordinate::new_from_lat_lon(50.205, 8.575))
+            .expect("a cell near the first three nodes");
+        assert_eq!(found.what.cell, 0);
+    }
+
+    #[test]
+    fn a_level_past_the_top_is_held_down_before_it_reaches_a_tree() {
+        // Asking the partition for a level it does not carry panics somewhere
+        // well below this, so nothing here may pass a level through unchecked.
+        // level_or_finest is what every handler puts a request through, and
+        // this is the level it hands on for one that is out of range.
+        let state = state();
+        let asked = state.level_or_finest(Some(99));
+        assert_eq!(asked, state.max_level);
+        assert!(state.cell_tree(asked as usize).is_some());
+    }
+}

@@ -519,3 +519,242 @@ fn shapes_of(
     }
     (shape_features, shape_values)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use toolbox_rs::{
+        edge::InputEdge,
+        geometry::FPCoordinate,
+        level_directory::LevelDirectory,
+        static_graph::StaticGraph,
+        vector_tile::coordinate_to_tile_number,
+        wgs84::{FloatCoordinate, FloatLatitude, FloatLongitude},
+    };
+
+    const LAT: f64 = 50.20;
+    const LON: f64 = 8.57;
+    const ZOOM: u32 = 14;
+
+    /// Two cells of three nodes each, both under one cell on the level above,
+    /// with an arc running between them so that the cut is not empty.
+    fn state() -> ServerState {
+        let coordinates = vec![
+            FPCoordinate::new_from_lat_lon(LAT, LON),
+            FPCoordinate::new_from_lat_lon(LAT + 0.01, LON),
+            FPCoordinate::new_from_lat_lon(LAT, LON + 0.01),
+            FPCoordinate::new_from_lat_lon(LAT + 0.002, LON + 0.002),
+            FPCoordinate::new_from_lat_lon(LAT + 0.012, LON + 0.002),
+            FPCoordinate::new_from_lat_lon(LAT + 0.002, LON + 0.012),
+        ];
+        let mut edges = Vec::new();
+        for (from, to) in [(0, 1), (1, 2), (2, 0), (3, 4), (4, 5), (5, 3), (2, 3)] {
+            edges.push(InputEdge::new(from, to, 1_u32));
+            edges.push(InputEdge::new(to, from, 1_u32));
+        }
+        ServerState::new(
+            StaticGraph::new(edges),
+            coordinates,
+            LevelDirectory::new(vec![0, 0, 0, 1, 1, 1], vec![vec![0, 0]]),
+            300.0,
+        )
+    }
+
+    fn tile_of_the_data() -> (u32, u32) {
+        coordinate_to_tile_number(
+            FloatCoordinate {
+                lat: FloatLatitude(LAT),
+                lon: FloatLongitude(LON),
+            },
+            ZOOM,
+        )
+    }
+
+    fn range() -> Buckets {
+        Buckets {
+            from_x: 4,
+            from_y: 10,
+            to_x: 6,
+            to_y: 11,
+        }
+    }
+
+    #[test]
+    fn a_bucket_range_holds_its_own_corners() {
+        let held = range();
+        for (x, y) in [(4, 10), (6, 11), (4, 11), (6, 10)] {
+            assert!(held.holds(x, y), "({x}, {y}) is a corner of the range");
+        }
+        assert!(held.holds(5, 10));
+    }
+
+    #[test]
+    fn a_bucket_outside_the_range_is_not_held() {
+        let held = range();
+        for (x, y) in [(3, 10), (7, 10), (4, 9), (4, 12)] {
+            assert!(!held.holds(x, y), "({x}, {y}) is outside the range");
+        }
+    }
+
+    #[test]
+    fn the_range_walks_every_bucket_it_holds_exactly_once() {
+        let held = range();
+        let walked = held.across().collect::<Vec<_>>();
+        // three across and two down, both ends included
+        assert_eq!(walked.len(), 3 * 2);
+        assert_eq!(walked.iter().copied().collect::<HashSet<_>>().len(), 6);
+        for &(x, y) in &walked {
+            assert!(held.holds(x, y), "({x}, {y}) was walked but is not held");
+        }
+    }
+
+    #[test]
+    fn a_range_of_one_bucket_walks_that_one() {
+        let held = Buckets {
+            from_x: 2,
+            from_y: 3,
+            to_x: 2,
+            to_y: 3,
+        };
+        assert_eq!(held.across().collect::<Vec<_>>(), vec![(2, 3)]);
+    }
+
+    fn drawn(points: &[(i32, i32)]) -> GeometryEncoder {
+        let mut geometry = GeometryEncoder::with_capacity(points.len());
+        geometry.move_to(&points[..1]);
+        geometry.line_to(&points[1..]);
+        geometry
+    }
+
+    #[test]
+    fn a_cell_becomes_one_line_string_feature() {
+        let mut geometries = FxHashMap::default();
+        geometries.insert(3_u32, drawn(&[(0, 0), (10, 10)]));
+        let (features, values) = linestrings_of(geometries);
+        assert_eq!(features.len(), 1);
+        assert_eq!(values.len(), 1);
+        assert_eq!(features[0].id, Some(3));
+        assert_eq!(features[0].r#type, Some(GeomType::Linestring.into()));
+        assert_eq!(values[0].uint_value, Some(3));
+    }
+
+    #[test]
+    fn every_feature_points_at_a_value_that_is_there() {
+        let mut geometries = FxHashMap::default();
+        for cell in 0..5_u32 {
+            geometries.insert(cell, drawn(&[(0, 0), (1, 1)]));
+        }
+        let (features, values) = linestrings_of(geometries);
+        assert_eq!(features.len(), 5);
+        for feature in &features {
+            // a tag is a pair: which key, and which value of the layer
+            assert_eq!(feature.tags.len(), 2);
+            assert_eq!(feature.tags[0], 0, "the only key of the layer");
+            let at = feature.tags[1] as usize;
+            assert!(
+                at < values.len(),
+                "tag {at} is past the {} values",
+                values.len()
+            );
+            assert_eq!(values[at].uint_value, feature.id);
+        }
+    }
+
+    #[test]
+    fn nothing_to_draw_makes_no_features() {
+        let (features, values) = linestrings_of(FxHashMap::default());
+        assert!(features.is_empty());
+        assert!(values.is_empty());
+    }
+
+    #[test]
+    fn a_cell_that_climbs_no_levels_stays_where_it_is() {
+        let state = state();
+        assert_eq!(ancestor_of(&state, 1, 0, 0), 1);
+    }
+
+    #[test]
+    fn a_cell_climbs_to_the_one_that_holds_it() {
+        let state = state();
+        // both cells of the finest level sit under cell zero of the one above
+        assert_eq!(ancestor_of(&state, 0, 0, 1), 0);
+        assert_eq!(ancestor_of(&state, 1, 0, 1), 0);
+    }
+
+    #[test]
+    fn a_tile_carries_the_five_layers_it_promises() {
+        let state = state();
+        let (x, y) = tile_of_the_data();
+        let tile = build_tile(&state, 0, ZOOM, x, y);
+        let names = tile
+            .layers
+            .iter()
+            .map(|layer| layer.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec![
+                SHAPE_LAYER,
+                HULL_LAYER,
+                INTERIOR_LAYER,
+                CELL_LAYER,
+                BORDER_LAYER
+            ]
+        );
+    }
+
+    #[test]
+    fn every_layer_of_a_tile_declares_the_extent_and_the_version() {
+        let state = state();
+        let (x, y) = tile_of_the_data();
+        let tile = build_tile(&state, 0, ZOOM, x, y);
+        for layer in &tile.layers {
+            assert_eq!(layer.extent, Some(TILE_EXTENT), "{}", layer.name);
+            assert_eq!(layer.version, 2, "{}", layer.name);
+            assert!(
+                layer.features.len() >= layer.values.len().saturating_sub(layer.features.len()),
+                "{} has more values than anything points at",
+                layer.name
+            );
+        }
+    }
+
+    #[test]
+    fn the_cut_of_a_tile_names_the_cells_it_drew() {
+        let state = state();
+        let (x, y) = tile_of_the_data();
+        let tile = build_tile(&state, 0, ZOOM, x, y);
+        let cut = tile
+            .layers
+            .iter()
+            .find(|layer| layer.name == CELL_LAYER)
+            .expect("no cut layer");
+        assert_eq!(cut.keys, vec!["cell".to_string()]);
+        for feature in &cut.features {
+            assert!(!feature.geometry.is_empty(), "a feature that draws nothing");
+        }
+    }
+
+    #[test]
+    fn a_tile_far_from_the_data_draws_nothing() {
+        let state = state();
+        // the other side of the world at the same zoom
+        let (x, y) = coordinate_to_tile_number(
+            FloatCoordinate {
+                lat: FloatLatitude(-33.86),
+                lon: FloatLongitude(151.20),
+            },
+            ZOOM,
+        );
+        let tile = build_tile(&state, 0, ZOOM, x, y);
+        for layer in &tile.layers {
+            assert!(
+                layer.features.is_empty(),
+                "{} drew {} features half a world away",
+                layer.name,
+                layer.features.len()
+            );
+        }
+    }
+}

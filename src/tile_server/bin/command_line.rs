@@ -64,3 +64,108 @@ impl Display for Arguments {
         writeln!(f, "listen: {}", self.listen)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    /// The three paths are required, so every parse has to carry them.
+    fn parsed(extra: &[&str]) -> Arguments {
+        let mut args = vec![
+            "tile_server",
+            "--graph",
+            "graph.dimacs",
+            "--coordinates",
+            "coordinates.bin",
+            "--directory",
+            "levels.bin",
+        ];
+        args.extend_from_slice(extra);
+        Arguments::parse_from(args)
+    }
+
+    #[test]
+    fn the_command_line_is_well_formed() {
+        // clap's own check: no two options sharing a short flag, no default
+        // that its own parser would reject, and so on
+        Arguments::command().debug_assert();
+    }
+
+    #[test]
+    fn the_paths_are_read_off_the_command_line() {
+        let arguments = parsed(&[]);
+        assert_eq!(arguments.graph, "graph.dimacs");
+        assert_eq!(arguments.coordinates, "coordinates.bin");
+        assert_eq!(arguments.directory, "levels.bin");
+    }
+
+    #[test]
+    fn what_is_not_given_falls_back_to_a_default() {
+        let arguments = parsed(&[]);
+        assert_eq!(arguments.alpha, 300.0);
+        assert_eq!(arguments.listen, "127.0.0.1:5000");
+        assert!(!arguments.bench);
+        assert_eq!(arguments.bench_zooms, vec![6, 8, 10, 12, 14]);
+        assert_eq!(arguments.bench_side, 3);
+        assert_eq!(arguments.bench_at, "50.20731,8.57747");
+    }
+
+    #[test]
+    fn the_zooms_of_the_sweep_are_a_comma_separated_list() {
+        assert_eq!(
+            parsed(&["--bench-zooms", "7,9,11"]).bench_zooms,
+            vec![7, 9, 11]
+        );
+    }
+
+    #[test]
+    fn one_zoom_is_a_list_of_one() {
+        assert_eq!(parsed(&["--bench-zooms", "12"]).bench_zooms, vec![12]);
+    }
+
+    #[test]
+    fn the_sweep_is_asked_for_by_a_flag_that_carries_no_value() {
+        assert!(parsed(&["--bench"]).bench);
+    }
+
+    #[test]
+    fn a_short_flag_says_the_same_as_its_long_one() {
+        let long = parsed(&["--alpha", "50", "--listen", "0.0.0.0:80"]);
+        let short = parsed(&["-a", "50", "-l", "0.0.0.0:80"]);
+        assert_eq!(long.alpha, short.alpha);
+        assert_eq!(long.listen, short.listen);
+    }
+
+    #[test]
+    fn a_missing_path_is_refused_rather_than_defaulted() {
+        // no --directory, which has no default and cannot be guessed
+        assert!(
+            Arguments::try_parse_from([
+                "tile_server",
+                "--graph",
+                "graph.dimacs",
+                "--coordinates",
+                "coordinates.bin",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn what_is_displayed_names_every_path_it_was_given() {
+        let shown = parsed(&[]).to_string();
+        for expected in [
+            "graph.dimacs",
+            "coordinates.bin",
+            "levels.bin",
+            "300",
+            "127.0.0.1:5000",
+        ] {
+            assert!(
+                shown.contains(expected),
+                "{shown:?} does not say {expected}"
+            );
+        }
+    }
+}
