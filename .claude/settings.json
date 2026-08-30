@@ -14,6 +14,19 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/rust-checks.sh",
+            "timeout": 300,
+            "statusMessage": "Formatting and linting the change"
+          }
+        ]
+      }
     ]
   }
 }
