@@ -83,6 +83,15 @@ impl<T: Clone + Default + PartialEq + fmt::Debug> CompleteGraph<T> {
     /// The flat array index
     #[inline(always)]
     fn get_index(&self, i: usize, j: usize) -> usize {
+        // Not a debug_assert. The row is folded into the column here, so a j
+        // past the end lands on a valid element of another row rather than off
+        // the end of the vector: for three nodes, (0, 4) is index 4, which is
+        // (1, 1). Nothing below this catches that.
+        assert!(
+            i < self.num_nodes && j < self.num_nodes,
+            "node indices ({i}, {j}) out of bounds for {} nodes",
+            self.num_nodes
+        );
         i * self.num_nodes + j
     }
 
@@ -97,11 +106,6 @@ impl<T: Clone + Default + PartialEq + fmt::Debug> CompleteGraph<T> {
     ///
     /// A reference to the distance between nodes i and j
     pub fn get(&self, i: usize, j: usize) -> &T {
-        debug_assert!(
-            i < self.num_nodes && j < self.num_nodes,
-            "Node indices out of bounds"
-        );
-
         let idx = self.get_index(i, j);
         &self.distances[idx]
     }
@@ -117,11 +121,6 @@ impl<T: Clone + Default + PartialEq + fmt::Debug> CompleteGraph<T> {
     ///
     /// A mutable reference to the distance between nodes i and j
     pub fn get_mut(&mut self, i: usize, j: usize) -> &mut T {
-        debug_assert!(
-            i < self.num_nodes && j < self.num_nodes,
-            "Node indices out of bounds"
-        );
-
         let idx = self.get_index(i, j);
         &mut self.distances[idx]
     }
@@ -235,24 +234,30 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "out of bounds")]
     fn test_get_index_out_of_bounds() {
         let graph: CompleteGraph<i32> = CompleteGraph::new(3);
 
-        // This should trigger the out-of-bounds check when we try to access an element
-        // The debug_assert! will only panic in debug mode, but in release mode,
-        // we will get a panic from the vector access itself
-        let _ = graph[(3, 0)]; // Index 3 is out of bounds for a 3-node graph
+        // (3, 0) folds to index 9, which is off the end of the vector, so this
+        // one panicked in release even before get_index asserted.
+        let _ = graph[(3, 0)];
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "out of bounds")]
     fn test_get_mut_index_out_of_bounds() {
         let mut graph: CompleteGraph<i32> = CompleteGraph::new(3);
 
-        // This should trigger the out-of-bounds check when we try to access an element mutably
-        // The debug_assert! will only panic in debug mode, but in release mode,
-        // we will get a panic from the vector access itself
-        *graph.get_mut(0, 4) = 10; // Index 4 is out of bounds for a 3-node graph
+        // (0, 4) folds to index 4, which is a valid element of the vector -- it
+        // is (1, 1) -- so the vector access does not catch this and the assert
+        // in get_index has to. In debug and in release alike.
+        *graph.get_mut(0, 4) = 10;
+    }
+
+    #[test]
+    #[should_panic(expected = "out of bounds")]
+    fn test_get_column_out_of_bounds() {
+        let graph: CompleteGraph<i32> = CompleteGraph::new(3);
+        graph.get(0, 4);
     }
 }
