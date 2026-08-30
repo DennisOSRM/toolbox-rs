@@ -51,7 +51,7 @@ name = "renumber"
 path = "src/renumber/bin/main.rs"
 
 [dependencies]
-actix-web = { version = "4.11.0", optional = true }
+actix-web = { version = "4.15.0", optional = true }
 rkyv = "0.8.18"
 bitvec = "1.1.1"
 clap = { version = "4.6.6", features = ["derive"] }
