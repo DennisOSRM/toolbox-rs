@@ -24,6 +24,9 @@ macOS and Windows. Run them locally before pushing.
 - No `unsafe`. It has been removed from this codebase on purpose; if a change
   seems to need it, say so instead of adding it.
 - Benchmarks are criterion, under `benches/`.
+- A comment says what is not evident from the code, once. Prefer a few lines to
+  a paragraph, and cut anything that restates the line below it or argues for
+  the change rather than explaining it.
 
 ## Routing changes
 
@@ -96,6 +99,12 @@ read the description. "Draw everything from one cache" fails it: there is no
 
 Metaphor is for the body, where there is room to say what it stands for. A
 title that reads well and identifies nothing is worse than a plain one.
+
+State the change flatly. A title is a label, not an argument: no rhetorical
+shape, no contrast the reader is meant to notice, nothing that persuades.
+"Set cargo versioning-strategy to increase and raise stale requirements" is the
+form; "Have dependabot raise the requirements, not only satisfy them" says the
+same thing and asks to be admired for it.
 
 Otherwise the description carries the reasoning: what the change does, why,
 what it leaves for later, and which PR it is stacked on if any. Lead it with
