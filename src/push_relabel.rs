@@ -56,6 +56,14 @@ const NOWHERE: u32 = u32::MAX;
 /// How many arcs a partial augmentation may walk before it moves what it found.
 const PATH_ARCS: usize = 4;
 
+/// How many nodes a graph needs before its heights are worth a sweep to start.
+///
+/// Exact heights cost a search of the whole cell. A cell settled in a few dozen
+/// relabels never earns that back, and a partition of a continent is mostly
+/// such cells. Zero is a valid height for everything but the source, so the run
+/// simply starts there instead.
+const SMALLEST_FOR_A_SWEEP: usize = 1024;
+
 pub struct PushRelabel {
     residual_graph: StaticGraph<ResidualArcData>,
     /// The arc that runs the other way, for each arc.
@@ -221,7 +229,6 @@ impl PushRelabel {
         self.height
             .iter_mut()
             .for_each(|height| *height = unreachable);
-        self.at_height.iter_mut().for_each(|count| *count = 0);
 
         self.height[self.target] = 0;
         self.queue.clear();
@@ -244,8 +251,12 @@ impl PushRelabel {
         }
         self.height[self.source] = unreachable;
         self.work = 0;
+        self.seed();
+    }
 
-        // the buckets are stale, so they are filled again from what is active
+    /// Fills the buckets, the counts and the arc cursors from the heights as
+    /// they stand, whether those came from a sweep or from nothing at all.
+    fn seed(&mut self) {
         // Only the heads. A stale `next` is never walked into, since `link`
         // overwrites it before the node is ever at the head of a chain; the
         // clear below is what the assertion in `link` reads, and a sweep of the
@@ -254,6 +265,7 @@ impl PushRelabel {
         if cfg!(debug_assertions) {
             self.bucket_next.iter_mut().for_each(|next| *next = NOWHERE);
         }
+        self.at_height.iter_mut().for_each(|count| *count = 0);
         self.highest = 0;
         self.lowest = self.bucket_head.len() - 1;
         // Counting the heights, filling the buckets and winding the arc cursors
@@ -486,8 +498,12 @@ impl MaxFlow for PushRelabel {
             self.excess[self.source] -= i64::from(moved);
         }
 
-        // and the heights start out exact rather than at zero
-        self.global_relabel();
+        if number_of_nodes > SMALLEST_FOR_A_SWEEP {
+            // the heights start out exact rather than at zero
+            self.global_relabel();
+        } else {
+            self.seed();
+        }
 
         let sweep = (WORK_PER_SWEEP * self.residual_graph.number_of_edges()).max(1);
         while let Some(node) = self.next_active() {
