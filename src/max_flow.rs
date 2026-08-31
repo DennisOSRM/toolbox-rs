@@ -67,6 +67,9 @@ pub trait MaxFlow {
     }
 }
 
+/// How long an adjacency block may be and still be worth an insertion sort.
+const SHORT_BLOCK: usize = 32;
+
 /// Builds the residual graph a max-flow solver runs on.
 ///
 /// The residual graph holds a reverse arc of zero capacity for each input arc.
@@ -150,7 +153,28 @@ pub fn residual_graph_of(
     let mut begin = 0;
     for node in 0..number_of_nodes {
         let end = node_array[node + 1];
-        edge_array[begin..end].sort_unstable_by_key(|entry| entry.target);
+        // A node of a road network has a handful of arcs and the residual graph
+        // doubles that, so these blocks are five entries long and there are as
+        // many of them as there are nodes. A general sort spends most of a block
+        // that size working out that it is dealing with a block that size.
+        //
+        // Not every block though: inertial flow contracts whole ranks of nodes
+        // into the source and the sink, whose blocks are a good fraction of the
+        // graph, and an insertion sort over those would be quadratic.
+        let block = &mut edge_array[begin..end];
+        if block.len() <= SHORT_BLOCK {
+            for i in 1..block.len() {
+                let entry = block[i];
+                let mut j = i;
+                while j > 0 && block[j - 1].target > entry.target {
+                    block[j] = block[j - 1];
+                    j -= 1;
+                }
+                block[j] = entry;
+            }
+        } else {
+            block.sort_unstable_by_key(|entry| entry.target);
+        }
 
         let block_begin = write;
         for read in begin..end {
