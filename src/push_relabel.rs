@@ -53,6 +53,9 @@ const WORK_OF_A_RELABEL: usize = 12;
 /// The end of a bucket's chain of active nodes.
 const NOWHERE: u32 = u32::MAX;
 
+/// How many arcs a partial augmentation may walk before it moves what it found.
+const PATH_ARCS: usize = 4;
+
 pub struct PushRelabel {
     residual_graph: StaticGraph<ResidualArcData>,
     /// The arc that runs the other way, for each arc.
@@ -109,6 +112,8 @@ pub struct PushRelabel {
     pushes: usize,
     /// arcs looked at since the last sweep of the heights
     work: usize,
+    /// the arcs of the path being walked, kept so it is not allocated per walk
+    path: Vec<EdgeID>,
 }
 
 impl PushRelabel {
@@ -153,36 +158,6 @@ impl PushRelabel {
         self.bucket_head[height] = u32::try_from(node).expect("the graph is too large to hold");
         self.highest = self.highest.max(height);
         self.lowest = self.lowest.min(height);
-    }
-
-    /// Moves what it can along an arc that is known to be admissible.
-    fn push(&mut self, node: NodeID, edge: EdgeID, other: NodeID) {
-        let room = i64::from(self.residual_graph.data(edge).capacity);
-        let amount = self.excess[node].min(room);
-        debug_assert!(amount > 0, "a push that moves nothing");
-        let moved = i32::try_from(amount).expect("a push larger than a capacity");
-
-        let residual = self.residual_graph.data_mut(edge);
-        residual.capacity -= moved;
-        residual.reverse_capacity += moved;
-        let back = self.pair[edge] as EdgeID;
-        let residual = self.residual_graph.data_mut(back);
-        residual.capacity += moved;
-        residual.reverse_capacity -= moved;
-
-        self.excess[node] -= amount;
-        let before = self.excess[other];
-        self.excess[other] += amount;
-        self.pushes += 1;
-
-        // a node that had nothing and now has something joins the buckets, and
-        // the sink and the source are never discharged
-        if before == 0 && other != self.source && other != self.target {
-            let height = self.height[other] as usize;
-            if height < self.bucket_head.len() {
-                self.link(other, height);
-            }
-        }
     }
 
     /// Lifts a node to one above the lowest node it can still reach.
@@ -334,13 +309,72 @@ impl PushRelabel {
         }
     }
 
-    /// Pushes a node's excess onward until it is gone or the node is out of
-    /// phase one.
+    /// The next admissible arc out of a node, moving its cursor up to it.
+    fn admissible(&mut self, node: NodeID) -> Option<EdgeID> {
+        let end = self.residual_graph.end_edges(node);
+        while self.current[node] < end {
+            let edge = self.current[node];
+            let other = self.residual_graph.target(edge);
+            if self.residual_graph.data(edge).capacity > 0
+                && self.height[node] == self.height[other] + 1
+            {
+                return Some(edge);
+            }
+            self.current[node] += 1;
+            self.work += 1;
+        }
+        None
+    }
+
+    /// Moves what the walked path will carry along the whole of it.
+    fn augment(&mut self, from: NodeID) {
+        let mut amount = self.excess[from];
+        for &edge in &self.path {
+            amount = amount.min(i64::from(self.residual_graph.data(edge).capacity));
+        }
+        debug_assert!(amount > 0, "an augmentation that moves nothing");
+        let moved = i32::try_from(amount).expect("an augmentation larger than a capacity");
+
+        let mut last = from;
+        for at in 0..self.path.len() {
+            let edge = self.path[at];
+            let residual = self.residual_graph.data_mut(edge);
+            residual.capacity -= moved;
+            residual.reverse_capacity += moved;
+            let back = self.pair[edge] as EdgeID;
+            let residual = self.residual_graph.data_mut(back);
+            residual.capacity += moved;
+            residual.reverse_capacity -= moved;
+            last = self.residual_graph.target(edge);
+            self.pushes += 1;
+        }
+
+        self.excess[from] -= amount;
+        let before = self.excess[last];
+        self.excess[last] += amount;
+        if before == 0 && last != self.source && last != self.target {
+            let height = self.height[last] as usize;
+            if height < self.bucket_head.len() {
+                self.link(last, height);
+            }
+        }
+    }
+
+    /// Carries a node's excess onward a path at a time.
     fn discharge(&mut self, node: NodeID) {
         let unreachable = self.unreachable();
-        let end = self.residual_graph.end_edges(node);
         while self.excess[node] > 0 {
-            if self.current[node] == end {
+            self.path.clear();
+            let mut at = node;
+            while self.path.len() < PATH_ARCS && at != self.target {
+                let Some(edge) = self.admissible(at) else {
+                    break;
+                };
+                self.path.push(edge);
+                at = self.residual_graph.target(edge);
+            }
+
+            if self.path.is_empty() {
                 self.relabel(node);
                 if self.height[node] >= unreachable {
                     return;
@@ -348,19 +382,8 @@ impl PushRelabel {
                 self.current[node] = self.residual_graph.begin_edges(node);
                 continue;
             }
-            let edge = self.current[node];
-            let other = self.residual_graph.target(edge);
-            if self.residual_graph.data(edge).capacity > 0
-                && self.height[node] == self.height[other] + 1
-            {
-                self.push(node, edge, other);
-            } else {
-                self.current[node] += 1;
-                self.work += 1;
-            }
+            self.augment(node);
         }
-        // it still has a height and no excess, so it goes back in its bucket
-        // only when something is pushed to it again
     }
 }
 
@@ -406,6 +429,7 @@ impl MaxFlow for PushRelabel {
             global_relabels: 0,
             pushes: 0,
             work: 0,
+            path: Vec::with_capacity(PATH_ARCS),
         }
     }
 
