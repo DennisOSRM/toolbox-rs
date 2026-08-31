@@ -101,11 +101,28 @@ pub fn sub_step<M: MaxFlow>(
             (projection, id)
         })
         .collect_vec();
-    node_id_list.sort_unstable();
-
     let size_of_contraction = max(1, (node_id_list.len() as f64 * balance_factor) as usize);
+    let held = node_id_list.len();
+    // Only the two ends of the order are wanted. The first share of the nodes
+    // is what the source is contracted from and the last share is the sink;
+    // nothing asks about the order of what lies between, and it is the great
+    // majority of the list. Two selections cost a pass each where a sort costs
+    // a pass per level of it.
+    //
+    // The pairs hold the node id beside the projection and no two nodes share
+    // one, so the first share is the same set of nodes either way and no cut
+    // moves because of this.
+    if 2 * size_of_contraction >= held {
+        // the two ends meet or overlap, which selecting cannot express
+        node_id_list.sort_unstable();
+    } else {
+        node_id_list.select_nth_unstable(size_of_contraction - 1);
+        let rest = &mut node_id_list[size_of_contraction..];
+        let leading = rest.len() - size_of_contraction;
+        rest.select_nth_unstable(leading);
+    }
     let sources = &node_id_list[0..size_of_contraction];
-    let targets = &node_id_list[node_id_list.len() - size_of_contraction..];
+    let targets = &node_id_list[held - size_of_contraction..];
 
     debug_assert!(!sources.is_empty());
     debug_assert!(!targets.is_empty());
@@ -379,23 +396,18 @@ mod tests {
 
         let min_max = result.into_iter().map(|r| r.unwrap()).minmax_by(flow_cmp);
         let (min, max) = min_max.into_option().expect("minmax failed");
-        assert_eq!(
-            min,
-            Flow {
-                flow: 1,
-                balance: 0.5,
-                left_ids: vec![2, 0, 1],
-                right_ids: vec![4, 5, 3]
-            }
-        );
-        assert_eq!(
-            max,
-            Flow {
-                flow: 1,
-                balance: 0.5,
-                left_ids: vec![4, 5, 3],
-                right_ids: vec![2, 0, 1]
-            }
-        );
+        // The sides are what is being asserted, not the order they are listed
+        // in. Only the two ends of the projection order are worked out, so what
+        // lies between them arrives in whatever order the selection left it,
+        // and nothing downstream reads that order.
+        let sides = |flow: Flow| {
+            let mut left = flow.left_ids;
+            let mut right = flow.right_ids;
+            left.sort_unstable();
+            right.sort_unstable();
+            (flow.flow, flow.balance, left, right)
+        };
+        assert_eq!(sides(min), (1, 0.5, vec![0, 1, 2], vec![3, 4, 5]));
+        assert_eq!(sides(max), (1, 0.5, vec![3, 4, 5], vec![0, 1, 2]));
     }
 }
