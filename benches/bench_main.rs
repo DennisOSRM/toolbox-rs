@@ -12,4 +12,5 @@ criterion_main!(
     benchmarks::polyline::polyline,
     benchmarks::mercator::mercator_benches,
     benchmarks::mld_query::mld_query,
+    benchmarks::max_flow::max_flow,
 );
