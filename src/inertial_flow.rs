@@ -7,7 +7,6 @@ use itertools::Itertools;
 use log::debug;
 
 use crate::{
-    dinic::Dinic,
     edge::{InputEdge, TrivialEdge},
     geometry::FPCoordinate,
     graph::NodeID,
@@ -59,7 +58,7 @@ pub fn flow_cmp(a: &Flow, b: &Flow) -> std::cmp::Ordering {
 /// * `coordinates` - immutable slice of coordinates of the graphs nodes
 /// * `balance_factor` - balance factor, i.e. how many nodes get contracted
 /// * `upper_bound` - a global upperbound to the best inertial flow cut
-pub fn sub_step(
+pub fn sub_step<M: MaxFlow>(
     input_edges: &[TrivialEdge],
     node_id_list: &[usize],
     coordinates: &[FPCoordinate],
@@ -163,7 +162,7 @@ pub fn sub_step(
     edges.shrink_to_fit();
 
     debug!("[{axis}] instantiating min-cut solver, epsilon {balance_factor}");
-    let mut max_flow_solver = Dinic::from_edge_list(edges, 0, 1);
+    let mut max_flow_solver = M::from_edge_list(edges, 0, 1);
     debug!("[{axis}] instantiated min-cut solver");
     max_flow_solver.run_with_upper_bound(upper_bound);
 
@@ -229,6 +228,7 @@ mod tests {
     use std::sync::{Arc, atomic::AtomicI32};
 
     use crate::{
+        dinic::Dinic,
         geometry::FPCoordinate,
         inertial_flow::{Flow, TrivialEdge, flow_cmp, sub_step},
     };
@@ -305,7 +305,7 @@ mod tests {
     #[test]
     fn inertial_flow() {
         let upper_bound = Arc::new(AtomicI32::new(6));
-        let result = sub_step(&EDGES, &NODE_ID_LIST, &COORDINATES, 3, 0.25, upper_bound)
+        let result = sub_step::<Dinic>(&EDGES, &NODE_ID_LIST, &COORDINATES, 3, 0.25, upper_bound)
             .expect("error should not happen");
         assert_eq!(result.flow, 1);
         assert_eq!(result.balance, 0.5);
@@ -330,7 +330,7 @@ mod tests {
         static NODE_ID_LIST_WITH_ISOLATED: [usize; 7] = [0, 1, 2, 3, 4, 5, 6];
 
         let upper_bound = Arc::new(AtomicI32::new(7));
-        let result = sub_step(
+        let result = sub_step::<Dinic>(
             &EDGES,
             &NODE_ID_LIST_WITH_ISOLATED,
             &COORDINATES_WITH_ISOLATED,
@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn cell_without_edges_is_reported() {
         let upper_bound = Arc::new(AtomicI32::new(6));
-        let result = sub_step(&[], &NODE_ID_LIST, &COORDINATES, 0, 0.25, upper_bound);
+        let result = sub_step::<Dinic>(&[], &NODE_ID_LIST, &COORDINATES, 0, 0.25, upper_bound);
         assert!(matches!(result, Err(super::FlowError::EmptyGraph)));
     }
 
@@ -357,7 +357,7 @@ mod tests {
         let upper_bound = Arc::new(AtomicI32::new(6));
         let result = (0..4)
             .map(|axis| -> Result<_, _> {
-                sub_step(
+                sub_step::<Dinic>(
                     &EDGES,
                     &NODE_ID_LIST,
                     &COORDINATES,
