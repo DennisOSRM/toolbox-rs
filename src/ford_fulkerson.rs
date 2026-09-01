@@ -126,14 +126,14 @@ impl MaxFlow for FordFulkerson {
 
     fn max_flow(&self) -> Result<i32, String> {
         if !self.finished {
-            return Err("Assigment was not computed.".to_string());
+            return Err("Assignment was not computed.".to_string());
         }
         Ok(self.max_flow)
     }
 
     fn assignment(&self, source: NodeID) -> Result<BitVec, String> {
         if !self.finished {
-            return Err("Assigment was not computed.".to_string());
+            return Err("Assignment was not computed.".to_string());
         }
 
         // run a reachability analysis

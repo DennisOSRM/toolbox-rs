@@ -7,7 +7,6 @@ use itertools::Itertools;
 use log::debug;
 
 use crate::{
-    dinic::Dinic,
     edge::{InputEdge, TrivialEdge},
     geometry::FPCoordinate,
     graph::NodeID,
@@ -59,7 +58,7 @@ pub fn flow_cmp(a: &Flow, b: &Flow) -> std::cmp::Ordering {
 /// * `coordinates` - immutable slice of coordinates of the graphs nodes
 /// * `balance_factor` - balance factor, i.e. how many nodes get contracted
 /// * `upper_bound` - a global upperbound to the best inertial flow cut
-pub fn sub_step(
+pub fn sub_step<M: MaxFlow>(
     input_edges: &[TrivialEdge],
     node_id_list: &[usize],
     coordinates: &[FPCoordinate],
@@ -102,11 +101,28 @@ pub fn sub_step(
             (projection, id)
         })
         .collect_vec();
-    node_id_list.sort_unstable();
-
     let size_of_contraction = max(1, (node_id_list.len() as f64 * balance_factor) as usize);
+    let held = node_id_list.len();
+    // Only the two ends of the order are wanted. The first share of the nodes
+    // is what the source is contracted from and the last share is the sink;
+    // nothing asks about the order of what lies between, and it is the great
+    // majority of the list. Two selections cost a pass each where a sort costs
+    // a pass per level of it.
+    //
+    // The pairs hold the node id beside the projection and no two nodes share
+    // one, so the first share is the same set of nodes either way and no cut
+    // moves because of this.
+    if 2 * size_of_contraction >= held {
+        // the two ends meet or overlap, which selecting cannot express
+        node_id_list.sort_unstable();
+    } else {
+        node_id_list.select_nth_unstable(size_of_contraction - 1);
+        let rest = &mut node_id_list[size_of_contraction..];
+        let leading = rest.len() - size_of_contraction;
+        rest.select_nth_unstable(leading);
+    }
     let sources = &node_id_list[0..size_of_contraction];
-    let targets = &node_id_list[node_id_list.len() - size_of_contraction..];
+    let targets = &node_id_list[held - size_of_contraction..];
 
     debug_assert!(!sources.is_empty());
     debug_assert!(!targets.is_empty());
@@ -163,7 +179,7 @@ pub fn sub_step(
     edges.shrink_to_fit();
 
     debug!("[{axis}] instantiating min-cut solver, epsilon {balance_factor}");
-    let mut max_flow_solver = Dinic::from_edge_list(edges, 0, 1);
+    let mut max_flow_solver = M::from_edge_list(edges, 0, 1);
     debug!("[{axis}] instantiated min-cut solver");
     max_flow_solver.run_with_upper_bound(upper_bound);
 
@@ -229,6 +245,7 @@ mod tests {
     use std::sync::{Arc, atomic::AtomicI32};
 
     use crate::{
+        dinic::Dinic,
         geometry::FPCoordinate,
         inertial_flow::{Flow, TrivialEdge, flow_cmp, sub_step},
     };
@@ -305,7 +322,7 @@ mod tests {
     #[test]
     fn inertial_flow() {
         let upper_bound = Arc::new(AtomicI32::new(6));
-        let result = sub_step(&EDGES, &NODE_ID_LIST, &COORDINATES, 3, 0.25, upper_bound)
+        let result = sub_step::<Dinic>(&EDGES, &NODE_ID_LIST, &COORDINATES, 3, 0.25, upper_bound)
             .expect("error should not happen");
         assert_eq!(result.flow, 1);
         assert_eq!(result.balance, 0.5);
@@ -330,7 +347,7 @@ mod tests {
         static NODE_ID_LIST_WITH_ISOLATED: [usize; 7] = [0, 1, 2, 3, 4, 5, 6];
 
         let upper_bound = Arc::new(AtomicI32::new(7));
-        let result = sub_step(
+        let result = sub_step::<Dinic>(
             &EDGES,
             &NODE_ID_LIST_WITH_ISOLATED,
             &COORDINATES_WITH_ISOLATED,
@@ -348,7 +365,7 @@ mod tests {
     #[test]
     fn cell_without_edges_is_reported() {
         let upper_bound = Arc::new(AtomicI32::new(6));
-        let result = sub_step(&[], &NODE_ID_LIST, &COORDINATES, 0, 0.25, upper_bound);
+        let result = sub_step::<Dinic>(&[], &NODE_ID_LIST, &COORDINATES, 0, 0.25, upper_bound);
         assert!(matches!(result, Err(super::FlowError::EmptyGraph)));
     }
 
@@ -357,7 +374,7 @@ mod tests {
         let upper_bound = Arc::new(AtomicI32::new(6));
         let result = (0..4)
             .map(|axis| -> Result<_, _> {
-                sub_step(
+                sub_step::<Dinic>(
                     &EDGES,
                     &NODE_ID_LIST,
                     &COORDINATES,
@@ -379,23 +396,18 @@ mod tests {
 
         let min_max = result.into_iter().map(|r| r.unwrap()).minmax_by(flow_cmp);
         let (min, max) = min_max.into_option().expect("minmax failed");
-        assert_eq!(
-            min,
-            Flow {
-                flow: 1,
-                balance: 0.5,
-                left_ids: vec![2, 0, 1],
-                right_ids: vec![4, 5, 3]
-            }
-        );
-        assert_eq!(
-            max,
-            Flow {
-                flow: 1,
-                balance: 0.5,
-                left_ids: vec![4, 5, 3],
-                right_ids: vec![2, 0, 1]
-            }
-        );
+        // The sides are what is being asserted, not the order they are listed
+        // in. Only the two ends of the projection order are worked out, so what
+        // lies between them arrives in whatever order the selection left it,
+        // and nothing downstream reads that order.
+        let sides = |flow: Flow| {
+            let mut left = flow.left_ids;
+            let mut right = flow.right_ids;
+            left.sort_unstable();
+            right.sort_unstable();
+            (flow.flow, flow.balance, left, right)
+        };
+        assert_eq!(sides(min), (1, 0.5, vec![0, 1, 2], vec![3, 4, 5]));
+        assert_eq!(sides(max), (1, 0.5, vec![3, 4, 5], vec![0, 1, 2]));
     }
 }

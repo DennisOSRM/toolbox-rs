@@ -1,6 +1,6 @@
 use std::{fmt::Display, ops::RangeInclusive};
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 
 static RECURSION_RANGE: RangeInclusive<u8> = 1..=31;
 static BALANCE_RANGE: RangeInclusive<f64> = 0. ..=0.5;
@@ -60,6 +60,10 @@ pub struct Arguments {
     #[clap(short, long, value_parser = balance_factor_in_range, default_value_t = 0.25)]
     pub b_factor: f64,
 
+    /// which min-cut solver the flow of each axis runs on
+    #[clap(long, value_enum, default_value_t = Solver::PushRelabel)]
+    pub solver: Solver,
+
     /// depth of recursive partitioning; off by one from the level of a node
     /// since the root node has level 1, e.g. depths of 1 gives cells on level 2
     #[clap(short, long, value_parser=recursion_depth_in_range, default_value_t = 1)]
@@ -101,6 +105,7 @@ impl Display for Arguments {
         if !self.cut_csv.is_empty() {
             writeln!(f, "cut csv: {}", self.cut_csv)?;
         }
+        writeln!(f, "solver: {:?}", self.solver)?;
         writeln!(f, "graph: {}", self.graph)?;
         writeln!(f, "coordinates: {}", self.coordinates)?;
         writeln!(f, "recursion depth: {}", self.recursion_depth)?;
@@ -113,4 +118,20 @@ impl Display for Arguments {
         }
         writeln!(f, "minimum_cell_size: {}", self.minimum_cell_size)
     }
+}
+
+/// Which min-cut solver an axis of the flow runs on.
+///
+/// The two find cuts of the same cost and not always the same cut, so a
+/// partition made by one is not the partition made by the other. Both give a
+/// hierarchy that answers what a plain search answers; the choice is about how
+/// long the cutting takes.
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Solver {
+    /// Goldberg and Tarjan's push-relabel. About twice as quick on a road
+    /// network, and what the cutting uses unless told otherwise.
+    PushRelabel,
+    /// Cherkassky's variant of Dinitz' algorithm, which is what this used
+    /// before and what the partitions in the wild were cut with.
+    Dinic,
 }

@@ -20,12 +20,14 @@ use toolbox_rs::geometry::FPCoordinate;
 use toolbox_rs::io;
 use toolbox_rs::{
     assembly,
+    dinic::Dinic,
     inertial_flow::{self, Flow, flow_cmp},
     level_directory::CellId,
     partition_id::PartitionID,
+    push_relabel::PushRelabel,
 };
 use {
-    command_line::Arguments,
+    command_line::{Arguments, Solver},
     serialize::{write_level_directory, write_results},
 };
 
@@ -55,6 +57,10 @@ fn main() {
 
     // parse and print command line parameters
     let args = <Arguments as clap::Parser>::parse();
+    // Which min-cut solver the flow runs on. The two find cuts of the same
+    // cost, but not necessarily the same cut, so this is here to compare the
+    // partitions they lead to rather than to be switched in passing.
+    let by_push_relabel = args.solver == Solver::PushRelabel;
     info!("{args}");
 
     // set the number of threads if supplied on the command line
@@ -157,14 +163,25 @@ fn main() {
                 let best_max_flow = (0..4)
                     .into_par_iter()
                     .map(|axis| -> Result<Flow, inertial_flow::FlowError> {
-                        inertial_flow::sub_step(
-                            &job.0,
-                            &job.1,
-                            &coordinates,
-                            axis,
-                            args.b_factor,
-                            upper_bound.clone(),
-                        )
+                        if by_push_relabel {
+                            inertial_flow::sub_step::<PushRelabel>(
+                                &job.0,
+                                &job.1,
+                                &coordinates,
+                                axis,
+                                args.b_factor,
+                                upper_bound.clone(),
+                            )
+                        } else {
+                            inertial_flow::sub_step::<Dinic>(
+                                &job.0,
+                                &job.1,
+                                &coordinates,
+                                axis,
+                                args.b_factor,
+                                upper_bound.clone(),
+                            )
+                        }
                     })
                     .filter_map(Result::ok)
                     .min_by(flow_cmp);
