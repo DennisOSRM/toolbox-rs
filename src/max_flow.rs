@@ -179,9 +179,20 @@ pub fn residual_graph_of(
         let block_begin = write;
         for read in begin..end {
             if write > block_begin && edge_array[write - 1].target == edge_array[read].target {
-                edge_array[write - 1].data.capacity += edge_array[read].data.capacity;
-                edge_array[write - 1].data.reverse_capacity +=
-                    edge_array[read].data.reverse_capacity;
+                // Checked, since a flow larger than four bytes is one this
+                // cannot answer about anyway: max_flow hands back an i32. A cell
+                // of a road network carries a capacity of one an arc and comes
+                // nowhere near, but this is a builder anything may call.
+                let more = edge_array[read].data;
+                let held = &mut edge_array[write - 1].data;
+                held.capacity = held
+                    .capacity
+                    .checked_add(more.capacity)
+                    .expect("parallel arcs of more capacity than a flow can hold");
+                held.reverse_capacity = held
+                    .reverse_capacity
+                    .checked_add(more.reverse_capacity)
+                    .expect("parallel arcs of more capacity than a flow can hold");
             } else {
                 edge_array[write] = edge_array[read];
                 write += 1;

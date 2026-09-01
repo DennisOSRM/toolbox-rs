@@ -538,7 +538,7 @@ impl MaxFlow for PushRelabel {
 
     fn max_flow(&self) -> Result<i32, String> {
         if !self.finished {
-            return Err("Assigment was not computed.".to_string());
+            return Err("Assignment was not computed.".to_string());
         }
         debug!(
             "finished in {} pushes, {} relabels and {} global relabels",
@@ -549,7 +549,7 @@ impl MaxFlow for PushRelabel {
 
     fn assignment(&self, source: NodeID) -> Result<BitVec, String> {
         if !self.finished {
-            return Err("Assigment was not computed.".to_string());
+            return Err("Assignment was not computed.".to_string());
         }
 
         // The side of the cut the source is on is what *cannot reach the sink*,

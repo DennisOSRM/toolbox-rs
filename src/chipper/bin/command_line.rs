@@ -105,6 +105,7 @@ impl Display for Arguments {
         if !self.cut_csv.is_empty() {
             writeln!(f, "cut csv: {}", self.cut_csv)?;
         }
+        writeln!(f, "solver: {:?}", self.solver)?;
         writeln!(f, "graph: {}", self.graph)?;
         writeln!(f, "coordinates: {}", self.coordinates)?;
         writeln!(f, "recursion depth: {}", self.recursion_depth)?;
