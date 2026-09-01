@@ -14,6 +14,7 @@ pub mod block_store;
 pub mod bloom_filter;
 pub mod border_levels;
 pub mod bounding_box;
+pub mod boykov_kolmogorov;
 pub mod cell;
 pub mod cell_block;
 pub mod cell_ordering;

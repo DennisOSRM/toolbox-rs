@@ -3,6 +3,7 @@ use std::sync::{Arc, atomic::AtomicI32};
 
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 use toolbox_rs::{
+    boykov_kolmogorov::BoykovKolmogorov,
     dinic::Dinic,
     edge::InputEdge,
     max_flow::{MaxFlow, ResidualEdgeData},
@@ -86,6 +87,22 @@ fn main() {
                     bound.map_or("none".to_string(), |at| at.to_string()),
                 );
             }
+        }
+        for bound in [None, Some(4)] {
+            let mut bk = BoykovKolmogorov::from_edge_list(edges.clone(), source, sink);
+            match bound {
+                None => bk.run(),
+                Some(at) => bk.run_with_upper_bound(Arc::new(AtomicI32::new(at))),
+            }
+            let (augmentations, adoptions, steps) = bk.work();
+            let said = bk
+                .max_flow()
+                .map_or_else(|_| "gave up".to_string(), |flow| flow.to_string());
+            println!(
+                "{side:>6} {nodes:>8} {:>8} {:>7} {augmentations:>12} {adoptions:>10} {steps:>8} {said:>9}",
+                "bk",
+                bound.map_or("none".to_string(), |at| at.to_string()),
+            );
         }
         println!(
             "{side:>6} {nodes:>8} {:>8} {:>7} {:>12} {:>10} {:>8} {full:>9}",
