@@ -134,4 +134,7 @@ pub enum Solver {
     /// Cherkassky's variant of Dinitz' algorithm, which is what this used
     /// before and what the partitions in the wild were cut with.
     Dinic,
+    /// Boykov and Kolmogorov's two-tree search, which mends its trees after an
+    /// augmentation rather than growing them again.
+    BoykovKolmogorov,
 }
