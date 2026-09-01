@@ -1,17 +1,24 @@
 //! A max-flow computation by push-relabel, for the min cut of an inertial flow
 //! run.
 //!
-//! The algorithm is Goldberg and Tarjan's, with the three things that make the
-//! difference between a textbook version and a competitive one:
+//! The algorithm is Goldberg and Tarjan's, with the heuristics that make the
+//! difference between a textbook version and a usable one:
 //!
-//! 1) *Highest label selection.* The active node discharged next is one of the
-//!    greatest height there is, which bounds the pushes that do not saturate an
-//!    arc by `O(n^2 sqrt(m))` rather than by `O(n^2 m)`.
-//! 2) *Global relabelling.* Every so often the heights are thrown away and
+//! 1) *Lowest label selection.* The active node discharged next is one of the
+//!    least height there is. Highest label is the usual choice and has the
+//!    better bound, but a height is the distance to the sink, so it discharges
+//!    what is furthest from the sink first and delivers nothing there until the
+//!    end. That makes an upper bound useless, which is what inertial flow
+//!    prunes an axis by. See [`PushRelabel::by_lowest_label`].
+//! 2) *Partial augmentation.* A discharge walks a path of admissible arcs and
+//!    moves the flow along the whole of it, rather than pushing across one arc
+//!    and asking the buckets for the excess again a step further on.
+//! 3) *Global relabelling.* Every so often the heights are thrown away and
 //!    worked out again by a backward breadth-first search from the sink, which
 //!    is the exact distance to it. Heights that are exact rather than merely
-//!    valid are what stops the search climbing a node one step at a time.
-//! 3) *The gap heuristic.* If no node is left at some height below `n`, then no
+//!    valid are what stops the search climbing a node one step at a time. A
+//!    graph small enough not to earn that back starts at zero instead.
+//! 4) *The gap heuristic.* If no node is left at some height below `n`, then no
 //!    node above that height can reach the sink at all, and all of them are
 //!    lifted out of the way at once.
 //!
@@ -37,13 +44,19 @@ use std::{
     },
 };
 
-/// How much work is done between two global relabellings, as a multiple of the
-/// arcs of the residual graph.
+/// How much work is done between two sweeps of the heights, as a multiple of
+/// the arcs of the residual graph.
 ///
 /// Cherkassky and Goldberg count the arcs a run has looked at rather than the
-/// relabels it has done, since that is what a sweep of the heights costs and
-/// what it is being weighed against. Six is the value their measurements
-/// settle on; the one here is measured against a road network instead.
+/// relabels it has done, since that is what a sweep is being weighed against.
+/// Six is the value their measurements settle on and it holds up here.
+///
+/// The tally costs an increment in the innermost loop, which looks like
+/// something to remove until it is removed: counting relabels instead reaches
+/// the threshold far later, since work accrues from every arc scanned and not
+/// only from a relabel, and the sweeps that stop the heights drifting then come
+/// too seldom. A threshold of one relabel a node cost five per cent, two cost
+/// eleven, and four cost a third of the run.
 const WORK_PER_SWEEP: usize = 6;
 
 /// What a relabel is charged, over the arcs it scans, for the sweep it makes of
@@ -75,6 +88,9 @@ pub struct PushRelabel {
     pair: Vec<u32>,
     source: NodeID,
     target: NodeID,
+    /// The height that means "cannot reach the sink". A node this high is on
+    /// the source side of the cut and has nothing left to do in phase one.
+    unreachable: u32,
     max_flow: i32,
     finished: bool,
     bound: Option<Arc<AtomicI32>>,
@@ -138,12 +154,6 @@ impl PushRelabel {
         (self.pushes, self.relabels, self.global_relabels)
     }
 
-    /// The height that means "cannot reach the sink". A node this high is on
-    /// the source side of the cut and has nothing left to do in phase one.
-    fn unreachable(&self) -> u32 {
-        u32::try_from(self.residual_graph.number_of_nodes()).expect("the graph is too large")
-    }
-
     /// Which arc runs the other way, for every arc.
     fn pairs_of(graph: &StaticGraph<ResidualArcData>) -> Vec<u32> {
         let mut pair = vec![0_u32; graph.number_of_edges()];
@@ -162,6 +172,7 @@ impl PushRelabel {
     /// Puts a node at the head of the bucket of its height.
     fn link(&mut self, node: NodeID, height: usize) {
         debug_assert!(self.bucket_next[node] == NOWHERE, "a node linked twice");
+        debug_assert!(height < self.bucket_head.len(), "a height past the buckets");
         self.bucket_next[node] = self.bucket_head[height];
         self.bucket_head[height] = u32::try_from(node).expect("the graph is too large to hold");
         self.highest = self.highest.max(height);
@@ -170,7 +181,7 @@ impl PushRelabel {
 
     /// Lifts a node to one above the lowest node it can still reach.
     fn relabel(&mut self, node: NodeID) {
-        let unreachable = self.unreachable();
+        let unreachable = self.unreachable;
         let was = self.height[node];
 
         let mut lowest = u32::MAX;
@@ -189,27 +200,20 @@ impl PushRelabel {
 
         self.height[node] = now;
         self.relabels += 1;
-        if (was as usize) < self.at_height.len() {
-            self.at_height[was as usize] -= 1;
-        }
-        if (now as usize) < self.at_height.len() {
-            self.at_height[now as usize] += 1;
-        }
+        self.at_height[was as usize] -= 1;
+        self.at_height[now as usize] += 1;
 
         // The gap: nothing is left at the height this node came from, so
         // nothing above it and below `unreachable` has a way down to the sink
         // either, and every one of them can be lifted out of the way at once.
-        if was < unreachable
-            && (was as usize) < self.at_height.len()
-            && self.at_height[was as usize] == 0
-        {
+        if was < unreachable && self.at_height[was as usize] == 0 {
             self.gap(was);
         }
     }
 
     /// Lifts everything above an empty height out of phase one.
     fn gap(&mut self, empty: u32) {
-        let unreachable = self.unreachable();
+        let unreachable = self.unreachable;
         for node in 0..self.residual_graph.number_of_nodes() {
             let height = self.height[node];
             if node != self.source && height > empty && height < unreachable {
@@ -224,7 +228,7 @@ impl PushRelabel {
 
     /// Works the heights out again as the exact distance to the sink.
     fn global_relabel(&mut self) {
-        let unreachable = self.unreachable();
+        let unreachable = self.unreachable;
         self.global_relabels += 1;
         self.height
             .iter_mut()
@@ -274,19 +278,18 @@ impl PushRelabel {
         for node in 0..self.residual_graph.number_of_nodes() {
             self.current[node] = self.residual_graph.begin_edges(node);
             let height = self.height[node] as usize;
-            if node != self.source && height < self.at_height.len() {
+            if node != self.source {
                 self.at_height[height] += 1;
             }
             if node == self.source || node == self.target || self.excess[node] <= 0 {
                 continue;
             }
-            if height < self.bucket_head.len() {
-                self.link(node, height);
-            }
+            self.link(node, height);
         }
     }
 
-    /// The next active node of the greatest height, if there is one.
+    /// The next active node of whichever end of the heights is being taken
+    /// from, if there is one.
     fn next_active(&mut self) -> Option<NodeID> {
         loop {
             let at = if self.lowest_label {
@@ -308,7 +311,9 @@ impl PushRelabel {
             };
             let node = self.bucket_head[at] as NodeID;
             self.bucket_head[at] = self.bucket_next[node];
-            self.bucket_next[node] = NOWHERE;
+            if cfg!(debug_assertions) {
+                self.bucket_next[node] = NOWHERE;
+            }
             // buckets are left stale rather than searched through, so what
             // comes out of one is checked here
             if self.excess[node] > 0
@@ -365,16 +370,13 @@ impl PushRelabel {
         let before = self.excess[last];
         self.excess[last] += amount;
         if before == 0 && last != self.source && last != self.target {
-            let height = self.height[last] as usize;
-            if height < self.bucket_head.len() {
-                self.link(last, height);
-            }
+            self.link(last, self.height[last] as usize);
         }
     }
 
     /// Carries a node's excess onward a path at a time.
     fn discharge(&mut self, node: NodeID) {
-        let unreachable = self.unreachable();
+        let unreachable = self.unreachable;
         while self.excess[node] > 0 {
             self.path.clear();
             let mut at = node;
@@ -416,6 +418,7 @@ impl MaxFlow for PushRelabel {
             pair,
             source,
             target,
+            unreachable: u32::try_from(number_of_nodes).expect("the graph is too large"),
             max_flow: 0,
             finished: false,
             bound: None,
@@ -479,7 +482,7 @@ impl MaxFlow for PushRelabel {
 
         // every arc out of the source is filled, which is where the preflow
         // comes from
-        let unreachable = self.unreachable();
+        let unreachable = self.unreachable;
         self.height[self.source] = unreachable;
         for edge in self.residual_graph.edge_range(self.source) {
             let moved = self.residual_graph.data(edge).capacity;
