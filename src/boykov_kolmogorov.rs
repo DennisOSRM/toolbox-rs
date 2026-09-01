@@ -51,6 +51,14 @@ enum Tree {
 /// The arc a node has no parent through.
 const NO_ARC: u32 = u32::MAX;
 
+/// One instance answers one question.
+///
+/// A run leaves its flow in the residual graph, which is what `assignment`
+/// reads the cut off afterwards, so a second run carries on from where the
+/// first stopped rather than starting again: a run given a bound it gave up
+/// against, followed by a plain one, hands back what was left rather than the
+/// whole flow. The same holds of the other solvers here. Build another from
+/// the edge list to ask about another graph.
 pub struct BoykovKolmogorov {
     residual_graph: StaticGraph<ResidualArcData>,
     /// which arc runs the other way, so an augmentation does not search for it
@@ -231,10 +239,17 @@ impl BoykovKolmogorov {
         least
     }
 
-    /// Whether a node still has a way up to the root of its tree.
+    /// Whether a node still has a way up to the root of its tree, and how far
+    /// away that root is.
     ///
-    /// The walk stops early at anything already worked out this round, which is
-    /// what keeps adoption from costing the depth of the tree every time.
+    /// The walk is exact: it climbs to a root every time. Boykov and Kolmogorov
+    /// keep how far a node was from its root and when that was worked out, so a
+    /// walk can stop at anything already known, and that is not here because it
+    /// is unsound as stated. A node whose ancestor has since been orphaned
+    /// still carries a stamp from this round, so a walk stops there and reports
+    /// a root it can no longer reach; adopting through such a node points it
+    /// into its own subtree, and the walk up from either goes round for ever.
+    /// Whoever wants the cache back needs a way to tell a stamp gone stale.
     fn reaches_a_root(&mut self, node: NodeID) -> Option<usize> {
         let mut walked = 0_usize;
         let mut at = node;
@@ -320,46 +335,14 @@ impl BoykovKolmogorov {
     }
 }
 
-impl MaxFlow for BoykovKolmogorov {
-    fn from_edge_list(
-        edge_list: Vec<InputEdge<ResidualEdgeData>>,
-        source: NodeID,
-        target: NodeID,
-    ) -> Self {
-        debug_assert!(!edge_list.is_empty());
-        let residual_graph = residual_graph_of(edge_list);
-        let number_of_nodes = residual_graph.number_of_nodes();
-        debug!("pairing {} arcs", residual_graph.number_of_edges());
-        let pair = Self::pairs_of(&residual_graph);
-        let mut waiting = BitVec::new();
-        waiting.resize(number_of_nodes, false);
-
-        Self {
-            residual_graph,
-            pair,
-            source,
-            target,
-            max_flow: 0,
-            finished: false,
-            bound: None,
-            tree: vec![Tree::Free; number_of_nodes],
-            parent: vec![NO_ARC; number_of_nodes],
-            active: VecDeque::with_capacity(number_of_nodes),
-            waiting,
-            orphans: Vec::new(),
-            augmentations: 0,
-            adoptions: 0,
-            steps: 0,
-        }
-    }
-
-    fn run_with_upper_bound(&mut self, bound: Arc<AtomicI32>) {
-        debug!("upper bound: {}", bound.load(Ordering::Relaxed));
-        self.bound = Some(bound);
-        self.run();
-    }
-
-    fn run(&mut self) {
+impl BoykovKolmogorov {
+    /// The search itself, against whatever bound the caller left set.
+    fn search(&mut self) {
+        // a run says what it did, not what every run before it did as well
+        self.augmentations = 0;
+        self.adoptions = 0;
+        self.steps = 0;
+        self.finished = false;
         debug!(
             "residual graph size: V {}, E {}",
             self.residual_graph.number_of_nodes(),
@@ -403,6 +386,54 @@ impl MaxFlow for BoykovKolmogorov {
         }
         self.max_flow = flow;
         self.finished = true;
+    }
+}
+
+impl MaxFlow for BoykovKolmogorov {
+    fn from_edge_list(
+        edge_list: Vec<InputEdge<ResidualEdgeData>>,
+        source: NodeID,
+        target: NodeID,
+    ) -> Self {
+        debug_assert!(!edge_list.is_empty());
+        let residual_graph = residual_graph_of(edge_list);
+        let number_of_nodes = residual_graph.number_of_nodes();
+        debug!("pairing {} arcs", residual_graph.number_of_edges());
+        let pair = Self::pairs_of(&residual_graph);
+        let mut waiting = BitVec::new();
+        waiting.resize(number_of_nodes, false);
+
+        Self {
+            residual_graph,
+            pair,
+            source,
+            target,
+            max_flow: 0,
+            finished: false,
+            bound: None,
+            tree: vec![Tree::Free; number_of_nodes],
+            parent: vec![NO_ARC; number_of_nodes],
+            active: VecDeque::with_capacity(number_of_nodes),
+            waiting,
+            orphans: Vec::new(),
+            augmentations: 0,
+            adoptions: 0,
+            steps: 0,
+        }
+    }
+
+    fn run_with_upper_bound(&mut self, bound: Arc<AtomicI32>) {
+        debug!("upper bound: {}", bound.load(Ordering::Relaxed));
+        self.bound = Some(bound);
+        self.search();
+    }
+
+    fn run(&mut self) {
+        // A run of its own is a run against no bound. Keeping the one a
+        // previous call was given would have this give up where nothing asked
+        // it to.
+        self.bound = None;
+        self.search();
     }
 
     fn max_flow(&self) -> Result<i32, String> {
