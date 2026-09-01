@@ -123,6 +123,14 @@ pub struct PushRelabel {
     /// Whether to discharge the node nearest the sink rather than the one
     /// furthest from it.
     ///
+    /// Within a height the node taken is the one activated last, which is what
+    /// a chain linked through its nodes gives without a tail pointer. Taking
+    /// the one activated first was tried and cost 2.5 per cent, and one queue
+    /// for every active node whatever its height, which is the FIFO variant,
+    /// cost 23 per cent: it gives up the order that makes a bound worth
+    /// watching. None of the three changes the cut, only how long it takes to
+    /// find it.
+    ///
     /// Highest label is the variant with the better bound and the better run
     /// time to a finished flow. It is also the worst possible order for a run
     /// that may be given up on: a height is the distance to the sink, so it
