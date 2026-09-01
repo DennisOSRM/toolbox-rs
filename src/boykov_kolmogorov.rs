@@ -265,7 +265,12 @@ impl BoykovKolmogorov {
             at = self.residual_graph.target(self.parent[at] as EdgeID);
             walked += 1;
             self.steps += 1;
-            debug_assert!(
+            // Not a debug assertion. A circle in the parents is what an
+            // unsound cache would leave behind, and the walk round it does not
+            // end: a build without this would hang rather than fail, which is
+            // the worse of the two by far. It costs a comparison against a
+            // number already in hand.
+            assert!(
                 walked <= self.residual_graph.number_of_nodes(),
                 "the parents of the trees run in a circle"
             );
@@ -601,6 +606,44 @@ mod tests {
                 "round {round}: the cut does not cost what the flow does"
             );
         }
+    }
+
+    /// What a second run does, which is not what a first one would.
+    ///
+    /// The bound of the run before is gone, so this one does not give up. Its
+    /// flow is not the whole flow, though: the run before left what it moved in
+    /// the residual graph, so this one carries on from there and hands back
+    /// only the rest. Ten in all, four of them already moved.
+    #[test]
+    fn a_second_run_carries_on_where_the_first_stopped() {
+        use std::sync::{Arc, atomic::AtomicI32};
+        let edges = vec![
+            InputEdge::new(0, 1, ResidualEdgeData::new(4)),
+            InputEdge::new(0, 2, ResidualEdgeData::new(6)),
+            InputEdge::new(1, 3, ResidualEdgeData::new(4)),
+            InputEdge::new(2, 3, ResidualEdgeData::new(6)),
+        ];
+        let mut solver = BoykovKolmogorov::from_edge_list(edges, 0, 3);
+        solver.run_with_upper_bound(Arc::new(AtomicI32::new(2)));
+        assert!(
+            solver.max_flow().is_err(),
+            "a run that gave up reported a flow"
+        );
+        let (gave_up_at, _, _) = solver.work();
+        assert!(gave_up_at > 0, "a run that did nothing at all");
+
+        solver.run();
+        assert_eq!(
+            solver.max_flow(),
+            Ok(6),
+            "the bound of the run before was still being watched"
+        );
+        let (augmentations, _, _) = solver.work();
+        assert!(
+            augmentations < gave_up_at + augmentations,
+            "the counters carried the run before over"
+        );
+        assert!(augmentations > 0, "the second run did nothing");
     }
 
     #[test]
