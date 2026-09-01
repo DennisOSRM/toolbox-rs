@@ -27,7 +27,7 @@ use toolbox_rs::{
     push_relabel::PushRelabel,
 };
 use {
-    command_line::Arguments,
+    command_line::{Arguments, Solver},
     serialize::{write_level_directory, write_results},
 };
 
@@ -60,8 +60,7 @@ fn main() {
     // Which min-cut solver the flow runs on. The two find cuts of the same
     // cost, but not necessarily the same cut, so this is here to compare the
     // partitions they lead to rather than to be switched in passing.
-    let by_push_relabel =
-        std::env::var("TOOLBOX_SOLVER").is_ok_and(|given| given == "push_relabel");
+    let by_push_relabel = args.solver == Solver::PushRelabel;
     info!("{args}");
 
     // set the number of threads if supplied on the command line
