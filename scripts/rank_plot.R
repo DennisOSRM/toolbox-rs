@@ -86,17 +86,37 @@ counts_over <- function(values) {
 # always among them because one is where the two engines cost the same.
 ratios_over <- function(values) {
   values <- values[is.finite(values) & values > 0]
+  low <- min(values)
+  high <- max(values)
   wanted <- c(
     0.1, 0.125, 0.15, 0.2, 0.25, 0.33, 0.5, 0.6, 0.7, 0.8, 0.9,
     1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 7.5, 10, 15, 20, 30, 50, 100
   )
-  kept <- wanted[wanted >= min(values) * 0.98 & wanted <= max(values) * 1.02]
-  sort(unique(c(kept, 1)))
+  kept <- wanted[wanted >= low * 0.98 & wanted <= high * 1.02]
+  if (length(kept) >= 4) {
+    return(sort(unique(c(kept, 1))))
+  }
+
+  # Two engines that cost nearly the same leave every multiple above out of
+  # the span and every one below it, and the panel comes out with a single
+  # tick at one and nothing to read a point against. A span of a few per cent
+  # wants ticks a per cent apart, so the step is worked out from the span
+  # instead of taken from the list.
+  span <- max(high - low, 1e-9)
+  step <- 10^floor(log10(span / 4))
+  for (multiple in c(1, 2, 2.5, 5, 10)) {
+    if (span / (step * multiple) <= 8) {
+      step <- step * multiple
+      break
+    }
+  }
+  ticks <- seq(floor(low / step) * step, ceiling(high / step) * step, by = step)
+  sort(unique(c(ticks[ticks > 0], 1)))
 }
 
 # 1.5 rather than 1.50, and with the sign a reader expects on a multiple
 as_multiple <- function(values) {
-  paste0(formatC(values, format = "fg", drop0trailing = TRUE), "\u00d7")
+  paste0(formatC(signif(values, 4), format = "fg", drop0trailing = TRUE), "\u00d7")
 }
 plainly <- function(values) formatC(values, format = "fg", drop0trailing = TRUE)
 
