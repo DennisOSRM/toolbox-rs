@@ -47,6 +47,16 @@ impl<T: Ord + Copy> StaticGraph<T> {
         }
     }
 
+    /// What the two arrays take up.
+    ///
+    /// This is what a walk that jumps about the graph has to miss on, so it is
+    /// what a decision about prefetching is made against.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        size_of::<NodeArrayEntry>() * self.node_array.len()
+            + size_of::<EdgeArrayEntry<T>>() * self.edge_array.len()
+    }
+
     // In time O(V+E) check that the following invariants hold:
     // a) the node array spans the edge array, from zero up to its length. An
     //    empty node array fails here, as it lacks even the sentinel.

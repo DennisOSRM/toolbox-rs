@@ -437,13 +437,14 @@ impl MaxFlow for PushRelabel {
         debug!("pairing {} arcs", residual_graph.number_of_edges());
         let pair = Self::pairs_of(&residual_graph);
 
-        // Everything a run touches at random: the graph, the pairs, and a
-        // handful of arrays a node wide. Below the last level cache none of it
-        // is missing and the hints are a cost with nothing to show.
-        let working_set = 8 * (number_of_nodes + 1)
-            + 12 * residual_graph.number_of_edges()
-            + 4 * residual_graph.number_of_edges()
-            + 32 * number_of_nodes;
+        // Everything a run touches at random: the graph, the pairs, and the
+        // arrays a node wide, which are height, current, at_height,
+        // bucket_head and bucket_next in a u32 apiece and excess in an i64.
+        // Below the last level cache none of it is missing and the hints are a
+        // cost with nothing to show.
+        let per_node = 5 * size_of::<u32>() + size_of::<i64>();
+        let working_set =
+            residual_graph.bytes() + size_of::<u32>() * pair.len() + per_node * number_of_nodes;
         let prefetching = crate::prefetch::worth_it(working_set);
         debug!(
             "working set {} MiB, last level cache {} MiB, prefetching {prefetching}",
