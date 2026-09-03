@@ -28,6 +28,25 @@ impl<T: Ord + Clone> Default for StaticGraph<T> {
 }
 
 impl<T: Ord + Copy> StaticGraph<T> {
+    /// Ask for the offsets of a node, which is where a scan of its arcs begins.
+    ///
+    /// A node taken off a queue is a random place in the node array, so this is
+    /// the first of the two misses a walk of its arcs costs.
+    #[inline(always)]
+    pub fn prefetch_node(&self, node: NodeID) {
+        if let Some(entry) = self.node_array.get(node) {
+            crate::prefetch::hint(std::ptr::from_ref(entry));
+        }
+    }
+
+    /// Ask for the block of arcs a node owns, which is the second.
+    #[inline(always)]
+    pub fn prefetch_arcs(&self, edge: EdgeID) {
+        if let Some(entry) = self.edge_array.get(edge) {
+            crate::prefetch::hint(std::ptr::from_ref(entry));
+        }
+    }
+
     // In time O(V+E) check that the following invariants hold:
     // a) the node array spans the edge array, from zero up to its length. An
     //    empty node array fails here, as it lacks even the sentinel.

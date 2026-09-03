@@ -78,6 +78,7 @@ pub mod path_based_scc;
 pub mod path_unpacking;
 pub mod polyline;
 pub mod pool;
+pub mod prefetch;
 pub mod prim_complete_graph;
 pub mod push_relabel;
 pub mod rdx_sort;
