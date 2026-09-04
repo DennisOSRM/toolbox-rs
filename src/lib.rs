@@ -31,6 +31,7 @@ pub mod dimacs;
 pub mod dinic;
 pub mod dynamic_graph;
 pub mod edge;
+pub mod edge_based;
 pub mod edmonds_karp;
 pub mod enumerative_source_coding;
 pub mod fast_hash_trait;
