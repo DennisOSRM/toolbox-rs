@@ -53,8 +53,9 @@ use crate::{
     wgs84::{FloatCoordinate, FloatLatitude, FloatLongitude},
 };
 
-/// Size of a map tile in pixels
-const TILE_SIZE: usize = 4096;
+/// Size of a map tile in pixels. It doubles as the extent a vector tile draws
+/// its geometry on, so a coordinate in this grid is one a tile can carry.
+pub const TILE_SIZE: usize = 4096;
 
 /// Converts longitude in degrees to pixel x-coordinate
 ///
