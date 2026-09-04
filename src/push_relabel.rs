@@ -69,6 +69,16 @@ const NOWHERE: u32 = u32::MAX;
 /// How many arcs a partial augmentation may walk before it moves what it found.
 const PATH_ARCS: usize = 4;
 
+/// How far ahead of the sweep's queue a node's offsets are asked for, and how
+/// far ahead its block of arcs is.
+///
+/// The two differ because the second reads the first: working out where a
+/// node's arcs lie means reading its offsets, and at the same distance that
+/// read would miss and stall where the hint was meant to help. The gap is what
+/// matters rather than either number.
+const OFFSETS_AHEAD: usize = 12;
+const ARCS_AHEAD: usize = 6;
+
 /// How many nodes a graph needs before its heights are worth a sweep to start.
 ///
 /// Exact heights cost a search of the whole cell. A cell settled in a few dozen
@@ -131,6 +141,9 @@ pub struct PushRelabel {
     /// which is what a caller watching an upper bound is waiting for.
     lowest_label: bool,
     queue: VecDeque<NodeID>,
+    /// Whether this instance is large enough that asking for a line early pays
+    /// for the instruction it costs. Worked out once, at construction.
+    prefetching: bool,
     relabels: usize,
     global_relabels: usize,
     pushes: usize,
@@ -238,6 +251,17 @@ impl PushRelabel {
         self.queue.clear();
         self.queue.push_back(self.target);
         while let Some(node) = self.queue.pop_front() {
+            if self.prefetching {
+                // the offsets of a node further down the queue, and the arcs of
+                // a nearer one, whose offsets were asked for several rounds ago
+                if let Some(&soon) = self.queue.get(OFFSETS_AHEAD) {
+                    self.residual_graph.prefetch_node(soon);
+                }
+                if let Some(&soon) = self.queue.get(ARCS_AHEAD) {
+                    self.residual_graph
+                        .prefetch_arcs(self.residual_graph.begin_edges(soon));
+                }
+            }
             let next = self.height[node] + 1;
             for edge in self.residual_graph.edge_range(node) {
                 let other = self.residual_graph.target(edge);
@@ -413,9 +437,25 @@ impl MaxFlow for PushRelabel {
         debug!("pairing {} arcs", residual_graph.number_of_edges());
         let pair = Self::pairs_of(&residual_graph);
 
+        // Everything a run touches at random: the graph, the pairs, and the
+        // arrays a node wide, which are height, current, at_height,
+        // bucket_head and bucket_next in a u32 apiece and excess in an i64.
+        // Below the last level cache none of it is missing and the hints are a
+        // cost with nothing to show.
+        let per_node = 5 * size_of::<u32>() + size_of::<i64>();
+        let working_set =
+            residual_graph.bytes() + size_of::<u32>() * pair.len() + per_node * number_of_nodes;
+        let prefetching = crate::prefetch::worth_it(working_set);
+        debug!(
+            "working set {} MiB, last level cache {} MiB, prefetching {prefetching}",
+            working_set >> 20,
+            crate::prefetch::last_level_cache() >> 20
+        );
+
         Self {
             residual_graph,
             pair,
+            prefetching,
             source,
             target,
             unreachable: u32::try_from(number_of_nodes).expect("the graph is too large"),
