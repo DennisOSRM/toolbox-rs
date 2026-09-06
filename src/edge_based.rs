@@ -94,7 +94,14 @@ pub trait TurnCost {
 ///
 /// The edge-based graph under this answers every distance the node-based graph
 /// does, which is what makes it the thing to check an expansion against.
+#[derive(Clone)]
 pub struct FreeTurns;
+
+impl<T: TurnCost + ?Sized> TurnCost for &T {
+    fn cost(&self, turn: &Turn) -> Option<u32> {
+        (**self).cost(turn)
+    }
+}
 
 impl TurnCost for FreeTurns {
     fn cost(&self, _turn: &Turn) -> Option<u32> {
@@ -108,6 +115,7 @@ impl TurnCost for FreeTurns {
 /// This asks nothing of the coordinates and has no number in it to get wrong,
 /// which is the whole of its appeal: a reversal is a reversal because of what
 /// the graph says, not because of where anything lies.
+#[derive(Clone)]
 pub struct NoUTurns;
 
 impl TurnCost for NoUTurns {
@@ -141,6 +149,7 @@ const COSINE_STEPS: usize = 1024;
 /// an `atan2` a turn instead, and a search over a continent looks at ninety
 /// eight million of them: measured, that was thirteen seconds of a twenty nine
 /// second run.
+#[derive(Clone)]
 pub struct AnglePenalty {
     /// what a turn costs, by the cosine of how far off straight it is, from
     /// turning back on itself at the start to carrying straight on at the end
@@ -148,8 +157,19 @@ pub struct AnglePenalty {
 }
 
 impl AnglePenalty {
+    /// # Panics
+    ///
+    /// If `free_within` is not a number of degrees between nothing and a right
+    /// angle. Outside that the ramp this describes has no meaning: at ninety
+    /// there is nothing left for the cost to rise across, and a value that is
+    /// not a number compares false against everything and would quietly charge
+    /// the whole of `sharpest` for every turn.
     #[must_use]
     pub fn new(free_within: f64, sharpest: u32) -> Self {
+        assert!(
+            free_within.is_finite() && (0.0..90.0).contains(&free_within),
+            "a turn is free within {free_within} degrees, which is not an angle to be free within"
+        );
         let by_cosine = (0..COSINE_STEPS)
             .map(|at| {
                 let cosine = 2.0 * at as f64 / (COSINE_STEPS - 1) as f64 - 1.0;
@@ -311,6 +331,33 @@ impl<'a, G: Arcs<u32>, T: TurnCost> EdgeBasedGraph<'a, G, T> {
     /// A turn that the cost refuses is not offered at all.
     pub fn for_each_turn(&self, arc: EdgeID, f: impl FnMut(EdgeID, u32)) {
         self.turns_from(arc, self.tail(arc), f);
+    }
+
+    /// The turns leaving an arc, as the arc each lands on and what the turn
+    /// itself costs, with no arc's weight in it.
+    ///
+    /// [`Self::for_each_turn`] charges the arc being turned onto, which makes a
+    /// distance the cost of reaching that arc's head. A caller that means a
+    /// node to stand for the tail of its arc charges the arc being left
+    /// instead, and this hands over the part they share.
+    pub fn for_each_turn_cost(&self, arc: EdgeID, from: NodeID, mut f: impl FnMut(EdgeID, u32)) {
+        let via = self.head(arc);
+        let squeeze = f64::from(self.coordinates[via].lat)
+            .mul_add(1e-6_f64.to_radians(), 0.0)
+            .cos();
+        let arriving = self.vector(from, via, squeeze);
+
+        for onto in self.graph.edge_range(via) {
+            let to = self.graph.target(onto);
+            let turn = Turn {
+                arriving,
+                leaving: self.vector(via, to, squeeze),
+                reversal: to == from,
+            };
+            if let Some(cost) = self.turns.cost(&turn) {
+                f(onto, cost);
+            }
+        }
     }
 
     /// The same, told which node the arc runs out of rather than looking.
@@ -531,6 +578,18 @@ mod tests {
     }
 
     /// Going straight across the plus is free; turning a corner is not.
+    #[test]
+    #[should_panic(expected = "not an angle to be free within")]
+    fn a_turn_cannot_be_free_within_a_right_angle() {
+        let _ = AnglePenalty::new(90., 100);
+    }
+
+    #[test]
+    #[should_panic(expected = "not an angle to be free within")]
+    fn a_turn_cannot_be_free_within_something_that_is_not_a_number() {
+        let _ = AnglePenalty::new(f64::NAN, 100);
+    }
+
     #[test]
     fn a_corner_costs_what_carrying_straight_on_does_not() {
         let (graph, coordinates) = plus();
