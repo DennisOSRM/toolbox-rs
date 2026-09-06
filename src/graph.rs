@@ -59,6 +59,43 @@ pub trait Arcs<T> {
     }
 }
 
+/// What a search walks: the arcs leaving a node, and what each costs.
+///
+/// # Why this is not [`Arcs`]
+///
+/// [`Arcs`] answers arc at a time, by an id that stands on its own. A graph
+/// that works its arcs out as it is asked cannot always answer that way. An
+/// edge-based graph is the case in hand: what a turn costs depends on the arc
+/// it was arrived along, which an arc id on its own does not say, and a turn
+/// that may not be taken has to be left out rather than priced.
+///
+/// Both are answered by handing a node's arcs over one call at a time, which
+/// is what this asks for and all that a search needs. Every [`Arcs`] answers
+/// it without being written to.
+pub trait Adjacency<T> {
+    fn number_of_nodes(&self) -> usize;
+
+    /// Every arc leaving a node, as where it goes and what it costs.
+    ///
+    /// `from` is the node this one was reached from, or the node itself where
+    /// a search began. A graph holding its arcs has no use for it. One working
+    /// them out can: an edge-based graph is standing on an arc, and the node
+    /// that arc runs out of is where the arc it was reached from runs into, so
+    /// being told saves it looking. A caller that passes something other than a
+    /// node this one is really reachable from will be answered accordingly.
+    fn for_each_arc(&self, n: NodeID, from: NodeID, f: impl FnMut(NodeID, T));
+}
+
+impl<T, G: Arcs<T>> Adjacency<T> for G {
+    fn number_of_nodes(&self) -> usize {
+        Arcs::number_of_nodes(self)
+    }
+
+    fn for_each_arc(&self, n: NodeID, _from: NodeID, f: impl FnMut(NodeID, T)) {
+        Arcs::for_each_arc(self, n, f);
+    }
+}
+
 /// Every graph that keeps its arcs answers by lending one and copying it out.
 impl<T: Copy, G: Graph<T>> Arcs<T> for G {
     #[inline]

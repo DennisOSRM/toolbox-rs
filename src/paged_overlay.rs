@@ -36,10 +36,13 @@ use std::sync::{
 /// How many blocks are kept in hand while their cells are unpacked.
 ///
 use crate::{
+    block_codec::Codec,
     block_map::BlockEntry,
-    block_store::{BlockStore, NotRead},
+    block_store::{BlockStore, BlockWriter, NotRead},
     border_levels::{BorderLevels, Borders},
+    cell_block::{CellBlock, CellEntry},
     cell_tree::CellTree,
+    customization::Customization,
     graph::{Arcs, NodeID},
     level_directory::CellId,
     overlay::{CellTable, Overlay},
@@ -602,7 +605,7 @@ impl<G: Arcs<u32> + Sync, B: Borders + Sync> PagedOverlay<G, B> {
         } = &mut held;
         block.unpack_into(which, &widths, matrix);
         block.places_into(which, &widths, nodes);
-        let begins = self.store.tree().nodes_begin(level, cell);
+        let begins = self.store.counting_from(level, cell);
         if nodes.is_empty() {
             nodes.extend((0..widths[which] as u32).map(|at| begins + at));
         } else {
@@ -659,16 +662,143 @@ impl<G: Arcs<u32> + Sync, B: Borders + Sync> Overlay for PagedOverlay<G, B> {
     }
 }
 
+/// Writes the tables of a customization to a file, a run of cells at a time,
+/// and says where each block landed.
+///
+/// The blocks are what [`PagedOverlay`] reads, and the map is how it finds
+/// one. Both the map and the [`CellTree`] have to be kept beside the file, or
+/// the blocks cannot be found again.
+///
+/// A block holds `cells_a_block` cells of one level. Larger blocks read fewer
+/// times and throw away more of what they read. The finest level is packed
+/// with lz4 and the ones above it with zstd, since the finest is read most and
+/// the ones above it are read seldom enough to be worth the tighter packing.
+///
+/// # Errors
+///
+/// If the file cannot be written.
+pub fn pack_cells(
+    customization: &Customization,
+    tree: &CellTree,
+    path: &std::path::Path,
+    cells_a_block: usize,
+) -> std::io::Result<crate::block_map::BlockMap> {
+    pack_overlay(customization, tree, path, cells_a_block, |level, cell| {
+        (
+            tree.nodes_begin(level, cell),
+            level == 0,
+            tree.facts(level, cell).nodes as usize,
+        )
+    })
+}
+
+/// The same, for an overlay whose tables are named by something other than the
+/// nodes of a cell.
+///
+/// `begins` says, for a cell, what its ids count from, whether the ones on its
+/// border lead that run, and how many ids the cell holds. A table of nodes has
+/// the first two: a cell's nodes are consecutive and the border ones come
+/// first, so the finest level writes no places at all. A table of arcs has the
+/// first but not the second, since the arcs on a cell's border are the ones
+/// leaving a node the boundary runs through and those are scattered through the
+/// cell.
+///
+/// The third is what a place is written with room for. Written against the node
+/// count while the places were arc offsets, the wider ones were silently cut
+/// short and the tables read back against the wrong arcs.
+///
+/// # Errors
+///
+/// If the file cannot be written.
+pub fn pack_overlay<O: Overlay>(
+    customization: &O,
+    tree: &CellTree,
+    path: &std::path::Path,
+    cells_a_block: usize,
+    begins: impl Fn(usize, CellId) -> (u32, bool, usize),
+) -> std::io::Result<crate::block_map::BlockMap> {
+    let mut writer = BlockWriter::create(path)?;
+    for level in 0..tree.levels() {
+        let border_leads = level == 0;
+        let mut at = 0;
+        while at < tree.cells_on_level(level) {
+            let upto = (at + cells_a_block).min(tree.cells_on_level(level));
+            let mut matrices = Vec::new();
+            let mut widths = Vec::new();
+            let mut places = Vec::new();
+            let mut holds = Vec::new();
+            for cell in at..upto {
+                let cell = cell as CellId;
+                // The topmost cell holds the whole graph, so no arc leaves
+                // it and it has no border and no table. It goes into the
+                // block as a table of nothing rather than being left out,
+                // so that a block stays a run of cells.
+                let held = customization.distances_of(level, cell);
+                let wide = held.as_ref().map_or(0, |table| table.border_nodes().len());
+                let mut matrix = Vec::with_capacity(wide * wide);
+                if let Some(ref table) = held {
+                    for source in 0..wide {
+                        matrix.extend_from_slice(table.row(source));
+                    }
+                }
+                let (counts_from, _, ids_held) = begins(level, cell);
+                places.push(if border_leads {
+                    Vec::new()
+                } else {
+                    held.as_ref().map_or_else(Vec::new, |table| {
+                        table
+                            .border_nodes()
+                            .iter()
+                            .map(|&node| node - counts_from)
+                            .collect()
+                    })
+                });
+                matrices.push(matrix);
+                widths.push(wide);
+                holds.push(ids_held);
+            }
+            let entries = matrices
+                .iter()
+                .zip(&widths)
+                .zip(&places)
+                .zip(&holds)
+                .map(|(((matrix, &wide), places), &holds)| CellEntry {
+                    matrix,
+                    wide,
+                    places,
+                    holds,
+                })
+                .collect::<Vec<_>>();
+            let block = CellBlock::of(level, at as CellId, &entries, border_leads);
+            let keys = (
+                tree.range_of(level, at as CellId).0,
+                tree.range_of(level, (upto - 1) as CellId).1,
+            );
+            let nodes = (
+                tree.nodes_begin(level, at as CellId),
+                tree.nodes_begin(level, (upto - 1) as CellId)
+                    + tree.facts(level, (upto - 1) as CellId).nodes
+                    - tree.nodes_begin(level, at as CellId),
+            );
+            writer.push(
+                &block,
+                keys,
+                (at as CellId, (upto - at) as u32),
+                nodes,
+                if level == 0 { Codec::Lz4 } else { Codec::Zstd },
+                3,
+            )?;
+            at = upto;
+        }
+    }
+    writer.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        block_codec::Codec,
-        block_store::BlockWriter,
-        cell_block::{CellBlock, CellEntry},
         cell_ordering::CellOrdering,
-        cell_tree::CellTree,
-        customization::Customization,
         edge::InputEdge,
         geometry::FPCoordinate,
         grid_graph::grid_directory,
@@ -716,91 +846,6 @@ mod tests {
     }
 
     /// Writes every cell of a customization into a store.
-    fn pack_cells(
-        customization: &Customization,
-        tree: &CellTree,
-        path: &std::path::Path,
-        cells_a_block: usize,
-    ) -> crate::block_map::BlockMap {
-        let mut writer = BlockWriter::create(path).expect("a file to write");
-        for level in 0..tree.levels() {
-            let border_leads = level == 0;
-            let mut at = 0;
-            while at < tree.cells_on_level(level) {
-                let upto = (at + cells_a_block).min(tree.cells_on_level(level));
-                let mut matrices = Vec::new();
-                let mut widths = Vec::new();
-                let mut places = Vec::new();
-                let mut holds = Vec::new();
-                for cell in at..upto {
-                    let cell = cell as CellId;
-                    // The topmost cell holds the whole graph, so no arc leaves
-                    // it and it has no border and no table. It goes into the
-                    // block as a table of nothing rather than being left out,
-                    // so that a block stays a run of cells.
-                    let held = customization.distances_of(level, cell);
-                    let wide = held.map_or(0, |table| table.border_nodes_of().len());
-                    let mut matrix = Vec::with_capacity(wide * wide);
-                    if let Some(table) = held {
-                        for source in 0..wide {
-                            matrix.extend_from_slice(table.row(source));
-                        }
-                    }
-                    let begins = tree.nodes_begin(level, cell);
-                    places.push(if border_leads {
-                        Vec::new()
-                    } else {
-                        held.map_or_else(Vec::new, |table| {
-                            table
-                                .border_nodes_of()
-                                .iter()
-                                .map(|&node| node - begins)
-                                .collect()
-                        })
-                    });
-                    matrices.push(matrix);
-                    widths.push(wide);
-                    holds.push(tree.facts(level, cell).nodes as usize);
-                }
-                let entries = matrices
-                    .iter()
-                    .zip(&widths)
-                    .zip(&places)
-                    .zip(&holds)
-                    .map(|(((matrix, &wide), places), &holds)| CellEntry {
-                        matrix,
-                        wide,
-                        places,
-                        holds,
-                    })
-                    .collect::<Vec<_>>();
-                let block = CellBlock::of(level, at as CellId, &entries, border_leads);
-                let keys = (
-                    tree.range_of(level, at as CellId).0,
-                    tree.range_of(level, (upto - 1) as CellId).1,
-                );
-                let nodes = (
-                    tree.nodes_begin(level, at as CellId),
-                    tree.nodes_begin(level, (upto - 1) as CellId)
-                        + tree.facts(level, (upto - 1) as CellId).nodes
-                        - tree.nodes_begin(level, at as CellId),
-                );
-                writer
-                    .push(
-                        &block,
-                        keys,
-                        (at as CellId, (upto - at) as u32),
-                        nodes,
-                        if level == 0 { Codec::Lz4 } else { Codec::Zstd },
-                        3,
-                    )
-                    .expect("a block to write");
-                at = upto;
-            }
-        }
-        writer.finish().expect("a file to close")
-    }
-
     /// The one that matters: the same search, unchanged, over the cells in
     /// memory and over the same cells read off a file, answering the same.
     #[test]
@@ -815,7 +860,7 @@ mod tests {
 
         let held = tempfile::tempdir().expect("a directory to write in");
         let path = held.path().join("blocks");
-        let map = pack_cells(&in_memory, &tree, &path, 3);
+        let map = pack_cells(&in_memory, &tree, &path, 3).expect("a store to write");
         assert!(map.len() > 1, "the store is worth more than one block");
 
         let store = BlockStore::open(&path, map, tree).expect("a store to open");
@@ -867,7 +912,7 @@ mod tests {
 
         let held = tempfile::tempdir().expect("a directory to write in");
         let path = held.path().join("blocks");
-        let map = pack_cells(&in_memory, &tree, &path, 3);
+        let map = pack_cells(&in_memory, &tree, &path, 3).expect("a store to write");
 
         // room enough for the two coarsest levels and no more, on top of what
         // the instance costs before any table: the budget is for the whole of
@@ -941,7 +986,7 @@ mod tests {
 
         let held = tempfile::tempdir().expect("a directory to write in");
         let tables = held.path().join("blocks");
-        let map = pack_cells(&in_memory, &tree, &tables, 3);
+        let map = pack_cells(&in_memory, &tree, &tables, 3).expect("a store to write");
         let arcs = held.path().join("arcs");
         let (arc_map, first_edges) = pack(
             &graph,
