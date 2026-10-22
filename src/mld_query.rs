@@ -33,9 +33,8 @@ use log::debug;
 use rustc_hash::FxHashSet;
 
 use crate::{
-    border_levels::Borders,
     dense_heap::{DenseHeap, HashHeap, Queue},
-    graph::{Arcs, NodeID},
+    graph::NodeID,
     heap_stats::{Counters, HeapStats, Untracked},
     overlay::{CellTable, Overlay},
     packed_partition::PackedPartition,
@@ -88,6 +87,14 @@ pub struct MldSearch<S: HeapStats<NodeID>, Q: Queue<S> = DenseHeap<S>> {
     /// The cells the source sits in, as the one word that says all of them.
     source_word: u128,
     reached_target_count: usize,
+    /// Where the arcs of a node are put while they are handed over, kept so
+    /// that settling a node does not allocate.
+    ///
+    /// The overlay hands its arcs to a closure rather than lending a slice,
+    /// since a graph that works them out as it goes has no slice to lend. The
+    /// closure cannot relax as it goes, as that would be the search borrowed
+    /// twice, so what it is given lands here first.
+    reached: Vec<(NodeID, u32)>,
 }
 
 impl<S: HeapStats<NodeID>, Q: Queue<S>> Default for MldSearch<S, Q> {
@@ -104,6 +111,7 @@ impl<S: HeapStats<NodeID>, Q: Queue<S>> MldSearch<S, Q> {
             holds: std::marker::PhantomData,
             holds_target: Vec::new(),
             holds_target_at: Vec::new(),
+            reached: Vec::new(),
             marked: Vec::new(),
             targets: FxHashSet::default(),
             source_word: 0,
@@ -230,7 +238,7 @@ impl<S: HeapStats<NodeID>, Q: Queue<S>> MldSearch<S, Q> {
         let level_count = partition.levels();
         self.make_room_for(customization);
         for &target in &self.targets {
-            let word = partition.word(target);
+            let word = customization.word_of(target);
             for level in 0..level_count {
                 let place = self.holds_target_at[level] + partition.cell_in(word, level) as usize;
                 if !self.holds_target[place] {
@@ -242,9 +250,8 @@ impl<S: HeapStats<NodeID>, Q: Queue<S>> MldSearch<S, Q> {
 
         // the source's cells never move during a run, so they are not asked
         // for once per settled node
-        self.source_word = partition.word(source);
+        self.source_word = customization.word_of(source);
 
-        let graph = customization.graph();
         self.queue.insert(source, 0, source);
 
         while !self.queue.is_empty() && self.reached_target_count < self.targets.len() {
@@ -256,7 +263,8 @@ impl<S: HeapStats<NodeID>, Q: Queue<S>> MldSearch<S, Q> {
                 debug!("[done] reached {u} at {distance}");
             }
 
-            match self.level_to_step_over(partition, u) {
+            let came_from = self.queue.data(u);
+            match self.level_to_step_over(customization, u) {
                 Some(level) => {
                     // The cell is stepped over once for each way into it, not
                     // once for each of its border nodes. A node reached from
@@ -269,23 +277,174 @@ impl<S: HeapStats<NodeID>, Q: Queue<S>> MldSearch<S, Q> {
                     // continent with a thousand nodes on its border that is a
                     // thousand relaxations for each of a thousand nodes, in
                     // place of a thousand for each way in.
-                    let came_from = self.queue.data(u);
                     if u == came_from
                         || !partition.same_cell_at(
-                            partition.word(u),
-                            partition.word(came_from),
+                            customization.word_of(u),
+                            customization.word_of(came_from),
                             level,
                         )
                     {
                         self.relax_across_cell(customization, partition, u, distance, level);
                     }
-                    self.relax_out_of_cell(graph, customization.borders(), u, distance, level);
+                    self.relax_out_of_cell(customization, u, came_from, distance, level);
                 }
-                None => self.relax_every_arc(graph, u, distance),
+                None => self.relax_every_arc(customization, u, came_from, distance),
             }
         }
 
         self.reached_target_count == self.targets.len()
+    }
+
+    /// A run from several nodes at once, each starting at a cost of its own.
+    ///
+    /// The sources have to lie in the same cell on every level, which is what a
+    /// query naming its end as a node of an edge-based graph has: the arcs
+    /// leaving one node all run out of it, so they all lie where it does. The
+    /// walk up the levels is worked out from the first of them.
+    ///
+    /// # Panics
+    ///
+    /// In a build that checks, if the sources do not all lie in the same cells.
+    pub fn run_many<O: Overlay>(
+        &mut self,
+        customization: &O,
+        sources: &[(NodeID, usize)],
+        targets: &[NodeID],
+    ) -> bool {
+        self.clear();
+        let Some(&(first, _)) = sources.first() else {
+            return targets.is_empty();
+        };
+        self.targets.extend(targets.iter().copied());
+
+        let partition = customization.partition();
+        let level_count = partition.levels();
+        self.make_room_for(customization);
+        for &target in &self.targets {
+            let word = customization.word_of(target);
+            for level in 0..level_count {
+                let place = self.holds_target_at[level] + partition.cell_in(word, level) as usize;
+                if !self.holds_target[place] {
+                    self.holds_target[place] = true;
+                    self.marked.push(place);
+                }
+            }
+        }
+
+        self.source_word = customization.word_of(first);
+        for &(node, cost) in sources {
+            debug_assert_eq!(
+                customization.word_of(node),
+                self.source_word,
+                "the sources do not all lie in the same cells"
+            );
+            self.queue.insert_or_decrease(node, cost, node);
+        }
+
+        while !self.queue.is_empty() && self.reached_target_count < self.targets.len() {
+            let u = self.queue.delete_min();
+            let distance = self.queue.weight(u);
+
+            if self.targets.contains(&u) {
+                self.reached_target_count += 1;
+            }
+
+            let came_from = self.queue.data(u);
+            match self.level_to_step_over(customization, u) {
+                Some(level) => {
+                    if u == came_from
+                        || !partition.same_cell_at(
+                            customization.word_of(u),
+                            customization.word_of(came_from),
+                            level,
+                        )
+                    {
+                        self.relax_across_cell(customization, partition, u, distance, level);
+                    }
+                    self.relax_out_of_cell(customization, u, came_from, distance, level);
+                }
+                None => self.relax_every_arc(customization, u, came_from, distance),
+            }
+        }
+
+        self.reached_target_count == self.targets.len()
+    }
+
+    /// A run from several nodes to several, each end carrying a cost of its
+    /// own, answering the least total over the targets.
+    ///
+    /// The targets of a query naming its ends as nodes of an edge-based graph
+    /// are the arcs arriving at one node, and what it cost to arrive is the
+    /// distance to such an arc plus what the arc itself costs. That extra is
+    /// what each target carries here.
+    ///
+    /// Where [`Self::run_many`] stops once every target is reached, this stops
+    /// once no target still on the queue can beat what has been found: a node
+    /// settled later is no nearer, and what a target adds on arrival is never
+    /// negative. Waiting for all of them instead means a search that exhausts
+    /// the graph whenever one target cannot be reached at all, which turns
+    /// occasional queries into hundredfold outliers.
+    pub fn run_to_arcs<O: Overlay>(
+        &mut self,
+        customization: &O,
+        sources: &[(NodeID, usize)],
+        targets: &[(NodeID, usize)],
+    ) -> usize {
+        self.clear();
+        let Some(&(first, _)) = sources.first() else {
+            return usize::MAX;
+        };
+        self.targets.extend(targets.iter().map(|&(node, _)| node));
+
+        let partition = customization.partition();
+        let level_count = partition.levels();
+        self.make_room_for(customization);
+        for &target in &self.targets {
+            let word = customization.word_of(target);
+            for level in 0..level_count {
+                let place = self.holds_target_at[level] + partition.cell_in(word, level) as usize;
+                if !self.holds_target[place] {
+                    self.holds_target[place] = true;
+                    self.marked.push(place);
+                }
+            }
+        }
+
+        self.source_word = customization.word_of(first);
+        for &(node, cost) in sources {
+            self.queue.insert_or_decrease(node, cost, node);
+        }
+
+        let mut best = usize::MAX;
+        while !self.queue.is_empty() {
+            let u = self.queue.delete_min();
+            let distance = self.queue.weight(u);
+            if distance >= best {
+                break;
+            }
+
+            if let Some(&(_, extra)) = targets.iter().find(|&&(node, _)| node == u) {
+                best = best.min(distance + extra);
+            }
+
+            let came_from = self.queue.data(u);
+            match self.level_to_step_over(customization, u) {
+                Some(level) => {
+                    if u == came_from
+                        || !partition.same_cell_at(
+                            customization.word_of(u),
+                            customization.word_of(came_from),
+                            level,
+                        )
+                    {
+                        self.relax_across_cell(customization, partition, u, distance, level);
+                    }
+                    self.relax_out_of_cell(customization, u, came_from, distance, level);
+                }
+                None => self.relax_every_arc(customization, u, came_from, distance),
+            }
+        }
+        best
     }
 
     /// The highest level whose cell around this node holds neither the source
@@ -296,8 +455,9 @@ impl<S: HeapStats<NodeID>, Q: Queue<S>> MldSearch<S, Q> {
     /// are still asked cell by cell, and the walk runs no further than the
     /// level the source alone allows.
     #[inline(never)]
-    fn level_to_step_over(&self, partition: &PackedPartition, node: NodeID) -> Option<usize> {
-        let word = partition.word(node);
+    fn level_to_step_over<O: Overlay>(&self, customization: &O, node: NodeID) -> Option<usize> {
+        let partition = customization.partition();
+        let word = customization.word_of(node);
         let highest = partition.highest_different_level(word, self.source_word)?;
         (0..=highest).rev().find(|&level| {
             let place = self.holds_target_at[level] + partition.cell_in(word, level) as usize;
@@ -315,7 +475,7 @@ impl<S: HeapStats<NodeID>, Q: Queue<S>> MldSearch<S, Q> {
         distance: usize,
         level: usize,
     ) {
-        let cell = partition.cell_of(node, level);
+        let cell = partition.cell_in(customization.word_of(node), level);
         // an index into the customization, which lends the table out rather
         // than counting it, so this is a load rather than a lock and a hash
         let Some(distances) = customization.distances_of(level, cell) else {
@@ -341,34 +501,44 @@ impl<S: HeapStats<NodeID>, Q: Queue<S>> MldSearch<S, Q> {
     /// The arcs of the graph that leave the cell, which is how the search gets
     /// out of one.
     #[inline(never)]
-    fn relax_out_of_cell<G: Arcs<u32>, B: Borders>(
+    fn relax_out_of_cell<O: Overlay>(
         &mut self,
-        graph: &G,
-        borders: &B,
+        customization: &O,
         node: NodeID,
+        from: NodeID,
         distance: usize,
         level: usize,
     ) {
-        for edge in graph.edge_range(node) {
-            // read in step with the arcs rather than asked of the partition,
-            // which would be a jump into an array as wide as the graph for
-            // every arc of every node the search settles
-            if !borders.leaves_cell(edge, level) {
-                continue;
-            }
-            let target = graph.target(edge);
-            self.relax(target, distance + graph.weight(edge) as usize, node);
+        let mut reached = std::mem::take(&mut self.reached);
+        reached.clear();
+        customization.for_each_arc_out_of_cell(node, from, level, |target, weight| {
+            reached.push((target, weight));
+        });
+        for &(target, weight) in &reached {
+            self.relax(target, distance + weight as usize, node);
         }
+        self.reached = reached;
     }
 
     /// Every arc of the graph, which is what a plain Dijkstra does and what
     /// this does inside a cell that holds the source or a target.
     #[inline(never)]
-    fn relax_every_arc<G: Arcs<u32>>(&mut self, graph: &G, node: NodeID, distance: usize) {
-        for edge in graph.edge_range(node) {
-            let target = graph.target(edge);
-            self.relax(target, distance + graph.weight(edge) as usize, node);
+    fn relax_every_arc<O: Overlay>(
+        &mut self,
+        customization: &O,
+        node: NodeID,
+        from: NodeID,
+        distance: usize,
+    ) {
+        let mut reached = std::mem::take(&mut self.reached);
+        reached.clear();
+        customization.for_each_arc(node, from, |target, weight| {
+            reached.push((target, weight));
+        });
+        for &(target, weight) in &reached {
+            self.relax(target, distance + weight as usize, node);
         }
+        self.reached = reached;
     }
 
     /// One look into the queue rather than up to four.

@@ -12,7 +12,7 @@
 /// ratio between them is partly a ratio between two ways of finding a node.
 use crate::{
     dense_heap::DenseHeap,
-    graph::{Arcs, NodeID},
+    graph::{Adjacency, INVALID_NODE_ID, NodeID},
     heap_stats::{Counters, HeapStats, Untracked},
 };
 
@@ -31,6 +31,9 @@ pub type TrackedUnidirectionalDijkstra = UnidirectionalSearch<Counters>;
 pub struct UnidirectionalSearch<S: HeapStats<NodeID>> {
     queue: DenseHeap<S>,
     upper_bound: usize,
+    /// the node the last run stopped on, which a run with several targets has
+    /// no other way of saying
+    met: NodeID,
 }
 
 impl<S: HeapStats<NodeID>> Default for UnidirectionalSearch<S> {
@@ -46,6 +49,7 @@ impl<S: HeapStats<NodeID>> UnidirectionalSearch<S> {
         Self {
             queue,
             upper_bound: usize::MAX,
+            met: INVALID_NODE_ID,
         }
     }
 
@@ -60,6 +64,18 @@ impl<S: HeapStats<NodeID>> UnidirectionalSearch<S> {
     pub fn clear(&mut self) {
         self.queue.clear();
         self.upper_bound = usize::MAX;
+        self.met = INVALID_NODE_ID;
+    }
+
+    /// The node the last run stopped on, or [`INVALID_NODE_ID`] if it stopped
+    /// because there was nothing left to settle.
+    ///
+    /// [`Self::run`] stops on the target it was given and this says nothing
+    /// new. [`Self::run_many`] is given a test rather than a node, and this is
+    /// which node answered it.
+    #[must_use]
+    pub fn met(&self) -> NodeID {
+        self.met
     }
 
     /// What it cost to reach a node, and `usize::MAX` for one the last run
@@ -82,7 +98,7 @@ impl<S: HeapStats<NodeID>> UnidirectionalSearch<S> {
     /// run a path computation from s to t on some graph. The object is reusable
     /// to run consecutive searches, even on different graphs. It is cleared on
     /// every run, which saves on allocations.
-    pub fn run<G: Arcs<u32>>(&mut self, graph: &G, s: NodeID, t: NodeID) -> usize {
+    pub fn run<G: Adjacency<u32>>(&mut self, graph: &G, s: NodeID, t: NodeID) -> usize {
         // clear the search space
         self.clear();
 
@@ -103,18 +119,59 @@ impl<S: HeapStats<NodeID>> UnidirectionalSearch<S> {
             // check if target is reached
             if u == t {
                 self.upper_bound = distance;
+                self.met = u;
                 debug!("[done] reached {t} at {distance}");
                 return self.upper_bound;
             }
 
-            // relax outgoing edges
-            for edge in graph.edge_range(u) {
-                debug!("[relax] edge {edge}");
-                let v = graph.target(edge);
-                let new_distance = distance + graph.weight(edge) as usize;
-
+            // Relax outgoing arcs. Asked a node at a time rather than an arc
+            // at a time, since a graph that works its arcs out as it goes can
+            // only answer that way, and one reading them off a file answers it
+            // an order of magnitude faster.
+            let from = self.queue.data(u);
+            graph.for_each_arc(u, from, |v, weight| {
+                let new_distance = distance + weight as usize;
                 self.queue.insert_or_decrease(v, new_distance, u);
+            });
+        }
+
+        self.upper_bound
+    }
+
+    /// A run from several nodes at once, each starting at a cost of its own,
+    /// that stops on the first node it settles that `reached` accepts.
+    ///
+    /// [`Self::run`] is the case of one source and one target. This is what a
+    /// search over a graph whose nodes are another graph's arcs needs, since
+    /// standing at a node there means standing on any of the arcs leaving it,
+    /// and arriving at one means arriving on any of the arcs that run into it.
+    pub fn run_many<G: Adjacency<u32>>(
+        &mut self,
+        graph: &G,
+        sources: &[(NodeID, usize)],
+        reached: impl Fn(NodeID) -> bool,
+    ) -> usize {
+        self.clear();
+
+        for &(node, cost) in sources {
+            self.queue.insert_or_decrease(node, cost, node);
+        }
+
+        while !self.queue.is_empty() && self.upper_bound == usize::MAX {
+            let u = self.queue.delete_min();
+            let distance = self.queue.weight(u);
+
+            if reached(u) {
+                self.upper_bound = distance;
+                self.met = u;
+                return self.upper_bound;
             }
+
+            let from = self.queue.data(u);
+            graph.for_each_arc(u, from, |v, weight| {
+                let new_distance = distance + weight as usize;
+                self.queue.insert_or_decrease(v, new_distance, u);
+            });
         }
 
         self.upper_bound

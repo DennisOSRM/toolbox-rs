@@ -177,6 +177,12 @@ pub struct BlockStore {
     blocks: File,
     map: BlockMap,
     tree: CellTree,
+    /// What each cell's ids count from, where that is not the cell's first
+    /// node. One entry a cell a level, and nothing at all for the usual case.
+    begins: Option<Vec<Vec<u32>>>,
+    /// How wide each cell's table is, where that is not the number of nodes on
+    /// the cell's border. Held beside `begins` and for the same reason.
+    widths: Option<Vec<Vec<u32>>>,
 }
 
 /// What went wrong reading a cell.
@@ -220,7 +226,45 @@ impl BlockStore {
             blocks: File::open(blocks)?,
             map,
             tree,
+            begins: None,
+            widths: None,
         })
+    }
+
+    /// The same, for a store whose tables are named by something other than the
+    /// nodes of a cell.
+    ///
+    /// A block writes each border id as how far into the cell it sits, and what
+    /// it counts from is the cell's first node. An overlay whose tables name
+    /// arcs counts from the cell's first arc instead, and says so here, one
+    /// entry per cell per level.
+    ///
+    /// # Errors
+    ///
+    /// What opening the file said.
+    pub fn open_counting_from(
+        blocks: &Path,
+        map: BlockMap,
+        tree: CellTree,
+        begins: Vec<Vec<u32>>,
+        widths: Vec<Vec<u32>>,
+    ) -> io::Result<Self> {
+        Ok(Self {
+            blocks: File::open(blocks)?,
+            map,
+            tree,
+            begins: Some(begins),
+            widths: Some(widths),
+        })
+    }
+
+    /// What a cell's ids count from.
+    #[must_use]
+    pub fn counting_from(&self, level: usize, cell: CellId) -> u32 {
+        self.begins.as_ref().map_or_else(
+            || self.tree.nodes_begin(level, cell),
+            |begins| begins[level][cell as usize],
+        )
     }
 
     #[must_use]
@@ -256,7 +300,7 @@ impl BlockStore {
         let which = (cell - entry.first_cell) as usize;
         block.unpack_into(which, &widths, table);
 
-        let begins = self.tree.nodes_begin(level, cell);
+        let begins = self.counting_from(level, cell);
         block.places_into(which, &widths, nodes);
         if nodes.is_empty() {
             // the border nodes lead the run, so the places are nought upward
@@ -296,7 +340,13 @@ impl BlockStore {
     #[must_use]
     pub fn widths_of(&self, entry: &BlockEntry, level: usize) -> Vec<usize> {
         (0..entry.cells)
-            .map(|at| self.tree.facts(level, entry.first_cell + at).on_border as usize)
+            .map(|at| {
+                let cell = entry.first_cell + at;
+                self.widths.as_ref().map_or_else(
+                    || self.tree.facts(level, cell).on_border as usize,
+                    |widths| widths[level][cell as usize] as usize,
+                )
+            })
             .collect()
     }
 
