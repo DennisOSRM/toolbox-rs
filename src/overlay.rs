@@ -84,6 +84,52 @@ pub trait Overlay {
 
     fn cells_on_level(&self, level: usize) -> usize;
 
+    /// The cells a node of the searched graph lies in, as the packed word.
+    ///
+    /// A node the search walks is not always a node of the partition. Where the
+    /// graph is an edge-based one worked out as it is walked, a node there is
+    /// an arc here, and the cells it lies in are the cells of the node that arc
+    /// runs into.
+    fn word_of(&self, node: NodeID) -> u128 {
+        self.partition().word(node)
+    }
+
+    /// Every arc leaving a node, as where it goes and what it costs.
+    ///
+    /// `from` is the node this one was reached from, or the node itself where
+    /// the search began. A graph holding its arcs has no use for it; one
+    /// working them out as it goes needs it, since what an arc costs may depend
+    /// on the arc it was reached along.
+    fn for_each_arc(&self, node: NodeID, from: NodeID, mut f: impl FnMut(NodeID, u32)) {
+        let _ = from;
+        let graph = self.graph();
+        for edge in graph.edge_range(node) {
+            f(graph.target(edge), graph.weight(edge));
+        }
+    }
+
+    /// The same, but only the arcs that leave the cell the node lies in at this
+    /// level, which is how a search gets out of a cell it has stepped over.
+    fn for_each_arc_out_of_cell(
+        &self,
+        node: NodeID,
+        from: NodeID,
+        level: usize,
+        mut f: impl FnMut(NodeID, u32),
+    ) {
+        let _ = from;
+        let graph = self.graph();
+        let borders = self.borders();
+        for edge in graph.edge_range(node) {
+            // read in step with the arcs rather than asked of the partition,
+            // which would be a jump into an array as wide as the graph for
+            // every arc of every node the search settles
+            if borders.leaves_cell(edge, level) {
+                f(graph.target(edge), graph.weight(edge));
+            }
+        }
+    }
+
     /// The distances across a cell, and `None` for a cell with no border node
     /// and so no table.
     ///

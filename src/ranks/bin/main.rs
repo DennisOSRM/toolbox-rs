@@ -28,7 +28,7 @@ use std::{
     time::Instant,
 };
 
-use command_line::{Arguments, Check, Engine, Mode, Sample, Scans, Time};
+use command_line::{Arguments, Check, Engine, Mode, Pack, Sample, Scans, Time};
 use env_logger::{Builder, Env};
 use indicatif::{ProgressBar, ProgressStyle};
 use log::{info, warn};
@@ -54,22 +54,35 @@ fn bar_of(count: usize, what: &str) -> ProgressBar {
 use toolbox_rs::{
     bidirectional_dijkstra::BidirectionalDijkstra,
     bidirectional_mld_query::{BidirectionalMldQuery, TrackedBidirectionalMldQuery},
+    block_map::BlockMap,
+    block_store::BlockStore,
     border_levels::BorderLevels,
+    cell_tree::CellTree,
     customization::Customization,
     edge::InputEdge,
+    edge_based::AnglePenalty,
+    edge_based_overlay::{EdgeBasedOverlay, PagedEdgeBasedOverlay},
+    geometry::FPCoordinate,
     graph::{Graph, NodeID},
     heap_stats::{Counters, RankTargets},
     io,
-    level_directory::LevelDirectory,
+    level_directory::{CellId, LevelDirectory},
     mld_query::{MldQuery, TrackedMldQuery},
     node_ordering::NodeOrdering,
+    overlay::Overlay,
     packed_partition::PackedPartition,
+    paged_overlay::{PagedOverlay, pack_cells, pack_overlay},
+    pool::Pool,
     static_graph::StaticGraph,
     unidirectional_dijkstra::{UnidirectionalDijkstra, UnidirectionalSearch},
 };
 
 /// A pair to time, and the rank its target sits at.
 type ToTime = (NodeID, NodeID, usize);
+
+/// The arcs a route may leave the source on, each at what it has cost so far,
+/// and the arcs it may arrive at the target by.
+type ArcEnds = (Vec<(NodeID, usize)>, Vec<(NodeID, usize)>);
 
 /// What one pair cost: the pair itself, its rank, the nanoseconds, and what
 /// the search said the distance was. The pair is carried through so the two
@@ -100,6 +113,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Mode::Check(check) => run_check(check),
         Mode::Time(time) => run_time(time),
         Mode::Scans(scans) => run_scans(scans),
+        Mode::Pack(pack) => run_pack(pack),
     }
 }
 
@@ -299,8 +313,28 @@ fn run_check(args: &Check) -> Result<(), Box<dyn Error>> {
 fn run_time(args: &Time) -> Result<(), Box<dyn Error>> {
     readable(&args.graph, "graph")?;
     readable(&args.input, "input")?;
-    if args.engine == Engine::Mld {
+    if matches!(
+        args.engine,
+        Engine::Mld | Engine::PagedMld | Engine::EdgeBasedMld | Engine::EdgeBasedPagedMld
+    ) {
         readable(&args.directory, "level directory")?;
+    }
+    if matches!(
+        args.engine,
+        Engine::EdgeBasedMld | Engine::EdgeBasedPagedMld
+    ) {
+        if args.coordinates.is_empty() {
+            return Err("the edge-based engine wants --coordinates, to price its turns by".into());
+        }
+        readable(&args.coordinates, "coordinates")?;
+    }
+    if matches!(args.engine, Engine::PagedMld | Engine::EdgeBasedPagedMld) {
+        if args.tables.is_empty() {
+            return Err("the paged-mld engine wants --tables, as the pack mode wrote them".into());
+        }
+        for suffix in ["blocks", "map", "tree"] {
+            readable(&format!("{}.{suffix}", args.tables), "packed tables")?;
+        }
     }
     let mut graph = load_graph(&args.graph);
     let mut pairs = read_pairs(&args.input)?;
@@ -346,7 +380,11 @@ fn run_time(args: &Time) -> Result<(), Box<dyn Error>> {
     }
 
     let directory = match args.engine {
-        Engine::Mld | Engine::BidirectionalMld => {
+        Engine::Mld
+        | Engine::BidirectionalMld
+        | Engine::PagedMld
+        | Engine::EdgeBasedMld
+        | Engine::EdgeBasedPagedMld => {
             let directory: LevelDirectory = io::read_from_file(&args.directory);
             info!(
                 "loaded a directory of {} levels over {} nodes",
@@ -410,6 +448,18 @@ fn run_time(args: &Time) -> Result<(), Box<dyn Error>> {
             let reverse = reverse_of(&graph);
             info!("turned {} arcs around", reverse.number_of_edges());
             time_bidirectional_mld(graph, reverse, directory, &pairs, args.warmup)
+        }
+        Engine::PagedMld => {
+            let directory = directory.expect("a directory was read for the cells");
+            time_paged_mld(graph, &directory, args, &pairs)?
+        }
+        Engine::EdgeBasedMld => {
+            let directory = directory.expect("a directory was read for the cells");
+            time_edge_based_mld(graph, &directory, args, &pairs)
+        }
+        Engine::EdgeBasedPagedMld => {
+            let directory = directory.expect("a directory was read for the cells");
+            time_edge_based_paged_mld(graph, &directory, args, &pairs)?
         }
     };
 
@@ -678,6 +728,423 @@ fn time_mld(
         .collect();
     bar.finish_and_clear();
     timings
+}
+
+/// Checks that each cell's nodes run consecutively, which is what a store of
+/// blocks is written against.
+///
+/// A block says where a cell's nodes begin and how many it holds, and a table
+/// names its border nodes by how far into the cell they sit. Both are a running
+/// total of what the cells hold, so both are answers only where a cell's nodes
+/// are consecutive. Packed against a numbering where they are not, every table
+/// is written down against the wrong nodes and every query is quietly wrong
+/// rather than refused: 3605 of 4800 pairs of a continent disagreed with the
+/// same query over the same cells held in memory.
+fn contiguous_cells(
+    partition: &PackedPartition,
+    directory: &LevelDirectory,
+) -> Result<(), Box<dyn Error>> {
+    for level in 0..directory.levels() {
+        let mut seen = vec![false; directory.cells_on_level(level)];
+        let mut last = usize::MAX;
+        for node in 0..directory.number_of_nodes() {
+            let cell = partition.cell_of(node, level) as usize;
+            if cell == last {
+                continue;
+            }
+            if seen[cell] {
+                return Err(format!(
+                    "the nodes of cell {cell} on level {level} do not run consecutively, so the \
+                     instance is not laid out for a store of blocks. Run the renumber binary over \
+                     it first, with --cells-in-key-order --numbering cell-path, and pack what \
+                     that writes"
+                )
+                .into());
+            }
+            seen[cell] = true;
+            last = cell;
+        }
+    }
+    Ok(())
+}
+
+/// Customizes the cells once and writes them to a file, so that a search can
+/// read them off it rather than hold them.
+///
+/// Three files come out and all three are wanted to read a table back: the
+/// blocks, the map that says where each block landed, and the tree of cells the
+/// blocks are ordered by.
+fn run_pack(args: &Pack) -> Result<(), Box<dyn Error>> {
+    readable(&args.graph, "graph")?;
+    readable(&args.coordinates, "coordinates")?;
+    readable(&args.directory, "level directory")?;
+
+    let graph = load_graph(&args.graph);
+    let coordinates = io::read_vec_from_file::<FPCoordinate>(&args.coordinates);
+    let directory: LevelDirectory = io::read_from_file(&args.directory);
+    assert_eq!(
+        graph.number_of_nodes(),
+        directory.number_of_nodes(),
+        "the directory was built over another graph"
+    );
+    info!(
+        "loaded a directory of {} levels over {} nodes",
+        directory.levels(),
+        directory.number_of_nodes()
+    );
+
+    let partition = PackedPartition::of(&directory);
+    contiguous_cells(&partition, &directory)?;
+    let tree = CellTree::of(&directory, &partition, &graph, &coordinates);
+
+    if args.edge_based {
+        return pack_edge_based(args, graph, coordinates, &directory, &tree);
+    }
+    let started = Instant::now();
+    let customization = Customization::new(load_graph(&args.graph), directory);
+    info!(
+        "customized {} cells in {:.1} s",
+        customization.customized_cells(),
+        started.elapsed().as_secs_f64()
+    );
+
+    let blocks = format!("{}.blocks", args.out);
+    let started = Instant::now();
+    let map = pack_cells(
+        &customization,
+        &tree,
+        std::path::Path::new(&blocks),
+        args.cells_a_block,
+    )?;
+    info!(
+        "wrote {} blocks to {blocks} in {:.1} s",
+        map.len(),
+        started.elapsed().as_secs_f64()
+    );
+
+    io::write_to_file(&format!("{}.map", args.out), &map);
+    io::write_to_file(&format!("{}.tree", args.out), &tree);
+    info!("wrote the map and the tree beside it");
+    Ok(())
+}
+
+/// The arcs a route may leave each source on, and the ones it may arrive at
+/// each target by.
+///
+/// Which arcs run into a node has to be gathered, since an adjacency array says
+/// only which run out. Asking instead for the reverse of each arc leaving the
+/// target would answer only on a graph holding every arc both ways, and would
+/// quietly report no route where it does not.
+fn arc_ends(graph: &StaticGraph<u32>, pairs: &[ToTime]) -> Vec<ArcEnds> {
+    let mut into = vec![Vec::new(); Graph::number_of_nodes(graph)];
+    for node in graph.node_range() {
+        for arc in graph.edge_range(node) {
+            into[graph.target(arc)].push(arc);
+        }
+    }
+    pairs
+        .iter()
+        .map(|&(source, target, _)| {
+            (
+                graph.edge_range(source).map(|arc| (arc, 0)).collect(),
+                // what it cost to arrive is the distance to the arc plus what
+                // travelling the arc itself costs
+                into[target]
+                    .iter()
+                    .map(|&arc| (arc, *graph.data(arc) as usize))
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+/// Tabulates the cells over the arcs of the graph and writes them to a file.
+///
+/// The tables name arcs rather than nodes, so a block counts its ids from the
+/// cell's first arc rather than its first node, and the store is told so when
+/// it is opened again. Nothing else about the store differs.
+fn pack_edge_based(
+    _args: &Pack,
+    _graph: StaticGraph<u32>,
+    _coordinates: Vec<FPCoordinate>,
+    _directory: &LevelDirectory,
+    _tree: &CellTree,
+) -> Result<(), Box<dyn Error>> {
+    Err(
+        "an edge-based table is not square and a block of the store is: its ways in \
+         outnumber its ways out by nearly three to one, and the format names one list \
+         of border ids to serve as both. Packing one wants the rows and the columns \
+         written apart"
+            .into(),
+    )
+}
+
+#[allow(dead_code)]
+fn pack_edge_based_once_blocks_hold_rectangles(
+    args: &Pack,
+    graph: StaticGraph<u32>,
+    coordinates: Vec<FPCoordinate>,
+    directory: &LevelDirectory,
+    tree: &CellTree,
+) -> Result<(), Box<dyn Error>> {
+    let started = Instant::now();
+    let overlay = EdgeBasedOverlay::new(graph, coordinates, AnglePenalty::new(30., 100), directory);
+    let bar = bar_of(overlay.levels(), "tabulating the cells");
+    for level in 0..overlay.levels() {
+        for cell in 0..overlay.cells_on_level(level) {
+            let _ = overlay.distances_of(level, cell as CellId);
+        }
+        bar.inc(1);
+    }
+    bar.finish_and_clear();
+    info!(
+        "tabulated every cell in {:.1} s",
+        started.elapsed().as_secs_f64()
+    );
+
+    let begins = overlay.arcs_begin();
+    let holds = overlay.arcs_held();
+    let widths = overlay.border_widths();
+    let blocks = format!("{}.blocks", args.out);
+    let started = Instant::now();
+    let map = pack_overlay(
+        &overlay,
+        tree,
+        std::path::Path::new(&blocks),
+        args.cells_a_block,
+        // a cell's arcs run consecutively, and the ones on its border are
+        // scattered through them rather than leading
+        |level, cell| {
+            (
+                begins[level][cell as usize],
+                false,
+                holds[level][cell as usize],
+            )
+        },
+    )?;
+    info!(
+        "wrote {} blocks to {blocks} in {:.1} s",
+        map.len(),
+        started.elapsed().as_secs_f64()
+    );
+
+    io::write_to_file(&format!("{}.map", args.out), &map);
+    io::write_to_file(&format!("{}.tree", args.out), tree);
+    io::write_vec_to_file(&format!("{}.begins", args.out), &begins);
+    io::write_vec_to_file(&format!("{}.widths", args.out), &widths);
+    info!("wrote the map, the tree, the arc offsets and the widths beside it");
+    Ok(())
+}
+
+/// The same pairs over cells whose nodes are the arcs of the graph, read off a
+/// file rather than held.
+fn time_edge_based_paged_mld(
+    graph: StaticGraph<u32>,
+    directory: &LevelDirectory,
+    args: &Time,
+    pairs: &[ToTime],
+) -> Result<Vec<Timing>, Box<dyn Error>> {
+    let coordinates = io::read_vec_from_file::<FPCoordinate>(&args.coordinates);
+    let map: BlockMap = io::read_from_file(&format!("{}.map", args.tables));
+    let tree: CellTree = io::read_from_file(&format!("{}.tree", args.tables));
+    let begins: Vec<Vec<u32>> = io::read_vec_from_file(&format!("{}.begins", args.tables));
+    let widths: Vec<Vec<u32>> = io::read_vec_from_file(&format!("{}.widths", args.tables));
+    info!(
+        "read a map of {} blocks over {} levels",
+        map.len(),
+        tree.levels()
+    );
+
+    let ends = arc_ends(&graph, pairs);
+    let partition = PackedPartition::of(directory);
+    let borders = BorderLevels::of(&graph, &partition);
+    let store = BlockStore::open_counting_from(
+        std::path::Path::new(&format!("{}.blocks", args.tables)),
+        map,
+        tree,
+        begins,
+        widths,
+    )?;
+    let tables = PagedOverlay::new(
+        store,
+        load_graph(&args.graph),
+        partition,
+        borders,
+        Pool::of(args.budget),
+    );
+    let overlay =
+        PagedEdgeBasedOverlay::new(tables, graph, coordinates, AnglePenalty::new(30., 100));
+    info!("holding at most {} bytes of tables", args.budget);
+
+    let mut query = MldQuery::new();
+    let bar = bar_of(args.warmup.min(pairs.len()), "warming the pool");
+    for (leaving, arriving) in ends.iter().take(args.warmup) {
+        query.run_to_arcs(&overlay, leaving, arriving);
+        bar.inc(1);
+    }
+    bar.finish_and_clear();
+
+    let bar = bar_of(pairs.len(), "timing");
+    let timings = pairs
+        .iter()
+        .zip(&ends)
+        .map(|(&(source, target, rank), (leaving, arriving))| {
+            query.clear();
+            let started = Instant::now();
+            let distance = query.run_to_arcs(&overlay, leaving, arriving);
+            let elapsed = started.elapsed().as_nanos();
+            bar.inc(1);
+            (source, target, rank, elapsed, distance)
+        })
+        .collect();
+    bar.finish_and_clear();
+
+    let faults = overlay.faults();
+    info!(
+        "{} tables were found already held, {} were read off the file, {} were thrown away",
+        faults.hits, faults.misses, faults.evicted
+    );
+    Ok(timings)
+}
+
+/// The same pairs over cells whose nodes are the arcs of the graph.
+///
+/// A query names its ends as nodes and this searches over arcs. A node of the
+/// overlay is the tail of its arc, so it starts on every arc leaving the source
+/// at no cost, and finishes on the arcs running *into* the target, whose
+/// distance plus their own weight is what it cost to arrive.
+///
+/// Finishing on the arcs *leaving* the target instead would ask for a way to
+/// carry on out of it, which a dead end refusing reversals does not have: 996
+/// of 4800 pairs came back unreachable that way, all of them at low ranks.
+///
+/// What comes back is what it costs to reach the target with every turn on the
+/// way priced, which is not the number the node-based engines report and is not
+/// meant to be.
+fn time_edge_based_mld(
+    graph: StaticGraph<u32>,
+    directory: &LevelDirectory,
+    args: &Time,
+    pairs: &[ToTime],
+) -> Vec<Timing> {
+    let coordinates = io::read_vec_from_file::<FPCoordinate>(&args.coordinates);
+    let ends = arc_ends(&graph, pairs);
+
+    let started = Instant::now();
+    let overlay = EdgeBasedOverlay::new(graph, coordinates, AnglePenalty::new(30., 100), directory);
+    info!(
+        "built the overlay in {:.1} s",
+        started.elapsed().as_secs_f64()
+    );
+
+    // Every cell, not only the ones a warmup happens to walk through. A cell is
+    // tabulated the first time it is asked for, so a query reaching one nobody
+    // has asked for yet pays to build it with the clock running: left to a
+    // warmup of a hundred pairs, the low ranks came out with medians of a
+    // thirtieth of a millisecond and whiskers at sixty, which is cell building
+    // and not query time.
+    let started = Instant::now();
+    let bar = bar_of(overlay.levels(), "tabulating the cells");
+    for level in 0..overlay.levels() {
+        for cell in 0..overlay.cells_on_level(level) {
+            let _ = overlay.distances_of(level, cell as CellId);
+        }
+        bar.inc(1);
+    }
+    bar.finish_and_clear();
+    info!(
+        "tabulated every cell in {:.1} s",
+        started.elapsed().as_secs_f64()
+    );
+
+    let mut query = MldQuery::new();
+    let bar = bar_of(args.warmup.min(pairs.len()), "warming");
+    for (leaving, arriving) in ends.iter().take(args.warmup) {
+        query.run_to_arcs(&overlay, leaving, arriving);
+        bar.inc(1);
+    }
+    bar.finish_and_clear();
+
+    let bar = bar_of(pairs.len(), "timing");
+    let timings = pairs
+        .iter()
+        .zip(&ends)
+        .map(|(&(source, target, rank), (leaving, arriving))| {
+            query.clear();
+            let started = Instant::now();
+            let distance = query.run_to_arcs(&overlay, leaving, arriving);
+            let elapsed = started.elapsed().as_nanos();
+            bar.inc(1);
+            (source, target, rank, elapsed, distance)
+        })
+        .collect();
+    bar.finish_and_clear();
+    timings
+}
+
+/// The same pairs over cells that are read off a file rather than held.
+///
+/// What is being timed here is not another algorithm. It is the same query
+/// over the same tables, with a budget on how much of them may be in memory at
+/// once, so what the rows say is what reading a table off a file costs a query
+/// that would otherwise have found it already there.
+fn time_paged_mld(
+    graph: StaticGraph<u32>,
+    directory: &LevelDirectory,
+    args: &Time,
+    pairs: &[ToTime],
+) -> Result<Vec<Timing>, Box<dyn Error>> {
+    let map: BlockMap = io::read_from_file(&format!("{}.map", args.tables));
+    let tree: CellTree = io::read_from_file(&format!("{}.tree", args.tables));
+    info!(
+        "read a map of {} blocks over {} levels",
+        map.len(),
+        tree.levels()
+    );
+
+    let partition = PackedPartition::of(directory);
+    let borders = BorderLevels::of(&graph, &partition);
+    let store = BlockStore::open(
+        std::path::Path::new(&format!("{}.blocks", args.tables)),
+        map,
+        tree,
+    )?;
+    let overlay = PagedOverlay::new(store, graph, partition, borders, Pool::of(args.budget));
+    info!("holding at most {} bytes of tables", args.budget);
+
+    let mut query = MldQuery::new();
+    let bar = bar_of(args.warmup.min(pairs.len()), "warming the pool");
+    for &(source, target, _) in pairs.iter().take(args.warmup) {
+        query.run(&overlay, source, &[target]);
+        bar.inc(1);
+    }
+    bar.finish_and_clear();
+
+    let bar = bar_of(pairs.len(), "timing");
+    let timings = pairs
+        .iter()
+        .map(|&(source, target, rank)| {
+            query.clear();
+            let started = Instant::now();
+            let reached = query.run(&overlay, source, &[target]);
+            let elapsed = started.elapsed().as_nanos();
+            let distance = if reached {
+                query.distance(target)
+            } else {
+                usize::MAX
+            };
+            bar.inc(1);
+            (source, target, rank, elapsed, distance)
+        })
+        .collect();
+    bar.finish_and_clear();
+
+    let faults = overlay.faults();
+    info!(
+        "{} tables were found already held, {} were read off the file, {} were thrown away",
+        faults.hits, faults.misses, faults.evicted
+    );
+    Ok(timings)
 }
 
 /// The same pairs over the cells, with a front growing from each end.

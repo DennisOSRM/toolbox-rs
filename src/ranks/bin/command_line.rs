@@ -38,6 +38,15 @@ pub enum Mode {
     /// definition, so only the searches over the cells are worth counting.
     Scans(Scans),
 
+    /// Writes the cell tables to a file, so that a search can read them off it
+    /// rather than hold them.
+    ///
+    /// The tables are customized in memory once and packed a run of cells at a
+    /// time. What comes out is three files: the blocks themselves, the map that
+    /// says where each block landed, and the tree of cells the blocks are
+    /// ordered by. All three are wanted to read one table back.
+    Pack(Pack),
+
     /// Times the pairs, and counts nothing while doing it.
     ///
     /// A run that is being counted is not a run worth timing, so this reads
@@ -119,6 +128,37 @@ pub struct Scans {
 }
 
 #[derive(Parser, Debug)]
+pub struct Pack {
+    /// path to the input graph
+    #[clap(short, long, action)]
+    pub graph: String,
+
+    /// path to the input coordinates, which order the cells of a level
+    #[clap(short, long, action)]
+    pub coordinates: String,
+
+    /// path to the level directory that chipper wrote
+    #[clap(short, long, action)]
+    pub directory: String,
+
+    /// where to write the blocks, the map and the tree, as `<out>.blocks`,
+    /// `<out>.map` and `<out>.tree`
+    #[clap(short, long, action)]
+    pub out: String,
+
+    /// How many cells of a level go in one block. A larger block is read fewer
+    /// times and throws away more of what it read.
+    #[clap(long, default_value_t = 8, action)]
+    pub cells_a_block: usize,
+
+    /// Tabulate the cells over the arcs of the graph rather than its nodes,
+    /// pricing the turns between them. What comes out is read by the
+    /// edge-based-paged-mld engine and by nothing else.
+    #[clap(long, action)]
+    pub edge_based: bool,
+}
+
+#[derive(Parser, Debug)]
 pub struct Time {
     /// path to the input graph
     #[clap(short, long, action)]
@@ -160,6 +200,21 @@ pub struct Time {
     /// what puts them into the numbering and reads the answers back out.
     #[clap(long, default_value_t = String::new(), action)]
     pub ordering: String,
+
+    /// path to the input coordinates, which the edge-based engines price their
+    /// turns by
+    #[clap(short, long, default_value_t = String::new(), action)]
+    pub coordinates: String,
+
+    /// What the pack mode wrote, for the paged-mld engine. The three files are
+    /// read as `<tables>.blocks`, `<tables>.map` and `<tables>.tree`.
+    #[clap(long, default_value_t = String::new(), action)]
+    pub tables: String,
+
+    /// How many bytes the tables read off a file may take before one of them is
+    /// thrown away to make room. Says nothing for the engines that hold theirs.
+    #[clap(long, default_value_t = 256 << 20, action)]
+    pub budget: usize,
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
@@ -172,6 +227,13 @@ pub enum Engine {
     Mld,
     /// a search over the cells of the partition, run from both ends
     BidirectionalMld,
+    /// a search over cells that are read off a file rather than held
+    PagedMld,
+    /// a search over cells whose nodes are the arcs of the graph, with the
+    /// turns between them priced as the search walks them
+    EdgeBasedMld,
+    /// the same, over cells read off a file rather than held
+    EdgeBasedPagedMld,
 }
 
 impl Display for Engine {
@@ -181,6 +243,9 @@ impl Display for Engine {
             Engine::Bidirectional => write!(f, "bidirectional"),
             Engine::Mld => write!(f, "mld"),
             Engine::BidirectionalMld => write!(f, "bidirectional-mld"),
+            Engine::PagedMld => write!(f, "paged-mld"),
+            Engine::EdgeBasedMld => write!(f, "edge-based-mld"),
+            Engine::EdgeBasedPagedMld => write!(f, "edge-based-paged-mld"),
         }
     }
 }
@@ -211,6 +276,15 @@ impl Display for Arguments {
                 writeln!(f, "level directory: {}", check.directory)?;
                 writeln!(f, "in: {}", check.input)
             }
+            Mode::Pack(pack) => {
+                writeln!(f, "mode: pack")?;
+                writeln!(f, "graph: {}", pack.graph)?;
+                writeln!(f, "coordinates: {}", pack.coordinates)?;
+                writeln!(f, "level directory: {}", pack.directory)?;
+                writeln!(f, "out: {}", pack.out)?;
+                writeln!(f, "cells a block: {}", pack.cells_a_block)?;
+                writeln!(f, "edge based: {}", pack.edge_based)
+            }
             Mode::Time(time) => {
                 writeln!(f, "mode: time")?;
                 writeln!(f, "graph: {}", time.graph)?;
@@ -221,7 +295,10 @@ impl Display for Arguments {
                 writeln!(f, "warmup: {} pairs", time.warmup)?;
                 writeln!(f, "seed: {}", time.seed)?;
                 writeln!(f, "renumbered: {}", time.renumber)?;
-                writeln!(f, "ordering: {}", time.ordering)
+                writeln!(f, "ordering: {}", time.ordering)?;
+                writeln!(f, "coordinates: {}", time.coordinates)?;
+                writeln!(f, "tables: {}", time.tables)?;
+                writeln!(f, "budget: {} bytes", time.budget)
             }
         }
     }
